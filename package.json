@@ -1,0 +1,24 @@
+{
+  "name": "dtp-yui",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oscoDOTblog/dtp-yui.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/oscoDOTblog/dtp-yui/issues"
+  },
+  "homepage": "https://github.com/oscoDOTblog/dtp-yui#readme",
+  "dependencies": {
+    "ollama": "^0.6.3"
+  }
+}
