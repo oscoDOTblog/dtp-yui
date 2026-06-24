@@ -14,6 +14,8 @@ This version does not browse the web, check live prices, book anything, or call 
 
 - `criteria.json` stores your trip preferences and constraints.
 - `outputs/` stores generated research notes.
+- `index.js` routes travel commands to the right script.
+- `scripts/` stores individual travel scripts.
 
 ## Run
 
@@ -23,10 +25,16 @@ From the project root:
 npm run travel:research -- "make me a lodging research plan for Amsterdam during SDF"
 ```
 
-You can also run the file directly:
+You can also use the generic travel entry point:
 
 ```bash
-node travel-research.js "compare hostel vs budget hotel for this trip"
+npm run travel -- research "compare hostel vs budget hotel for this trip"
+```
+
+Or run the research script directly while learning:
+
+```bash
+node travel/scripts/research.js "compare hostel vs budget hotel for this trip"
 ```
 
 Make sure Ollama is running before using the CLI:
@@ -34,4 +42,3 @@ Make sure Ollama is running before using the CLI:
 ```bash
 ollama serve
 ```
-

@@ -11,12 +11,13 @@
 
 import ollama from "ollama";
 import fs from "fs/promises";
+import { pathToFileURL } from "url";
 
 /**
  * The local Ollama model to use.
  *
  * You can override this without editing code:
- * TRAVEL_MODEL="llama3.1:8b" node travel-research.js "your request"
+ * TRAVEL_MODEL="llama3.1:8b" node travel/scripts/research.js "your request"
  */
 const MODEL = process.env.TRAVEL_MODEL || "qwen3:8b";
 
@@ -229,8 +230,8 @@ ${result}
  * Node passes command-line words through process.argv. The first two entries
  * are Node internals, so the actual user request starts at index 2.
  */
-async function main() {
-  const userRequest = process.argv.slice(2).join(" ").trim();
+export async function main(args = process.argv.slice(2)) {
+  const userRequest = args.join(" ").trim();
 
   if (!userRequest) {
     console.log("Usage:");
@@ -257,9 +258,19 @@ async function main() {
  * - The configured model has not been pulled.
  * - travel/criteria.json contains invalid JSON.
  */
-main().catch((error) => {
+function handleError(error) {
   console.error("\nTravel research failed:");
   console.error(error.message);
   console.error("\nTry starting Ollama with: ollama serve");
   process.exitCode = 1;
-});
+}
+
+/**
+ * Run the CLI only when this file is executed directly.
+ *
+ * When travel/index.js imports this file, it can call main() itself without
+ * accidentally starting a second command.
+ */
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(handleError);
+}

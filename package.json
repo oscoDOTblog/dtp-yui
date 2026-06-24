@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "travel:research": "node travel-research.js",
+    "travel": "node travel/index.js",
+    "travel:research": "node travel/index.js research",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

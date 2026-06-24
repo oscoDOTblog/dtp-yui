@@ -15,3 +15,9 @@ Run it:
 ```bash
 npm run travel:research -- "make me a lodging research plan for Amsterdam during SDF"
 ```
+
+Or use the generic travel entry point:
+
+```bash
+npm run travel -- research "compare hostel vs budget hotel for this trip"
+```
