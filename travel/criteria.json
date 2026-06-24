@@ -1,0 +1,19 @@
+{
+  "trip": "Summer Dance Forever Europe 2026",
+  "home_base": "Amsterdam",
+  "dates": "Aug 25-31, 2026",
+  "budget": {
+    "lodging_max_per_night_eur": 70,
+    "prefer": "hostel or budget hotel"
+  },
+  "priorities": [
+    "cheap but safe",
+    "near public transit",
+    "easy late-night return",
+    "close or convenient to SDF venues",
+    "flexible cancellation preferred",
+    "good reviews"
+  ],
+  "decision_style": "Show top options with tradeoffs. Ask before making assumptions."
+}
+
