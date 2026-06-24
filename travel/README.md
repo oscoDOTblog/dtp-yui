@@ -22,16 +22,10 @@ This version does not browse the web, check live prices, book anything, or call 
 From the project root:
 
 ```bash
-npm run travel:research -- "make me a lodging research plan for Amsterdam during SDF"
+npm run travel -- research "make me a lodging research plan for Amsterdam during SDF"
 ```
 
-You can also use the generic travel entry point:
-
-```bash
-npm run travel -- research "compare hostel vs budget hotel for this trip"
-```
-
-Or run the research script directly while learning:
+You can also run the research script directly while learning:
 
 ```bash
 node travel/scripts/research.js "compare hostel vs budget hotel for this trip"

@@ -236,7 +236,7 @@ export async function main(args = process.argv.slice(2)) {
   if (!userRequest) {
     console.log("Usage:");
     console.log(
-      'npm run travel:research -- "make me a lodging research plan for Amsterdam during SDF"'
+      'npm run travel -- research "make me a lodging research plan for Amsterdam during SDF"'
     );
     return;
   }
