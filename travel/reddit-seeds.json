@@ -1,0 +1,36 @@
+{
+  "description": "Editable hostel leads gathered from Reddit/community research. These are discovery hints only; the lodging search still verifies prices and links on travel sites.",
+  "leads": [
+    {
+      "name": "ClinkNOORD",
+      "community": "hostels",
+      "evidenceTitle": "Seed lead from Amsterdam hostel recommendation research",
+      "evidenceLink": "https://www.reddit.com/r/hostels/"
+    },
+    {
+      "name": "Flying Pig Downtown",
+      "community": "hostels",
+      "evidenceTitle": "Seed lead from Amsterdam hostel recommendation research",
+      "evidenceLink": "https://www.reddit.com/r/hostels/"
+    },
+    {
+      "name": "Stayokay Amsterdam Vondelpark",
+      "community": "hostels",
+      "evidenceTitle": "Seed lead from Amsterdam hostel recommendation research",
+      "evidenceLink": "https://www.reddit.com/r/hostels/"
+    },
+    {
+      "name": "Cocomama",
+      "community": "solotravel",
+      "evidenceTitle": "Seed lead from solo traveler hostel recommendation research",
+      "evidenceLink": "https://www.reddit.com/r/solotravel/"
+    },
+    {
+      "name": "Ecomama",
+      "community": "solotravel",
+      "evidenceTitle": "Seed lead from solo traveler hostel recommendation research",
+      "evidenceLink": "https://www.reddit.com/r/solotravel/"
+    }
+  ]
+}
+

@@ -6,6 +6,7 @@ The goal for this step is intentionally small:
 
 - Keep your trip criteria in one readable JSON file.
 - Ask a local Ollama model to turn a travel question into a practical research plan.
+- Search Reddit-related results first to discover hostel leads.
 - Use a browser script to gather lodging candidates for review.
 - Save the model's response as Markdown so you can review it later.
 
@@ -14,6 +15,7 @@ This version can open browser pages for lodging research, but it still does not 
 ## Files
 
 - `criteria.json` stores your trip preferences and constraints.
+- `reddit-seeds.json` stores editable hostel leads from community research.
 - `outputs/` stores generated research notes.
 - `index.js` routes travel commands to the right script.
 - `scripts/` stores individual travel scripts.
@@ -32,10 +34,18 @@ Search for lodging candidates:
 npm run travel -- lodging Amsterdam
 ```
 
-By default, the lodging command extracts up to 8 candidates per source. You can raise that while experimenting:
+Log into Reddit once so the lodging command can reuse your browser session:
 
 ```bash
-TRAVEL_MAX_CANDIDATES=20 npm run travel -- lodging Amsterdam
+npm run travel -- reddit-login
+```
+
+This opens a visible browser. Log into Reddit, return to the terminal, and press Enter. The browser session is stored locally in `travel/browser-profile/` and ignored by git.
+
+By default, the lodging command extracts up to 8 candidates per source and up to 5 Reddit hostel leads. You can raise those while experimenting:
+
+```bash
+TRAVEL_MAX_CANDIDATES=20 TRAVEL_MAX_REDDIT_LEADS=10 npm run travel -- lodging Amsterdam
 ```
 
 If the lodging command says the browser executable is missing, install Playwright's Chromium browser:

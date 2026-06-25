@@ -15,10 +15,16 @@ Run the lodging command from the project root:
 npm run travel -- lodging Amsterdam
 ```
 
-Change the per-source result limit:
+Log into Reddit once:
 
 ```bash
-TRAVEL_MAX_CANDIDATES=20 npm run travel -- lodging Amsterdam
+npm run travel -- reddit-login
+```
+
+Change the per-source result limit and Reddit lead limit:
+
+```bash
+TRAVEL_MAX_CANDIDATES=20 TRAVEL_MAX_REDDIT_LEADS=10 npm run travel -- lodging Amsterdam
 ```
 
 If Playwright cannot find Chromium, run:

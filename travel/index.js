@@ -7,7 +7,10 @@
  */
 
 import { main as runResearch } from "./scripts/research.js";
-import { main as runLodgingSearch } from "./scripts/lodging-search.js";
+import {
+  main as runLodgingSearch,
+  redditLoginMain,
+} from "./scripts/lodging-search.js";
 
 /**
  * Print a small help message when the user does not provide a command.
@@ -18,9 +21,11 @@ function printUsage() {
     'npm run travel -- research "make me a lodging research plan for Amsterdam during SDF"'
   );
   console.log("npm run travel -- lodging Amsterdam");
+  console.log("npm run travel -- reddit-login");
   console.log("");
   console.log("Commands:");
   console.log("  lodging   Search browser pages for lodging candidates.");
+  console.log("  reddit-login  Open a browser so you can log into Reddit once.");
   console.log("  research  Create a local Ollama-powered travel research plan.");
 }
 
@@ -45,6 +50,11 @@ async function main() {
 
   if (command === "lodging") {
     await runLodgingSearch(args);
+    return;
+  }
+
+  if (command === "reddit-login") {
+    await redditLoginMain();
     return;
   }
 

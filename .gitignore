@@ -2,6 +2,7 @@
 sample.*
 */outputs/*
 !*/outputs/README.md
+travel/browser-profile/
 
 # Logs
 logs

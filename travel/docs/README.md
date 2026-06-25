@@ -14,6 +14,7 @@ Today, the tool can:
 - Send a travel research request to local Ollama.
 - Use the `qwen3:8b` model by default.
 - Show a loading animation while Ollama is responding.
+- Search Reddit-related results for hostel recommendation signals before querying lodging sites.
 - Open browser pages with Playwright for lodging research.
 - Extract visible lodging names, prices, distances, cancellation hints, ratings, and links when pages expose them.
 - Save the generated research plan to `travel/outputs/research.md`.
@@ -33,6 +34,7 @@ Today, the tool does not:
 - `travel/scripts/lodging-search.js` opens browser pages and extracts lodging candidates.
 - `travel/scripts/research.js` creates a local Ollama-powered research plan.
 - `travel/criteria.json` stores trip criteria and preferences.
+- `travel/reddit-seeds.json` stores editable hostel leads from community research.
 - `travel/outputs/` stores generated Markdown notes.
 - `travel/docs/` stores design notes and high-level documentation.
 
@@ -56,10 +58,18 @@ Run the lodging browser search:
 npm run travel -- lodging Amsterdam
 ```
 
-The lodging command extracts up to 8 candidates per source by default. To inspect more:
+Log into Reddit once for authenticated Reddit discovery:
 
 ```bash
-TRAVEL_MAX_CANDIDATES=20 npm run travel -- lodging Amsterdam
+npm run travel -- reddit-login
+```
+
+The login command opens a visible Playwright browser using the persistent profile at `travel/browser-profile/`. After you log in and press Enter in the terminal, future lodging searches reuse that browser session. The profile folder is ignored by git because it can contain cookies and local browser state.
+
+The lodging command extracts up to 8 candidates per source and up to 5 Reddit hostel leads by default. To inspect more:
+
+```bash
+TRAVEL_MAX_CANDIDATES=20 TRAVEL_MAX_REDDIT_LEADS=10 npm run travel -- lodging Amsterdam
 ```
 
 ## Browser Setup

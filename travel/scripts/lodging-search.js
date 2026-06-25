@@ -2,6 +2,7 @@
  * Browser-powered lodging search CLI.
  *
  * This is "part 2" of the travel agent project:
+ * - Search Reddit-related results first to discover hostel names people mention.
  * - Open lodging/search pages in a real browser with Playwright.
  * - Collect visible names, prices, ratings, distances, cancellation hints, and links.
  * - Save the extracted candidates for human review.
@@ -22,8 +23,24 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
  * Local project paths used by this script.
  */
 const CRITERIA_PATH = "travel/criteria.json";
+const REDDIT_SEEDS_PATH = "travel/reddit-seeds.json";
 const JSON_OUTPUT_PATH = "travel/outputs/lodging-search.json";
 const MARKDOWN_OUTPUT_PATH = "travel/outputs/lodging-search.md";
+const BROWSER_PROFILE_PATH = "travel/browser-profile";
+
+/**
+ * One browser identity for login and searches.
+ */
+const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36";
+
+/**
+ * Run headless by default, but allow a visible browser for debugging.
+ *
+ * Example:
+ * TRAVEL_BROWSER_HEADLESS=0 npm run travel -- lodging Amsterdam
+ */
+const BROWSER_HEADLESS = process.env.TRAVEL_BROWSER_HEADLESS !== "0";
 
 /**
  * The browser should not run forever if a travel site hangs or blocks us.
@@ -40,6 +57,64 @@ const MAX_CANDIDATES_PER_SOURCE = Number.parseInt(
   process.env.TRAVEL_MAX_CANDIDATES || "8",
   10
 );
+
+/**
+ * Keep Reddit-discovered leads small and reviewable.
+ *
+ * You can override this without editing code:
+ * TRAVEL_MAX_REDDIT_LEADS=10 npm run travel -- lodging Amsterdam
+ */
+const MAX_REDDIT_LEADS = Number.parseInt(
+  process.env.TRAVEL_MAX_REDDIT_LEADS || "5",
+  10
+);
+
+/**
+ * Reddit communities to search for hostel recommendations.
+ *
+ * We query old.reddit.com search pages because they are simpler to read in a
+ * browser automation prototype and do not require Reddit API credentials.
+ */
+const REDDIT_COMMUNITIES = [
+  "hostels",
+  "Amsterdam",
+  "Europetravel",
+  "solotravel",
+  "travel",
+];
+
+/**
+ * Starter Reddit threads to inspect when search pages do not expose results.
+ *
+ * These are still discovery sources only. Any names found here become lodging
+ * search leads that must be verified against Booking/Hostelworld/other sites.
+ */
+const REDDIT_SEED_THREADS = [
+  {
+    community: "hostels",
+    url: "https://old.reddit.com/r/hostels/comments/1qw3hy5/best_hostels_in_amsterdam/",
+  },
+  {
+    community: "hostels",
+    url: "https://old.reddit.com/r/hostels/comments/1irkews/amsterdam_hostel_recommendations/",
+  },
+  {
+    community: "Europetravel",
+    url: "https://old.reddit.com/r/Europetravel/comments/18m7k93/hostel_recommendations_amsterdam/",
+  },
+  {
+    community: "solotravel",
+    url: "https://old.reddit.com/r/solotravel/comments/3bo28w/amsterdam_hostel_recommendations/",
+  },
+  {
+    community: "travel",
+    url: "https://old.reddit.com/r/travel/comments/fytkm/can_anyone_recommend_any_good_hostels_in_amsterdam/",
+  },
+  {
+    community: "hostels",
+    url: "https://old.reddit.com/r/hostels/comments/1fl1a7b/hostels_recommendations_for_amsterdam_and_brussels/",
+  },
+];
 
 /**
  * Create a terminal progress list that writes to stderr.
@@ -129,6 +204,84 @@ async function readCriteria() {
 }
 
 /**
+ * Launch a persistent browser profile.
+ *
+ * Persistent profiles save cookies and login state under travel/browser-profile.
+ * That lets you log into Reddit once and reuse that session in later searches.
+ */
+async function launchTravelBrowserContext({ headless = BROWSER_HEADLESS } = {}) {
+  return await chromium.launchPersistentContext(BROWSER_PROFILE_PATH, {
+    headless,
+    userAgent: BROWSER_USER_AGENT,
+  });
+}
+
+/**
+ * Wait until the user presses Enter in the terminal.
+ */
+async function waitForEnter() {
+  return await new Promise((resolve) => {
+    process.stdin.resume();
+    process.stdin.once("data", () => {
+      process.stdin.pause();
+      resolve();
+    });
+  });
+}
+
+/**
+ * Open Reddit in a visible persistent browser so the user can log in manually.
+ *
+ * We do not collect or store credentials. Playwright stores normal browser
+ * session data in travel/browser-profile, which is ignored by git.
+ */
+export async function redditLoginMain() {
+  const context = await launchTravelBrowserContext({ headless: false });
+  const page = await context.newPage();
+
+  try {
+    await page.goto("https://www.reddit.com/login/", {
+      waitUntil: "domcontentloaded",
+      timeout: PAGE_TIMEOUT_MS,
+    });
+
+    console.log("A browser window is open at Reddit login.");
+    console.log("Log in there, then return here and press Enter.");
+
+    await waitForEnter();
+
+    console.log(`Saved browser session in ${BROWSER_PROFILE_PATH}`);
+  } finally {
+    await context.close();
+  }
+}
+
+/**
+ * Read local Reddit/community seed leads.
+ *
+ * These are useful when Reddit blocks browser automation. Keeping them in JSON
+ * makes the seed list easy to review and edit without touching code.
+ */
+async function readRedditSeedLeads() {
+  try {
+    const seedRaw = await fs.readFile(REDDIT_SEEDS_PATH, "utf8");
+    const seedData = JSON.parse(seedRaw);
+
+    return (seedData.leads || []).map((lead) => ({
+      ...lead,
+      source: "reddit-seed-file",
+      seeded: true,
+    }));
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+/**
  * Convert the friendly criteria date text into search-friendly defaults.
  *
  * This is intentionally simple for part 2. Later, criteria.json can store
@@ -169,10 +322,20 @@ function calculateNightCount({ checkin, checkout }) {
  * Direct travel pages can provide richer details, while Google can discover
  * pages when the travel site layout changes.
  */
-function buildSearchTargets({ destination, checkin, checkout, budgetText }) {
+function buildSearchTargets({
+  destination,
+  checkin,
+  checkout,
+  budgetText,
+  redditLeads = [],
+}) {
   const lodgingQuery = `${destination} lodging ${checkin} to ${checkout} ${budgetText} hostel budget hotel`;
+  const leadTargets = redditLeads.flatMap((lead) =>
+    buildTargetsForRedditLead({ lead, destination, checkin, checkout })
+  );
 
   return [
+    ...leadTargets,
     {
       source: "booking",
       url:
@@ -217,6 +380,67 @@ function buildSearchTargets({ destination, checkin, checkout, budgetText }) {
         }).toString(),
     },
   ];
+}
+
+/**
+ * Build Google searches for one Reddit-discovered hostel lead.
+ *
+ * The lead name is searched against Booking and Hostelworld. That lets Reddit
+ * influence where we look without trusting Reddit for live price data.
+ */
+function buildTargetsForRedditLead({ lead, destination, checkin, checkout }) {
+  const query = `${lead.name} ${destination} ${checkin} ${checkout}`;
+  const sourceSafeName = lead.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+  return [
+    {
+      source: `reddit-lead-booking-${sourceSafeName}`,
+      url:
+        "https://www.google.com/search?" +
+        new URLSearchParams({
+          q: `site:booking.com ${query}`,
+        }).toString(),
+    },
+    {
+      source: `reddit-lead-hostelworld-${sourceSafeName}`,
+      url:
+        "https://www.google.com/search?" +
+        new URLSearchParams({
+          q: `site:hostelworld.com ${query}`,
+        }).toString(),
+    },
+  ];
+}
+
+/**
+ * Build Reddit-focused Google searches.
+ *
+ * Each query targets a community where travelers often discuss hostel
+ * recommendations. The output is used for lead discovery, not price data.
+ */
+function buildRedditResearchTargets({ destination }) {
+  const searchTargets = REDDIT_COMMUNITIES.map((community) => ({
+    kind: "search",
+    community,
+    source: `reddit-${community}`,
+    url:
+      `https://old.reddit.com/r/${community}/search?` +
+      new URLSearchParams({
+        q: `${destination} hostel recommendations`,
+        restrict_sr: "on",
+        sort: "relevance",
+        t: "all",
+      }).toString(),
+  }));
+
+  const threadTargets = REDDIT_SEED_THREADS.map((thread, index) => ({
+    kind: "seed-thread",
+    community: thread.community,
+    source: `reddit-seed-${index + 1}`,
+    url: thread.url,
+  }));
+
+  return [...searchTargets, ...threadTargets];
 }
 
 /**
@@ -413,6 +637,211 @@ function dedupeCandidates(candidates) {
 }
 
 /**
+ * Remove repeated Reddit hostel leads.
+ */
+function dedupeRedditLeads(leads) {
+  const seen = new Set();
+  const deduped = [];
+
+  for (const lead of leads) {
+    const key = lead.name.toLowerCase();
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(lead);
+  }
+
+  return deduped;
+}
+
+/**
+ * Try to find likely hostel names in Reddit search result text.
+ *
+ * This is intentionally heuristic. It gives us leads to verify on lodging
+ * sites, not final facts. Later, Ollama can help extract names more flexibly.
+ */
+function extractLikelyHostelNames(text) {
+  const names = new Set();
+  const patterns = [
+    /\b(?:ClinkNOORD|Clink\s+NOORD)\b/gi,
+    /\b(?:Flying Pig Downtown|Flying Pig Uptown|The Flying Pig)\b/gi,
+    /\b(?:Stayokay Amsterdam Vondelpark|Stayokay Vondelpark|Stayokay Amsterdam)\b/gi,
+    /\b(?:Cocomama|Ecomama)\b/gi,
+    /\b(?:MEININGER Hotel Amsterdam City West|MEININGER Amsterdam)\b/gi,
+    /\b(?:Generator Amsterdam)\b/gi,
+    /\b(?:Hans Brinker Hostel|Hans Brinker)\b/gi,
+    /\b(?:The Bulldog|Bulldog Hostel)\b/gi,
+    /\b(?:St Christopher'?s at The Winston|St Christopher'?s)\b/gi,
+    /\b(?:This Ho\(s\)tel|This Hostel)\b/gi,
+    /\b(?:Shelter Jordan|Shelter City)\b/gi,
+    /\b(?:Durty Nelly'?s Inn|Durty Nelly'?s)\b/gi,
+    /\b(?:The Bee Hostel|Bee Hostel)\b/gi,
+    /\b(?:CityHub Amsterdam|CityHub)\b/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      names.add(match[0].replace(/\s+/g, " ").trim());
+    }
+  }
+
+  return [...names];
+}
+
+/**
+ * Extract Reddit search result snippets from Google.
+ */
+async function extractRedditSignals(page, target) {
+  return await page.evaluate(
+    ({ target }) => {
+      if (target.kind === "seed-thread") {
+        return [
+          {
+            source: target.source,
+            community: target.community,
+            title: document.title || target.url,
+            snippet: (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 5000),
+            link: target.url,
+          },
+        ];
+      }
+
+      const searchResults = Array.from(
+        document.querySelectorAll(".search-result, .thing")
+      );
+
+      if (searchResults.length) {
+        return searchResults
+          .map((result) => {
+            const anchor =
+              result.querySelector("a.search-title") ||
+              result.querySelector("a.title") ||
+              result.querySelector("a[href]");
+            const href = anchor?.href || "";
+            const title = anchor?.textContent?.trim() || "";
+            const text = (result.innerText || "")
+              .replace(/\s+/g, " ")
+              .trim();
+
+            return {
+              source: target.source,
+              community: target.community,
+              title,
+              snippet: text.slice(0, 500),
+              link: href,
+            };
+          })
+          .filter((signal) => signal.title && /reddit\.com\/r\//i.test(signal.link))
+          .slice(0, 5);
+      }
+
+      const links = Array.from(document.querySelectorAll("a[href]"));
+
+      return links
+        .map((anchor) => {
+          const href = anchor.href || "";
+          const container = anchor.closest("div") || anchor;
+          const text = (container.innerText || anchor.innerText || "")
+            .replace(/\s+/g, " ")
+            .trim();
+
+          return {
+            source: target.source,
+            community: target.community,
+            title: (anchor.innerText || "").split("\n")[0]?.trim() || "",
+            snippet: text.slice(0, 500),
+            link: href,
+          };
+        })
+        .filter((signal) => {
+          return (
+            signal.title &&
+            /reddit\.com\/r\//i.test(signal.link) &&
+            !/\/search\?/i.test(signal.link)
+          );
+        })
+        .slice(0, 5);
+    },
+    { target }
+  );
+}
+
+/**
+ * Open one Reddit-focused search page and extract recommendation signals.
+ */
+async function researchOneRedditTarget(browser, target) {
+  const page = await browser.newPage();
+
+  page.setDefaultTimeout(PAGE_TIMEOUT_MS);
+
+  try {
+    await page.goto(target.url, {
+      waitUntil: "domcontentloaded",
+      timeout: PAGE_TIMEOUT_MS,
+    });
+
+    await page.waitForTimeout(1500);
+
+    const signals = await extractRedditSignals(page, target);
+    const leads = signals.flatMap((signal) => {
+      return extractLikelyHostelNames(`${signal.title} ${signal.snippet}`).map(
+        (name) => ({
+          name,
+          source: target.source,
+          community: target.community,
+          evidenceTitle: signal.title,
+          evidenceLink: signal.link,
+        })
+      );
+    });
+
+    return {
+      ...target,
+      ok: true,
+      signals,
+      leads,
+    };
+  } catch (error) {
+    return {
+      ...target,
+      ok: false,
+      error: error.message,
+      signals: [],
+      leads: [],
+    };
+  } finally {
+    await page.close();
+  }
+}
+
+/**
+ * Search Reddit-related results before lodging sites.
+ */
+async function researchRedditLeads(browser, search) {
+  const targets = buildRedditResearchTargets(search);
+  const results = [];
+  const seedLeads = await readRedditSeedLeads();
+
+  for (const target of targets) {
+    results.push(await researchOneRedditTarget(browser, target));
+  }
+
+  const leads = dedupeRedditLeads(
+    [...results.flatMap((result) => result.leads), ...seedLeads]
+  ).slice(0, MAX_REDDIT_LEADS);
+
+  return {
+    targets,
+    results,
+    seedLeads,
+    leads,
+  };
+}
+
+/**
  * Extract Booking.com-style property cards from the current page.
  *
  * The selectors are intentionally based on visible page structure. If Booking
@@ -569,10 +998,7 @@ async function extractCandidatesForSource(page, source) {
  * Open one browser page and extract lodging candidates from it.
  */
 async function searchOneTarget(browser, target, search) {
-  const page = await browser.newPage({
-    userAgent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
-  });
+  const page = await browser.newPage();
 
   page.setDefaultTimeout(PAGE_TIMEOUT_MS);
 
@@ -613,7 +1039,7 @@ async function searchOneTarget(browser, target, search) {
 /**
  * Format candidates as Markdown so the output is easy to read.
  */
-function formatMarkdown({ search, results, candidates }) {
+function formatMarkdown({ search, redditResearch, results, candidates }) {
   const lines = [
     "# Lodging Search",
     "",
@@ -625,6 +1051,7 @@ function formatMarkdown({ search, results, candidates }) {
     `- Nights: ${search.nights}`,
     `- Budget: ${search.budgetText}`,
     `- Candidate limit per source: ${MAX_CANDIDATES_PER_SOURCE}`,
+    `- Reddit lead limit: ${MAX_REDDIT_LEADS}`,
     "",
     "## Notes",
     "",
@@ -632,12 +1059,30 @@ function formatMarkdown({ search, results, candidates }) {
     "- Total prices are extracted from visible page text.",
     "- Per-night prices are estimated by dividing total price by nights.",
     "- Prices and availability can change quickly.",
+    "- Reddit leads are discovery hints only; lodging pages are used for prices.",
     "- Review each source link manually before treating an option as real.",
     "- This tool does not book anything.",
     "",
-    "## Candidates",
-    "",
   ];
+
+  lines.push("## Reddit Discovery");
+  lines.push("");
+
+  if (!redditResearch?.leads?.length) {
+    lines.push("No notable hostel leads were extracted from Reddit search results.");
+    lines.push("");
+  } else {
+    for (const lead of redditResearch.leads) {
+      lines.push(`- ${lead.name} from r/${lead.community}`);
+      lines.push(`  Evidence: ${lead.evidenceTitle}`);
+      lines.push(`  Link: ${lead.evidenceLink}`);
+    }
+
+    lines.push("");
+  }
+
+  lines.push("## Candidates");
+  lines.push("");
 
   if (candidates.length === 0) {
     lines.push("No candidates were extracted. The sites may have blocked automation or changed layout.");
@@ -671,6 +1116,21 @@ function formatMarkdown({ search, results, candidates }) {
     );
   }
 
+  lines.push("");
+  lines.push("## Reddit Source Status");
+  lines.push("");
+
+  for (const result of redditResearch?.results || []) {
+    if (!result.ok) {
+      lines.push(`- r/${result.community}: failed - ${result.error}`);
+      continue;
+    }
+
+    lines.push(
+      `- r/${result.community}: ok, ${result.signals.length} signals, ${result.leads.length} leads`
+    );
+  }
+
   return `${lines.join("\n")}\n`;
 }
 
@@ -692,17 +1152,17 @@ function formatBudgetStatus(budget) {
 /**
  * Save raw JSON and readable Markdown outputs.
  */
-async function saveOutputs({ search, results, candidates }) {
+async function saveOutputs({ search, redditResearch, results, candidates }) {
   await fs.mkdir("travel/outputs", { recursive: true });
 
   await fs.writeFile(
     JSON_OUTPUT_PATH,
-    JSON.stringify({ search, results, candidates }, null, 2)
+    JSON.stringify({ search, redditResearch, results, candidates }, null, 2)
   );
 
   await fs.writeFile(
     MARKDOWN_OUTPUT_PATH,
-    formatMarkdown({ search, results, candidates })
+    formatMarkdown({ search, redditResearch, results, candidates })
   );
 }
 
@@ -717,14 +1177,19 @@ export async function main(args = process.argv.slice(2)) {
   const defaults = getTripDefaults(criteria);
   const destination = args.join(" ").trim() || defaults.destination;
   const search = { ...defaults, destination };
-  const targets = buildSearchTargets(search);
 
   const spinner = createSpinner("Opening browser");
   spinner.start();
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchTravelBrowserContext();
 
   try {
+    spinner.update("Researching Reddit leads");
+    const redditResearch = await researchRedditLeads(browser, search);
+    const targets = buildSearchTargets({
+      ...search,
+      redditLeads: redditResearch.leads,
+    });
     const results = [];
 
     for (const target of targets) {
@@ -738,9 +1203,10 @@ export async function main(args = process.argv.slice(2)) {
 
     spinner.stop("Browser search complete");
 
-    await saveOutputs({ search, results, candidates });
+    await saveOutputs({ search, redditResearch, results, candidates });
 
     console.log(`Found ${candidates.length} lodging candidates.`);
+    console.log(`Found ${redditResearch.leads.length} Reddit hostel leads.`);
     console.log(`Saved JSON to ${JSON_OUTPUT_PATH}`);
     console.log(`Saved Markdown to ${MARKDOWN_OUTPUT_PATH}`);
   } finally {
