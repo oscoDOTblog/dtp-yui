@@ -21,6 +21,16 @@ Log into Reddit once:
 npm run travel -- reddit-login
 ```
 
+Reddit discovery is off by default. Enable it in `travel/config.json`:
+
+```json
+{
+  "features": {
+    "redditDiscovery": true
+  }
+}
+```
+
 Change the per-source result limit and Reddit lead limit:
 
 ```bash

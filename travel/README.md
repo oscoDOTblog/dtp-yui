@@ -14,6 +14,7 @@ This version can open browser pages for lodging research, but it still does not 
 
 ## Files
 
+- `config.json` stores feature toggles for experimental steps.
 - `criteria.json` stores your trip preferences and constraints.
 - `reddit-seeds.json` stores editable hostel leads from community research.
 - `outputs/` stores generated research notes.
@@ -41,6 +42,16 @@ npm run travel -- reddit-login
 ```
 
 This opens a visible browser. Log into Reddit, return to the terminal, and press Enter. The browser session is stored locally in `travel/browser-profile/` and ignored by git.
+
+Reddit discovery is off by default. Turn it on in `travel/config.json`:
+
+```json
+{
+  "features": {
+    "redditDiscovery": true
+  }
+}
+```
 
 By default, the lodging command extracts up to 8 candidates per source and up to 5 Reddit hostel leads. You can raise those while experimenting:
 

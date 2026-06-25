@@ -23,6 +23,7 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
  * Local project paths used by this script.
  */
 const CRITERIA_PATH = "travel/criteria.json";
+const CONFIG_PATH = "travel/config.json";
 const REDDIT_SEEDS_PATH = "travel/reddit-seeds.json";
 const JSON_OUTPUT_PATH = "travel/outputs/lodging-search.json";
 const MARKDOWN_OUTPUT_PATH = "travel/outputs/lodging-search.md";
@@ -201,6 +202,25 @@ function createSpinner(label) {
 async function readCriteria() {
   const criteriaRaw = await fs.readFile(CRITERIA_PATH, "utf8");
   return JSON.parse(criteriaRaw);
+}
+
+/**
+ * Read travel tool configuration.
+ *
+ * Feature toggles live in travel/config.json so we can turn experimental steps
+ * on or off without editing code.
+ */
+async function readConfig() {
+  try {
+    const configRaw = await fs.readFile(CONFIG_PATH, "utf8");
+    return JSON.parse(configRaw);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return { features: { redditDiscovery: false } };
+    }
+
+    throw error;
+  }
 }
 
 /**
@@ -1052,6 +1072,7 @@ function formatMarkdown({ search, redditResearch, results, candidates }) {
     `- Budget: ${search.budgetText}`,
     `- Candidate limit per source: ${MAX_CANDIDATES_PER_SOURCE}`,
     `- Reddit lead limit: ${MAX_REDDIT_LEADS}`,
+    `- Reddit discovery: ${redditResearch?.enabled ? "on" : "off"}`,
     "",
     "## Notes",
     "",
@@ -1068,7 +1089,10 @@ function formatMarkdown({ search, redditResearch, results, candidates }) {
   lines.push("## Reddit Discovery");
   lines.push("");
 
-  if (!redditResearch?.leads?.length) {
+  if (!redditResearch?.enabled) {
+    lines.push("Reddit discovery is disabled in `travel/config.json`.");
+    lines.push("");
+  } else if (!redditResearch?.leads?.length) {
     lines.push("No notable hostel leads were extracted from Reddit search results.");
     lines.push("");
   } else {
@@ -1119,6 +1143,11 @@ function formatMarkdown({ search, redditResearch, results, candidates }) {
   lines.push("");
   lines.push("## Reddit Source Status");
   lines.push("");
+
+  if (!redditResearch?.enabled) {
+    lines.push("- skipped: Reddit discovery disabled");
+    return `${lines.join("\n")}\n`;
+  }
 
   for (const result of redditResearch?.results || []) {
     if (!result.ok) {
@@ -1174,9 +1203,11 @@ async function saveOutputs({ search, redditResearch, results, candidates }) {
  */
 export async function main(args = process.argv.slice(2)) {
   const criteria = await readCriteria();
+  const config = await readConfig();
   const defaults = getTripDefaults(criteria);
   const destination = args.join(" ").trim() || defaults.destination;
   const search = { ...defaults, destination };
+  const redditDiscoveryEnabled = config.features?.redditDiscovery === true;
 
   const spinner = createSpinner("Opening browser");
   spinner.start();
@@ -1184,8 +1215,22 @@ export async function main(args = process.argv.slice(2)) {
   const browser = await launchTravelBrowserContext();
 
   try {
-    spinner.update("Researching Reddit leads");
-    const redditResearch = await researchRedditLeads(browser, search);
+    let redditResearch = {
+      enabled: false,
+      targets: [],
+      results: [],
+      seedLeads: [],
+      leads: [],
+    };
+
+    if (redditDiscoveryEnabled) {
+      spinner.update("Researching Reddit leads");
+      redditResearch = {
+        enabled: true,
+        ...(await researchRedditLeads(browser, search)),
+      };
+    }
+
     const targets = buildSearchTargets({
       ...search,
       redditLeads: redditResearch.leads,
@@ -1206,7 +1251,11 @@ export async function main(args = process.argv.slice(2)) {
     await saveOutputs({ search, redditResearch, results, candidates });
 
     console.log(`Found ${candidates.length} lodging candidates.`);
-    console.log(`Found ${redditResearch.leads.length} Reddit hostel leads.`);
+    if (redditDiscoveryEnabled) {
+      console.log(`Found ${redditResearch.leads.length} Reddit hostel leads.`);
+    } else {
+      console.log("Reddit discovery disabled.");
+    }
     console.log(`Saved JSON to ${JSON_OUTPUT_PATH}`);
     console.log(`Saved Markdown to ${MARKDOWN_OUTPUT_PATH}`);
   } finally {

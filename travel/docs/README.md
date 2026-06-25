@@ -33,6 +33,7 @@ Today, the tool does not:
 - `travel/scripts/` contains individual scripts that the CLI can route to.
 - `travel/scripts/lodging-search.js` opens browser pages and extracts lodging candidates.
 - `travel/scripts/research.js` creates a local Ollama-powered research plan.
+- `travel/config.json` stores feature toggles for experimental steps.
 - `travel/criteria.json` stores trip criteria and preferences.
 - `travel/reddit-seeds.json` stores editable hostel leads from community research.
 - `travel/outputs/` stores generated Markdown notes.
@@ -65,6 +66,16 @@ npm run travel -- reddit-login
 ```
 
 The login command opens a visible Playwright browser using the persistent profile at `travel/browser-profile/`. After you log in and press Enter in the terminal, future lodging searches reuse that browser session. The profile folder is ignored by git because it can contain cookies and local browser state.
+
+Reddit discovery is off by default. Enable it in `travel/config.json`:
+
+```json
+{
+  "features": {
+    "redditDiscovery": true
+  }
+}
+```
 
 The lodging command extracts up to 8 candidates per source and up to 5 Reddit hostel leads by default. To inspect more:
 
