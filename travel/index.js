@@ -7,6 +7,7 @@
  */
 
 import { main as runResearch } from "./scripts/research.js";
+import { main as runLodgingSearch } from "./scripts/lodging-search.js";
 
 /**
  * Print a small help message when the user does not provide a command.
@@ -16,8 +17,10 @@ function printUsage() {
   console.log(
     'npm run travel -- research "make me a lodging research plan for Amsterdam during SDF"'
   );
+  console.log("npm run travel -- lodging Amsterdam");
   console.log("");
   console.log("Commands:");
+  console.log("  lodging   Search browser pages for lodging candidates.");
   console.log("  research  Create a local Ollama-powered travel research plan.");
 }
 
@@ -40,6 +43,11 @@ async function main() {
     return;
   }
 
+  if (command === "lodging") {
+    await runLodgingSearch(args);
+    return;
+  }
+
   console.error(`Unknown travel command: ${command}`);
   console.error("");
   printUsage();
@@ -54,4 +62,3 @@ main().catch((error) => {
   console.error(error.message);
   process.exitCode = 1;
 });
-

@@ -1,6 +1,7 @@
 # Custom
 sample.*
-*/outputs/research.md
+*/outputs/*
+!*/outputs/README.md
 
 # Logs
 logs

@@ -15,3 +15,9 @@ Run it:
 ```bash
 npm run travel -- research "make me a lodging research plan for Amsterdam during SDF"
 ```
+
+Search lodging pages with the browser tool:
+
+```bash
+npm run travel -- lodging Amsterdam
+```

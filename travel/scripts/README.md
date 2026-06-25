@@ -6,7 +6,20 @@ The top-level entry point is `travel/index.js`. It routes commands to files in t
 
 Current scripts:
 
+- `lodging-search.js` opens browser pages and extracts lodging candidates.
 - `research.js` creates a local Ollama-powered research plan from `travel/criteria.json`.
+
+Run the lodging command from the project root:
+
+```bash
+npm run travel -- lodging Amsterdam
+```
+
+If Playwright cannot find Chromium, run:
+
+```bash
+npx playwright install chromium
+```
 
 Run the research command from the project root:
 
@@ -19,4 +32,3 @@ You can also run the script directly while learning:
 ```bash
 node travel/scripts/research.js "compare hostel vs budget hotel for this trip"
 ```
-

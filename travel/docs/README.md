@@ -14,13 +14,15 @@ Today, the tool can:
 - Send a travel research request to local Ollama.
 - Use the `qwen3:8b` model by default.
 - Show a loading animation while Ollama is responding.
+- Open browser pages with Playwright for lodging research.
+- Extract visible lodging names, prices, distances, cancellation hints, ratings, and links when pages expose them.
 - Save the generated research plan to `travel/outputs/research.md`.
+- Save lodging search results to `travel/outputs/lodging-search.md` and `travel/outputs/lodging-search.json`.
 
 Today, the tool does not:
 
-- Browse travel websites.
-- Check live prices.
-- Scrape booking pages.
+- Guarantee live prices or availability.
+- Bypass bot checks, consent pages, or site layout changes.
 - Book flights, trains, lodging, or events.
 - Make decisions without user review.
 
@@ -28,6 +30,7 @@ Today, the tool does not:
 
 - `travel/index.js` is the generic travel CLI entry point.
 - `travel/scripts/` contains individual scripts that the CLI can route to.
+- `travel/scripts/lodging-search.js` opens browser pages and extracts lodging candidates.
 - `travel/scripts/research.js` creates a local Ollama-powered research plan.
 - `travel/criteria.json` stores trip criteria and preferences.
 - `travel/outputs/` stores generated Markdown notes.
@@ -45,6 +48,28 @@ Run the research command through the generic entry point:
 
 ```bash
 npm run travel -- research "make me a lodging research plan for Amsterdam during SDF"
+```
+
+Run the lodging browser search:
+
+```bash
+npm run travel -- lodging Amsterdam
+```
+
+## Browser Setup
+
+The lodging command uses Playwright.
+
+Install Node dependencies:
+
+```bash
+npm install
+```
+
+Install Playwright's Chromium browser:
+
+```bash
+npx playwright install chromium
 ```
 
 Run the research script directly while learning:

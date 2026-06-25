@@ -6,9 +6,10 @@ The goal for this step is intentionally small:
 
 - Keep your trip criteria in one readable JSON file.
 - Ask a local Ollama model to turn a travel question into a practical research plan.
+- Use a browser script to gather lodging candidates for review.
 - Save the model's response as Markdown so you can review it later.
 
-This version does not browse the web, check live prices, book anything, or call travel APIs. It is only a local planning assistant.
+This version can open browser pages for lodging research, but it still does not book anything or treat extracted prices as final.
 
 ## Files
 
@@ -23,6 +24,18 @@ From the project root:
 
 ```bash
 npm run travel -- research "make me a lodging research plan for Amsterdam during SDF"
+```
+
+Search for lodging candidates:
+
+```bash
+npm run travel -- lodging Amsterdam
+```
+
+If the lodging command says the browser executable is missing, install Playwright's Chromium browser:
+
+```bash
+npx playwright install chromium
 ```
 
 You can also run the research script directly while learning:

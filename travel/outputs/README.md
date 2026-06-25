@@ -1,6 +1,11 @@
 # Travel Research Outputs
 
-Generated Markdown research notes are saved here.
+Generated travel research outputs are saved here.
 
-The CLI currently writes to `research.md` each time it runs. That keeps part 1 easy to understand; later we can add timestamps, separate trip folders, or a saved shortlist.
+Current outputs:
 
+- `research.md` stores the local Ollama research plan.
+- `lodging-search.md` stores readable lodging candidates from browser search.
+- `lodging-search.json` stores the same lodging data in structured form.
+
+Each script currently overwrites its own output file. That keeps early development simple; later we can add timestamps, separate trip folders, or saved shortlists.

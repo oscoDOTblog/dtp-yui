@@ -45,16 +45,27 @@ const CRITERIA_PATH = "travel/criteria.json";
 const OUTPUT_PATH = "travel/outputs/research.md";
 
 /**
- * Create a small terminal spinner.
+ * Create a small terminal progress list.
  *
- * The spinner writes to stderr instead of stdout. That keeps the loading
- * animation separate from the final research answer, which prints to stdout.
+ * Completed steps stay visible, and only the current step animates. The output
+ * goes to stderr instead of stdout so loading status stays separate from the
+ * final research answer.
  */
 function createSpinner(label) {
   let frame = 0;
   let timer;
+  let currentLabel = label;
 
   return {
+    /**
+     * Render the current in-progress line.
+     */
+    render() {
+      process.stderr.write(
+        `\r${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]} ${currentLabel}`
+      );
+    },
+
     /**
      * Start the animation.
      *
@@ -63,19 +74,34 @@ function createSpinner(label) {
      */
     start() {
       if (!process.stderr.isTTY) {
-        process.stderr.write(`${label}...\n`);
+        process.stderr.write(`[doing] ${currentLabel}\n`);
         return;
       }
 
       timer = setInterval(() => {
-        process.stderr.write(
-          `\r${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]} ${label}`
-        );
+        this.render();
       }, 80);
     },
 
     /**
-     * Stop the animation and optionally print a completion label.
+     * Mark the current step as complete and move to the next one.
+     */
+    update(nextLabel) {
+      if (!process.stderr.isTTY) {
+        process.stderr.write(`[done] ${currentLabel}\n`);
+        process.stderr.write(`[doing] ${nextLabel}\n`);
+        currentLabel = nextLabel;
+        return;
+      }
+
+      process.stderr.write(`\r\x1b[K[done] ${currentLabel}\n`);
+      currentLabel = nextLabel;
+      frame = 0;
+      this.render();
+    },
+
+    /**
+     * Stop the animation and mark the final step as complete.
      */
     stop(doneLabel) {
       if (timer) {
@@ -83,16 +109,21 @@ function createSpinner(label) {
         timer = undefined;
       }
 
-      if (process.stderr.isTTY) {
-        process.stderr.write(`\r${doneLabel ?? `${label}... done`}\n`);
-      }
-    },
+      if (!process.stderr.isTTY) {
+        process.stderr.write(`[done] ${currentLabel}\n`);
 
-    /**
-     * Change the visible label while the spinner is running.
-     */
-    update(nextLabel) {
-      label = nextLabel;
+        if (doneLabel && doneLabel !== currentLabel) {
+          process.stderr.write(`[done] ${doneLabel}\n`);
+        }
+
+        return;
+      }
+
+      process.stderr.write(`\r\x1b[K[done] ${currentLabel}\n`);
+
+      if (doneLabel && doneLabel !== currentLabel) {
+        process.stderr.write(`[done] ${doneLabel}\n`);
+      }
     },
   };
 }
