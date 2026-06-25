@@ -31,9 +31,15 @@ const MARKDOWN_OUTPUT_PATH = "travel/outputs/lodging-search.md";
 const PAGE_TIMEOUT_MS = 30000;
 
 /**
- * Keep the output small enough to review by hand.
+ * Keep the output small enough to review by hand by default.
+ *
+ * You can override this without editing code:
+ * TRAVEL_MAX_CANDIDATES=20 npm run travel -- lodging Amsterdam
  */
-const MAX_CANDIDATES_PER_SOURCE = 8;
+const MAX_CANDIDATES_PER_SOURCE = Number.parseInt(
+  process.env.TRAVEL_MAX_CANDIDATES || "8",
+  10
+);
 
 /**
  * Create a terminal progress list that writes to stderr.
@@ -137,6 +143,7 @@ function getTripDefaults(criteria) {
     checkin,
     checkout,
     nights: calculateNightCount({ checkin, checkout }),
+    maxPerNight: criteria.budget?.lodging_max_per_night_eur || 70,
     budgetText: `under ${criteria.budget?.lodging_max_per_night_eur || 70} EUR per night`,
   };
 }
@@ -230,9 +237,20 @@ function firstMatch(text, patterns) {
 /**
  * Normalize one extracted candidate so the saved JSON stays predictable.
  */
-function normalizeCandidate(candidate, nights) {
+function normalizeCandidate(candidate, search) {
   const totalPrice = findBestPriceText(candidate);
-  const pricePerNight = calculatePricePerNight({ priceText: totalPrice, nights });
+  const pricePerNightAmount = calculatePricePerNightAmount({
+    priceText: totalPrice,
+    nights: search.nights,
+  });
+  const pricePerNight = formatPrice({
+    amount: pricePerNightAmount,
+    currency: detectCurrency(totalPrice),
+  });
+  const budget = getBudgetStatus({
+    pricePerNightAmount,
+    maxPerNight: search.maxPerNight,
+  });
 
   return {
     source: candidate.source,
@@ -240,12 +258,46 @@ function normalizeCandidate(candidate, nights) {
     price: totalPrice,
     totalPrice,
     pricePerNight,
-    nights,
+    pricePerNightAmount,
+    nights: search.nights,
+    budget,
     rating: candidate.rating || "",
     distance: candidate.distance || "",
     cancellation: candidate.cancellation || "",
     link: candidate.link || "",
     notes: candidate.notes || "",
+  };
+}
+
+/**
+ * Decide whether a candidate is within the configured per-night budget.
+ *
+ * Unknown prices are kept in the results because the extraction may have
+ * missed visible page data that a human can still check manually.
+ */
+function getBudgetStatus({ pricePerNightAmount, maxPerNight }) {
+  if (pricePerNightAmount === undefined) {
+    return {
+      status: "unknown",
+      label: "Unknown budget status",
+      maxPerNight,
+    };
+  }
+
+  if (pricePerNightAmount <= maxPerNight) {
+    return {
+      status: "within_budget",
+      label: "Within budget",
+      maxPerNight,
+      differencePerNight: Number((maxPerNight - pricePerNightAmount).toFixed(2)),
+    };
+  }
+
+  return {
+    status: "over_budget",
+    label: "Over budget",
+    maxPerNight,
+    differencePerNight: Number((pricePerNightAmount - maxPerNight).toFixed(2)),
   };
 }
 
@@ -315,17 +367,25 @@ function detectCurrency(priceText) {
  * This is an estimate because travel sites may include taxes, discounts, or
  * fees differently. The report labels it clearly as per night.
  */
-function calculatePricePerNight({ priceText, nights }) {
+function calculatePricePerNightAmount({ priceText, nights }) {
   const amount = parsePriceAmount(priceText);
 
+  if (amount === undefined) {
+    return undefined;
+  }
+
+  return amount / nights;
+}
+
+/**
+ * Format a numeric amount back into display text.
+ */
+function formatPrice({ amount, currency }) {
   if (amount === undefined) {
     return "";
   }
 
-  const currency = detectCurrency(priceText);
-  const perNight = amount / nights;
-
-  return `${currency}${perNight.toFixed(2)}`;
+  return `${currency}${amount.toFixed(2)}`;
 }
 
 /**
@@ -534,7 +594,7 @@ async function searchOneTarget(browser, target, search) {
       url: target.url,
       ok: true,
       candidates: candidates.map((candidate) =>
-        normalizeCandidate(candidate, search.nights)
+        normalizeCandidate(candidate, search)
       ),
     };
   } catch (error) {
@@ -564,6 +624,7 @@ function formatMarkdown({ search, results, candidates }) {
     `- Check-out: ${search.checkout}`,
     `- Nights: ${search.nights}`,
     `- Budget: ${search.budgetText}`,
+    `- Candidate limit per source: ${MAX_CANDIDATES_PER_SOURCE}`,
     "",
     "## Notes",
     "",
@@ -588,6 +649,7 @@ function formatMarkdown({ search, results, candidates }) {
     lines.push(`- Source: ${candidate.source}`);
     lines.push(`- Total cost: ${candidate.totalPrice || "Not found"}`);
     lines.push(`- Per night: ${candidate.pricePerNight || "Not found"}`);
+    lines.push(`- Budget status: ${formatBudgetStatus(candidate.budget)}`);
     lines.push(`- Rating: ${candidate.rating || "Not found"}`);
     lines.push(`- Distance: ${candidate.distance || "Not found"}`);
     lines.push(`- Cancellation: ${candidate.cancellation || "Not found"}`);
@@ -610,6 +672,21 @@ function formatMarkdown({ search, results, candidates }) {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Turn the structured budget status into a readable Markdown line.
+ */
+function formatBudgetStatus(budget) {
+  if (!budget || budget.status === "unknown") {
+    return "Unknown";
+  }
+
+  if (budget.status === "within_budget") {
+    return `Within budget (${budget.differencePerNight.toFixed(2)} EUR/night under max)`;
+  }
+
+  return `Over budget (${budget.differencePerNight.toFixed(2)} EUR/night over max)`;
 }
 
 /**

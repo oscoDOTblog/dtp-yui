@@ -56,6 +56,12 @@ Run the lodging browser search:
 npm run travel -- lodging Amsterdam
 ```
 
+The lodging command extracts up to 8 candidates per source by default. To inspect more:
+
+```bash
+TRAVEL_MAX_CANDIDATES=20 npm run travel -- lodging Amsterdam
+```
+
 ## Browser Setup
 
 The lodging command uses Playwright.

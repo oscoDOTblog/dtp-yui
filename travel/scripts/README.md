@@ -15,6 +15,12 @@ Run the lodging command from the project root:
 npm run travel -- lodging Amsterdam
 ```
 
+Change the per-source result limit:
+
+```bash
+TRAVEL_MAX_CANDIDATES=20 npm run travel -- lodging Amsterdam
+```
+
 If Playwright cannot find Chromium, run:
 
 ```bash
