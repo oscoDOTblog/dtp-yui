@@ -27,13 +27,35 @@ Discovery/search sources are off by default. Enable only the ones you want in `t
 {
   "features": {
     "redditDiscovery": true,
+    "googlePlacesDiscovery": true,
     "bookingBrowserSearch": true,
     "hostelworldBrowserSearch": true,
     "googleBookingBrowserSearch": true,
     "googleHostelworldBrowserSearch": true
+  },
+  "googlePlaces": {
+    "anchorText": "Summer Dance Forever Amsterdam venue",
+    "radiusMiles": 1.5,
+    "includedTypes": ["lodging"],
+    "maxResultCount": 10,
+    "minRating": 0
   }
 }
 ```
+
+Google Places also needs an API key in your shell:
+
+```bash
+export GOOGLE_MAPS_API_KEY="your-key"
+```
+
+Or put it in `.env.local` at the project root:
+
+```bash
+GOOGLE_MAPS_API_KEY=your-key
+```
+
+`.env.local` is ignored by git.
 
 Change the per-source result limit and Reddit lead limit:
 

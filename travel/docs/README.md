@@ -73,10 +73,18 @@ Discovery/search sources are off by default. Enable only the ones you want in `t
 {
   "features": {
     "redditDiscovery": true,
+    "googlePlacesDiscovery": true,
     "bookingBrowserSearch": true,
     "hostelworldBrowserSearch": true,
     "googleBookingBrowserSearch": true,
     "googleHostelworldBrowserSearch": true
+  },
+  "googlePlaces": {
+    "anchorText": "Summer Dance Forever Amsterdam venue",
+    "radiusMiles": 1.5,
+    "includedTypes": ["lodging"],
+    "maxResultCount": 10,
+    "minRating": 0
   }
 }
 ```
@@ -84,10 +92,27 @@ Discovery/search sources are off by default. Enable only the ones you want in `t
 Current config toggles:
 
 - `redditDiscovery`: discovers hostel leads from Reddit/community seed data and, when enabled, tries Reddit pages.
+- `googlePlacesDiscovery`: discovers lodging near an exact anchor location with Google Places.
 - `bookingBrowserSearch`: queries Booking.com directly.
 - `hostelworldBrowserSearch`: queries Hostelworld directly.
 - `googleBookingBrowserSearch`: queries Google for Booking.com pages.
 - `googleHostelworldBrowserSearch`: queries Google for Hostelworld pages.
+
+Google Places requires an API key in your shell:
+
+```bash
+export GOOGLE_MAPS_API_KEY="your-key"
+```
+
+Or put it in `.env.local` at the project root:
+
+```bash
+GOOGLE_MAPS_API_KEY=your-key
+```
+
+`.env.local` is ignored by git.
+
+The config stores `radiusMiles` for readability. The script converts miles to meters before calling Google Places.
 
 The lodging command extracts up to 8 candidates per source and up to 5 Reddit hostel leads by default. To inspect more:
 

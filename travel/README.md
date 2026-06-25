@@ -43,16 +43,24 @@ npm run travel -- reddit-login
 
 This opens a visible browser. Log into Reddit, return to the terminal, and press Enter. The browser session is stored locally in `travel/browser-profile/` and ignored by git.
 
-Reddit discovery is off by default. Turn it on in `travel/config.json`:
+Discovery/search sources are off by default. Turn on the ones you want in `travel/config.json`:
 
 ```json
 {
   "features": {
     "redditDiscovery": true,
+    "googlePlacesDiscovery": true,
     "bookingBrowserSearch": true,
     "hostelworldBrowserSearch": true,
     "googleBookingBrowserSearch": true,
     "googleHostelworldBrowserSearch": true
+  },
+  "googlePlaces": {
+    "anchorText": "Summer Dance Forever Amsterdam venue",
+    "radiusMiles": 1.5,
+    "includedTypes": ["lodging"],
+    "maxResultCount": 10,
+    "minRating": 0
   }
 }
 ```
@@ -60,10 +68,25 @@ Reddit discovery is off by default. Turn it on in `travel/config.json`:
 Current config toggles:
 
 - `redditDiscovery`: discover hostel leads from Reddit/community seeds.
+- `googlePlacesDiscovery`: discover lodging near an exact anchor location with Google Places.
 - `bookingBrowserSearch`: search Booking.com directly.
 - `hostelworldBrowserSearch`: search Hostelworld directly.
 - `googleBookingBrowserSearch`: use Google to find Booking.com result pages.
 - `googleHostelworldBrowserSearch`: use Google to find Hostelworld result pages.
+
+Google Places requires an API key in your shell, not in config:
+
+```bash
+export GOOGLE_MAPS_API_KEY="your-key"
+```
+
+You can also put it in `.env.local` at the project root:
+
+```bash
+GOOGLE_MAPS_API_KEY=your-key
+```
+
+`.env.local` is ignored by git.
 
 By default, the lodging command extracts up to 8 candidates per source and up to 5 Reddit hostel leads. You can raise those while experimenting:
 

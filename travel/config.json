@@ -1,9 +1,17 @@
 {
   "features": {
     "redditDiscovery": false,
+    "googlePlacesDiscovery": false,
     "bookingBrowserSearch": false,
     "hostelworldBrowserSearch": false,
     "googleBookingBrowserSearch": false,
     "googleHostelworldBrowserSearch": false
+  },
+  "googlePlaces": {
+    "anchorText": "",
+    "radiusMiles": 1.5,
+    "includedTypes": ["lodging"],
+    "maxResultCount": 10,
+    "minRating": 0
   }
 }

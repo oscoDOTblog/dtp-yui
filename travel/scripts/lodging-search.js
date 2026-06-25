@@ -28,6 +28,7 @@ const REDDIT_SEEDS_PATH = "travel/reddit-seeds.json";
 const JSON_OUTPUT_PATH = "travel/outputs/lodging-search.json";
 const MARKDOWN_OUTPUT_PATH = "travel/outputs/lodging-search.md";
 const BROWSER_PROFILE_PATH = "travel/browser-profile";
+const LOCAL_ENV_PATH = ".env.local";
 
 /**
  * One browser identity for login and searches.
@@ -205,6 +206,44 @@ async function readCriteria() {
 }
 
 /**
+ * Load local environment variables from .env.local.
+ *
+ * This keeps API keys out of committed config files. Existing shell variables
+ * win, so `.env.local` will not overwrite something you already exported.
+ */
+async function loadLocalEnv() {
+  try {
+    const envRaw = await fs.readFile(LOCAL_ENV_PATH, "utf8");
+
+    for (const line of envRaw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+
+      const equalsIndex = trimmed.indexOf("=");
+
+      if (equalsIndex === -1) {
+        continue;
+      }
+
+      const key = trimmed.slice(0, equalsIndex).trim();
+      const rawValue = trimmed.slice(equalsIndex + 1).trim();
+      const value = rawValue.replace(/^["']|["']$/g, "");
+
+      if (key && process.env[key] === undefined) {
+        process.env[key] = value;
+      }
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+/**
  * Read travel tool configuration.
  *
  * Feature toggles live in travel/config.json so we can turn experimental steps
@@ -234,12 +273,38 @@ function getFeatureFlags(config) {
 
   return {
     redditDiscovery: features.redditDiscovery === true,
+    googlePlacesDiscovery: features.googlePlacesDiscovery === true,
     bookingBrowserSearch: features.bookingBrowserSearch === true,
     hostelworldBrowserSearch: features.hostelworldBrowserSearch === true,
     googleBookingBrowserSearch: features.googleBookingBrowserSearch === true,
     googleHostelworldBrowserSearch:
       features.googleHostelworldBrowserSearch === true,
   };
+}
+
+/**
+ * Read Google Places settings from config with beginner-friendly defaults.
+ *
+ * Radius is configured in miles because that is easier to reason about while
+ * planning a trip. Google Places expects meters, so we convert at call time.
+ */
+function getGooglePlacesConfig(config) {
+  const googlePlaces = config.googlePlaces || {};
+
+  return {
+    anchorText: googlePlaces.anchorText || "",
+    radiusMiles: Number(googlePlaces.radiusMiles || 1.5),
+    includedTypes: googlePlaces.includedTypes || ["lodging"],
+    maxResultCount: Number(googlePlaces.maxResultCount || 10),
+    minRating: Number(googlePlaces.minRating || 0),
+  };
+}
+
+/**
+ * Convert human-friendly miles into Google API meters.
+ */
+function milesToMeters(miles) {
+  return miles * 1609.344;
 }
 
 /**
@@ -492,6 +557,158 @@ function buildRedditResearchTargets({ destination }) {
   }));
 
   return [...searchTargets, ...threadTargets];
+}
+
+/**
+ * Call a Google Places API endpoint.
+ *
+ * Google Places (New) requires:
+ * - an API key
+ * - a JSON request body
+ * - an X-Goog-FieldMask header declaring exactly which fields we want back
+ */
+async function callGooglePlaces({ endpoint, body, fieldMask }) {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("Missing GOOGLE_MAPS_API_KEY environment variable.");
+  }
+
+  const response = await fetch(`https://places.googleapis.com/v1/${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": fieldMask,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Google Places ${endpoint} failed: ${response.status} ${text}`);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Resolve a human location such as "Summer Dance Forever Amsterdam venue" into
+ * the first Google place result with a latitude and longitude.
+ */
+async function resolveGoogleAnchorPlace(anchorText) {
+  const data = await callGooglePlaces({
+    endpoint: "places:searchText",
+    body: {
+      textQuery: anchorText,
+      maxResultCount: 1,
+    },
+    fieldMask:
+      "places.id,places.displayName,places.formattedAddress,places.location,places.googleMapsUri",
+  });
+
+  return data.places?.[0];
+}
+
+/**
+ * Search Google Places for lodging around the resolved anchor location.
+ */
+async function searchGooglePlacesNearby({ anchorPlace, googlePlacesConfig }) {
+  const radiusMeters = milesToMeters(googlePlacesConfig.radiusMiles);
+  const data = await callGooglePlaces({
+    endpoint: "places:searchNearby",
+    body: {
+      includedTypes: googlePlacesConfig.includedTypes,
+      maxResultCount: googlePlacesConfig.maxResultCount,
+      rankPreference: "POPULARITY",
+      locationRestriction: {
+        circle: {
+          center: anchorPlace.location,
+          radius: radiusMeters,
+        },
+      },
+    },
+    fieldMask:
+      "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.priceLevel,places.googleMapsUri,places.types",
+  });
+
+  return {
+    radiusMeters,
+    places: data.places || [],
+  };
+}
+
+/**
+ * Normalize one Google Places lodging result.
+ */
+function normalizeGooglePlace(place, googlePlacesConfig) {
+  const rating = place.rating ?? undefined;
+  const meetsRating =
+    rating === undefined || rating >= googlePlacesConfig.minRating;
+
+  return {
+    source: "google-places",
+    placeId: place.id || "",
+    name: place.displayName?.text || "Unknown Google place",
+    address: place.formattedAddress || "",
+    rating,
+    userRatingCount: place.userRatingCount,
+    priceLevel: place.priceLevel || "",
+    googleMapsUri: place.googleMapsUri || "",
+    location: place.location,
+    types: place.types || [],
+    criteria: {
+      minRating: googlePlacesConfig.minRating,
+      ratingStatus: meetsRating ? "passes" : "below_minimum",
+    },
+  };
+}
+
+/**
+ * Run the full Google Places discovery step.
+ */
+async function discoverGooglePlaces({ search, googlePlacesConfig }) {
+  const anchorText = googlePlacesConfig.anchorText || search.destination;
+
+  try {
+    const anchorPlace = await resolveGoogleAnchorPlace(anchorText);
+
+    if (!anchorPlace?.location) {
+      throw new Error(`No Google Places anchor found for: ${anchorText}`);
+    }
+
+    const nearby = await searchGooglePlacesNearby({
+      anchorPlace,
+      googlePlacesConfig,
+    });
+    const places = nearby.places
+      .map((place) => normalizeGooglePlace(place, googlePlacesConfig))
+      .filter((place) => place.criteria.ratingStatus === "passes");
+
+    return {
+      enabled: true,
+      ok: true,
+      anchorText,
+      anchorPlace: normalizeGooglePlace(anchorPlace, googlePlacesConfig),
+      radiusMiles: googlePlacesConfig.radiusMiles,
+      radiusMeters: nearby.radiusMeters,
+      includedTypes: googlePlacesConfig.includedTypes,
+      minRating: googlePlacesConfig.minRating,
+      places,
+    };
+  } catch (error) {
+    return {
+      enabled: true,
+      ok: false,
+      anchorText,
+      radiusMiles: googlePlacesConfig.radiusMiles,
+      radiusMeters: milesToMeters(googlePlacesConfig.radiusMiles),
+      includedTypes: googlePlacesConfig.includedTypes,
+      minRating: googlePlacesConfig.minRating,
+      error: error.message,
+      places: [],
+    };
+  }
 }
 
 /**
@@ -1093,6 +1310,7 @@ async function searchOneTarget(browser, target, search) {
 function formatMarkdown({
   search,
   features,
+  googlePlacesDiscovery,
   redditResearch,
   results,
   candidates,
@@ -1110,6 +1328,7 @@ function formatMarkdown({
     `- Candidate limit per source: ${MAX_CANDIDATES_PER_SOURCE}`,
     `- Reddit lead limit: ${MAX_REDDIT_LEADS}`,
     `- Reddit discovery: ${redditResearch?.enabled ? "on" : "off"}`,
+    `- Google Places discovery: ${googlePlacesDiscovery?.enabled ? "on" : "off"}`,
     `- Booking browser search: ${features.bookingBrowserSearch ? "on" : "off"}`,
     `- Hostelworld browser search: ${features.hostelworldBrowserSearch ? "on" : "off"}`,
     `- Google Booking browser search: ${features.googleBookingBrowserSearch ? "on" : "off"}`,
@@ -1121,11 +1340,49 @@ function formatMarkdown({
     "- Total prices are extracted from visible page text.",
     "- Per-night prices are estimated by dividing total price by nights.",
     "- Prices and availability can change quickly.",
+    "- Google Places results are location candidates, not live booking prices.",
     "- Reddit leads are discovery hints only; lodging pages are used for prices.",
     "- Review each source link manually before treating an option as real.",
     "- This tool does not book anything.",
     "",
   ];
+
+  lines.push("## Google Places Discovery");
+  lines.push("");
+
+  if (!googlePlacesDiscovery?.enabled) {
+    lines.push("Google Places discovery is disabled in `travel/config.json`.");
+    lines.push("");
+  } else if (!googlePlacesDiscovery.ok) {
+    lines.push(`Google Places discovery failed: ${googlePlacesDiscovery.error}`);
+    lines.push(`- Anchor query: ${googlePlacesDiscovery.anchorText}`);
+    lines.push(`- Radius: ${googlePlacesDiscovery.radiusMiles} miles / ${Math.round(googlePlacesDiscovery.radiusMeters)} meters`);
+    lines.push("");
+  } else {
+    lines.push(`- Anchor query: ${googlePlacesDiscovery.anchorText}`);
+    lines.push(`- Anchor place: ${googlePlacesDiscovery.anchorPlace.name}`);
+    lines.push(`- Anchor address: ${googlePlacesDiscovery.anchorPlace.address || "Not found"}`);
+    lines.push(`- Radius: ${googlePlacesDiscovery.radiusMiles} miles / ${Math.round(googlePlacesDiscovery.radiusMeters)} meters`);
+    lines.push(`- Included types: ${googlePlacesDiscovery.includedTypes.join(", ")}`);
+    lines.push(`- Minimum rating: ${googlePlacesDiscovery.minRating}`);
+    lines.push("");
+
+    if (googlePlacesDiscovery.places.length === 0) {
+      lines.push("No Google Places lodging candidates matched the current criteria.");
+      lines.push("");
+    } else {
+      for (const place of googlePlacesDiscovery.places) {
+        lines.push(`### ${place.name}`);
+        lines.push("");
+        lines.push(`- Address: ${place.address || "Not found"}`);
+        lines.push(`- Rating: ${place.rating ?? "Not found"}`);
+        lines.push(`- Review count: ${place.userRatingCount ?? "Not found"}`);
+        lines.push(`- Price level: ${place.priceLevel || "Not found"}`);
+        lines.push(`- Google Maps: ${place.googleMapsUri || "Not found"}`);
+        lines.push("");
+      }
+    }
+  }
 
   lines.push("## Reddit Discovery");
   lines.push("");
@@ -1229,6 +1486,7 @@ function formatBudgetStatus(budget) {
 async function saveOutputs({
   search,
   features,
+  googlePlacesDiscovery,
   redditResearch,
   results,
   candidates,
@@ -1237,12 +1495,30 @@ async function saveOutputs({
 
   await fs.writeFile(
     JSON_OUTPUT_PATH,
-    JSON.stringify({ search, features, redditResearch, results, candidates }, null, 2)
+    JSON.stringify(
+      {
+        search,
+        features,
+        googlePlacesDiscovery,
+        redditResearch,
+        results,
+        candidates,
+      },
+      null,
+      2
+    )
   );
 
   await fs.writeFile(
     MARKDOWN_OUTPUT_PATH,
-    formatMarkdown({ search, features, redditResearch, results, candidates })
+    formatMarkdown({
+      search,
+      features,
+      googlePlacesDiscovery,
+      redditResearch,
+      results,
+      candidates,
+    })
   );
 }
 
@@ -1253,19 +1529,36 @@ async function saveOutputs({
  * If provided, the argument becomes the destination text.
  */
 export async function main(args = process.argv.slice(2)) {
+  await loadLocalEnv();
+
   const criteria = await readCriteria();
   const config = await readConfig();
   const defaults = getTripDefaults(criteria);
   const destination = args.join(" ").trim() || defaults.destination;
   const search = { ...defaults, destination };
   const features = getFeatureFlags(config);
+  const googlePlacesConfig = getGooglePlacesConfig(config);
 
-  const spinner = createSpinner("Opening browser");
+  const spinner = createSpinner("Preparing lodging search");
   spinner.start();
 
-  const browser = await launchTravelBrowserContext();
+  let browser;
 
   try {
+    let googlePlacesDiscovery = {
+      enabled: false,
+      ok: false,
+      places: [],
+    };
+
+    if (features.googlePlacesDiscovery) {
+      spinner.update("Searching Google Places");
+      googlePlacesDiscovery = await discoverGooglePlaces({
+        search,
+        googlePlacesConfig,
+      });
+    }
+
     let redditResearch = {
       enabled: false,
       targets: [],
@@ -1273,6 +1566,18 @@ export async function main(args = process.argv.slice(2)) {
       seedLeads: [],
       leads: [],
     };
+
+    const needsBrowser =
+      features.redditDiscovery ||
+      features.bookingBrowserSearch ||
+      features.hostelworldBrowserSearch ||
+      features.googleBookingBrowserSearch ||
+      features.googleHostelworldBrowserSearch;
+
+    if (needsBrowser) {
+      spinner.update("Opening browser");
+      browser = await launchTravelBrowserContext();
+    }
 
     if (features.redditDiscovery) {
       spinner.update("Researching Reddit leads");
@@ -1289,20 +1594,36 @@ export async function main(args = process.argv.slice(2)) {
     });
     const results = [];
 
-    for (const target of targets) {
-      spinner.update(`Searching ${target.source}`);
-      results.push(await searchOneTarget(browser, target, search));
+    if (browser) {
+      for (const target of targets) {
+        spinner.update(`Searching ${target.source}`);
+        results.push(await searchOneTarget(browser, target, search));
+      }
     }
 
     const candidates = dedupeCandidates(
       results.flatMap((result) => result.candidates)
     );
 
-    spinner.stop("Browser search complete");
+    spinner.stop("Lodging search complete");
 
-    await saveOutputs({ search, features, redditResearch, results, candidates });
+    await saveOutputs({
+      search,
+      features,
+      googlePlacesDiscovery,
+      redditResearch,
+      results,
+      candidates,
+    });
 
     console.log(`Found ${candidates.length} lodging candidates.`);
+    if (features.googlePlacesDiscovery) {
+      console.log(
+        `Found ${googlePlacesDiscovery.places.length} Google Places candidates.`
+      );
+    } else {
+      console.log("Google Places discovery disabled.");
+    }
     if (features.redditDiscovery) {
       console.log(`Found ${redditResearch.leads.length} Reddit hostel leads.`);
     } else {
@@ -1314,7 +1635,9 @@ export async function main(args = process.argv.slice(2)) {
     console.log(`Saved JSON to ${JSON_OUTPUT_PATH}`);
     console.log(`Saved Markdown to ${MARKDOWN_OUTPUT_PATH}`);
   } finally {
-    await browser.close();
+    if (browser) {
+      await browser.close();
+    }
   }
 }
 
