@@ -21,12 +21,16 @@ Log into Reddit once:
 npm run travel -- reddit-login
 ```
 
-Reddit discovery is off by default. Enable it in `travel/config.json`:
+Discovery/search sources are off by default. Enable only the ones you want in `travel/config.json`:
 
 ```json
 {
   "features": {
-    "redditDiscovery": true
+    "redditDiscovery": true,
+    "bookingBrowserSearch": true,
+    "hostelworldBrowserSearch": true,
+    "googleBookingBrowserSearch": true,
+    "googleHostelworldBrowserSearch": true
   }
 }
 ```

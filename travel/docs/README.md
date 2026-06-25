@@ -67,15 +67,27 @@ npm run travel -- reddit-login
 
 The login command opens a visible Playwright browser using the persistent profile at `travel/browser-profile/`. After you log in and press Enter in the terminal, future lodging searches reuse that browser session. The profile folder is ignored by git because it can contain cookies and local browser state.
 
-Reddit discovery is off by default. Enable it in `travel/config.json`:
+Discovery/search sources are off by default. Enable only the ones you want in `travel/config.json`:
 
 ```json
 {
   "features": {
-    "redditDiscovery": true
+    "redditDiscovery": true,
+    "bookingBrowserSearch": true,
+    "hostelworldBrowserSearch": true,
+    "googleBookingBrowserSearch": true,
+    "googleHostelworldBrowserSearch": true
   }
 }
 ```
+
+Current config toggles:
+
+- `redditDiscovery`: discovers hostel leads from Reddit/community seed data and, when enabled, tries Reddit pages.
+- `bookingBrowserSearch`: queries Booking.com directly.
+- `hostelworldBrowserSearch`: queries Hostelworld directly.
+- `googleBookingBrowserSearch`: queries Google for Booking.com pages.
+- `googleHostelworldBrowserSearch`: queries Google for Hostelworld pages.
 
 The lodging command extracts up to 8 candidates per source and up to 5 Reddit hostel leads by default. To inspect more:
 

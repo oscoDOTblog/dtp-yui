@@ -224,6 +224,25 @@ async function readConfig() {
 }
 
 /**
+ * Convert the config file into explicit feature flags.
+ *
+ * Every browser/discovery source defaults to off. This keeps early experiments
+ * deliberate and prevents a command from quietly querying many sites.
+ */
+function getFeatureFlags(config) {
+  const features = config.features || {};
+
+  return {
+    redditDiscovery: features.redditDiscovery === true,
+    bookingBrowserSearch: features.bookingBrowserSearch === true,
+    hostelworldBrowserSearch: features.hostelworldBrowserSearch === true,
+    googleBookingBrowserSearch: features.googleBookingBrowserSearch === true,
+    googleHostelworldBrowserSearch:
+      features.googleHostelworldBrowserSearch === true,
+  };
+}
+
+/**
  * Launch a persistent browser profile.
  *
  * Persistent profiles save cookies and login state under travel/browser-profile.
@@ -347,16 +366,17 @@ function buildSearchTargets({
   checkin,
   checkout,
   budgetText,
+  features,
   redditLeads = [],
 }) {
   const lodgingQuery = `${destination} lodging ${checkin} to ${checkout} ${budgetText} hostel budget hotel`;
   const leadTargets = redditLeads.flatMap((lead) =>
     buildTargetsForRedditLead({ lead, destination, checkin, checkout })
   );
+  const targets = [...leadTargets];
 
-  return [
-    ...leadTargets,
-    {
+  if (features.bookingBrowserSearch) {
+    targets.push({
       source: "booking",
       url:
         "https://www.booking.com/searchresults.html?" +
@@ -369,8 +389,11 @@ function buildSearchTargets({
           group_children: "0",
           selected_currency: "EUR",
         }).toString(),
-    },
-    {
+    });
+  }
+
+  if (features.hostelworldBrowserSearch) {
+    targets.push({
       source: "hostelworld",
       url:
         "https://www.hostelworld.com/s?" +
@@ -382,24 +405,32 @@ function buildSearchTargets({
           to: checkout,
           guests: "1",
         }).toString(),
-    },
-    {
+    });
+  }
+
+  if (features.googleBookingBrowserSearch) {
+    targets.push({
       source: "google-booking",
       url:
         "https://www.google.com/search?" +
         new URLSearchParams({
           q: `site:booking.com ${lodgingQuery}`,
         }).toString(),
-    },
-    {
+    });
+  }
+
+  if (features.googleHostelworldBrowserSearch) {
+    targets.push({
       source: "google-hostelworld",
       url:
         "https://www.google.com/search?" +
         new URLSearchParams({
           q: `site:hostelworld.com ${lodgingQuery}`,
         }).toString(),
-    },
-  ];
+    });
+  }
+
+  return targets;
 }
 
 /**
@@ -1059,7 +1090,13 @@ async function searchOneTarget(browser, target, search) {
 /**
  * Format candidates as Markdown so the output is easy to read.
  */
-function formatMarkdown({ search, redditResearch, results, candidates }) {
+function formatMarkdown({
+  search,
+  features,
+  redditResearch,
+  results,
+  candidates,
+}) {
   const lines = [
     "# Lodging Search",
     "",
@@ -1073,6 +1110,10 @@ function formatMarkdown({ search, redditResearch, results, candidates }) {
     `- Candidate limit per source: ${MAX_CANDIDATES_PER_SOURCE}`,
     `- Reddit lead limit: ${MAX_REDDIT_LEADS}`,
     `- Reddit discovery: ${redditResearch?.enabled ? "on" : "off"}`,
+    `- Booking browser search: ${features.bookingBrowserSearch ? "on" : "off"}`,
+    `- Hostelworld browser search: ${features.hostelworldBrowserSearch ? "on" : "off"}`,
+    `- Google Booking browser search: ${features.googleBookingBrowserSearch ? "on" : "off"}`,
+    `- Google Hostelworld browser search: ${features.googleHostelworldBrowserSearch ? "on" : "off"}`,
     "",
     "## Notes",
     "",
@@ -1129,6 +1170,10 @@ function formatMarkdown({ search, redditResearch, results, candidates }) {
   lines.push("## Source Status");
   lines.push("");
 
+  if (results.length === 0) {
+    lines.push("- skipped: no browser search sources enabled");
+  }
+
   for (const result of results) {
     if (!result.ok) {
       lines.push(`- ${result.source}: failed - ${result.error}`);
@@ -1181,17 +1226,23 @@ function formatBudgetStatus(budget) {
 /**
  * Save raw JSON and readable Markdown outputs.
  */
-async function saveOutputs({ search, redditResearch, results, candidates }) {
+async function saveOutputs({
+  search,
+  features,
+  redditResearch,
+  results,
+  candidates,
+}) {
   await fs.mkdir("travel/outputs", { recursive: true });
 
   await fs.writeFile(
     JSON_OUTPUT_PATH,
-    JSON.stringify({ search, redditResearch, results, candidates }, null, 2)
+    JSON.stringify({ search, features, redditResearch, results, candidates }, null, 2)
   );
 
   await fs.writeFile(
     MARKDOWN_OUTPUT_PATH,
-    formatMarkdown({ search, redditResearch, results, candidates })
+    formatMarkdown({ search, features, redditResearch, results, candidates })
   );
 }
 
@@ -1207,7 +1258,7 @@ export async function main(args = process.argv.slice(2)) {
   const defaults = getTripDefaults(criteria);
   const destination = args.join(" ").trim() || defaults.destination;
   const search = { ...defaults, destination };
-  const redditDiscoveryEnabled = config.features?.redditDiscovery === true;
+  const features = getFeatureFlags(config);
 
   const spinner = createSpinner("Opening browser");
   spinner.start();
@@ -1223,7 +1274,7 @@ export async function main(args = process.argv.slice(2)) {
       leads: [],
     };
 
-    if (redditDiscoveryEnabled) {
+    if (features.redditDiscovery) {
       spinner.update("Researching Reddit leads");
       redditResearch = {
         enabled: true,
@@ -1233,6 +1284,7 @@ export async function main(args = process.argv.slice(2)) {
 
     const targets = buildSearchTargets({
       ...search,
+      features,
       redditLeads: redditResearch.leads,
     });
     const results = [];
@@ -1248,13 +1300,16 @@ export async function main(args = process.argv.slice(2)) {
 
     spinner.stop("Browser search complete");
 
-    await saveOutputs({ search, redditResearch, results, candidates });
+    await saveOutputs({ search, features, redditResearch, results, candidates });
 
     console.log(`Found ${candidates.length} lodging candidates.`);
-    if (redditDiscoveryEnabled) {
+    if (features.redditDiscovery) {
       console.log(`Found ${redditResearch.leads.length} Reddit hostel leads.`);
     } else {
       console.log("Reddit discovery disabled.");
+    }
+    if (targets.length === 0) {
+      console.log("No browser search sources enabled.");
     }
     console.log(`Saved JSON to ${JSON_OUTPUT_PATH}`);
     console.log(`Saved Markdown to ${MARKDOWN_OUTPUT_PATH}`);

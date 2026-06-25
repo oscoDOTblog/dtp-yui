@@ -48,10 +48,22 @@ Reddit discovery is off by default. Turn it on in `travel/config.json`:
 ```json
 {
   "features": {
-    "redditDiscovery": true
+    "redditDiscovery": true,
+    "bookingBrowserSearch": true,
+    "hostelworldBrowserSearch": true,
+    "googleBookingBrowserSearch": true,
+    "googleHostelworldBrowserSearch": true
   }
 }
 ```
+
+Current config toggles:
+
+- `redditDiscovery`: discover hostel leads from Reddit/community seeds.
+- `bookingBrowserSearch`: search Booking.com directly.
+- `hostelworldBrowserSearch`: search Hostelworld directly.
+- `googleBookingBrowserSearch`: use Google to find Booking.com result pages.
+- `googleHostelworldBrowserSearch`: use Google to find Hostelworld result pages.
 
 By default, the lodging command extracts up to 8 candidates per source and up to 5 Reddit hostel leads. You can raise those while experimenting:
 

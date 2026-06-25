@@ -1,6 +1,9 @@
 {
   "features": {
-    "redditDiscovery": false
+    "redditDiscovery": false,
+    "bookingBrowserSearch": false,
+    "hostelworldBrowserSearch": false,
+    "googleBookingBrowserSearch": false,
+    "googleHostelworldBrowserSearch": false
   }
 }
-
