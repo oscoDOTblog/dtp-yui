@@ -1,0 +1,487 @@
+.pageTitle {
+  margin: 0 0 0.35rem;
+  font-size: 1.75rem;
+}
+
+.subtitle {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.card:hover {
+  border-color: var(--pink-dim);
+  background: var(--bg-hover);
+}
+
+.cardLink {
+  color: inherit;
+  text-decoration: none;
+  display: block;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.meta {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0.35rem 0 0;
+}
+
+.score {
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--pink);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--border);
+}
+
+.badgeApply {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.badgeConsider {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+
+.badgeSkip,
+.badgeReject {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.empty {
+  color: var(--muted);
+  padding: 2rem 0;
+}
+
+.error {
+  color: var(--red);
+  background: rgba(255, 92, 122, 0.08);
+  border: 1px solid rgba(255, 92, 122, 0.35);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.info {
+  color: var(--amber);
+  background: rgba(245, 197, 66, 0.1);
+  border: 1px solid rgba(245, 197, 66, 0.4);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.form {
+  display: grid;
+  gap: 0.85rem;
+  max-width: 720px;
+}
+
+.label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+.input,
+.textarea {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+}
+
+.textarea {
+  min-height: 220px;
+  resize: vertical;
+}
+
+.input:focus,
+.textarea:focus {
+  outline: 2px solid var(--pink);
+  outline-offset: 1px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--pink);
+  background: var(--pink);
+  color: #fff;
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  font-weight: 600;
+}
+
+.btn:hover {
+  background: var(--pink-dim);
+  border-color: var(--pink-dim);
+}
+
+.btnSecondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.btnSecondary:hover {
+  border-color: var(--pink);
+  color: var(--pink);
+  background: transparent;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.section {
+  margin-top: 1.75rem;
+}
+
+.section h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+}
+
+.list {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--text);
+}
+
+.list li {
+  margin-bottom: 0.4rem;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.1rem;
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.fitStrong {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.fitWarning {
+  color: var(--amber);
+  font-weight: 700;
+}
+
+.fitGap {
+  color: var(--red);
+  font-weight: 700;
+}
+
+.fitTableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.fitTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.fitTable th,
+.fitTable td {
+  text-align: left;
+  padding: 0.65rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.fitTable th {
+  color: var(--text);
+  font-weight: 600;
+  opacity: 0.85;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.fitTable tr:last-child td {
+  border-bottom: none;
+}
+
+.pillRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.pill {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 650;
+}
+
+.pillNeutral {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.pillGood {
+  background: rgba(61, 214, 140, 0.12);
+  color: var(--green);
+  border: 1px solid rgba(61, 214, 140, 0.45);
+}
+
+.pillWarn {
+  background: rgba(245, 197, 66, 0.12);
+  color: var(--amber);
+  border: 1px solid rgba(245, 197, 66, 0.45);
+}
+
+.pillBad {
+  background: rgba(255, 92, 122, 0.12);
+  color: var(--red);
+  border: 1px solid rgba(255, 92, 122, 0.45);
+}
+
+.statusPanel {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  max-width: 720px;
+  margin-bottom: 1.25rem;
+  padding: 1rem 1.1rem;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 20, 147, 0.35);
+  background: rgba(255, 20, 147, 0.08);
+}
+
+.statusPanelGenerate {
+  max-width: none;
+  padding: 1.25rem 1.35rem;
+  border-width: 1px;
+  box-shadow: 0 0 0 1px rgba(255, 20, 147, 0.12), 0 12px 40px rgba(0, 0, 0, 0.35);
+  animation: statusPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%,
+  100% {
+    border-color: rgba(255, 20, 147, 0.35);
+  }
+  50% {
+    border-color: rgba(255, 20, 147, 0.75);
+  }
+}
+
+.statusTitle {
+  margin: 0 0 0.25rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.statusText {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.95rem;
+  min-height: 1.4em;
+  opacity: 0.92;
+}
+
+.statusStepList {
+  list-style: none;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.statusStepDone {
+  color: var(--green);
+  font-size: 0.9rem;
+}
+
+.statusStepCurrent {
+  color: var(--pink);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.statusStepPending {
+  color: var(--muted);
+  font-size: 0.9rem;
+  opacity: 0.65;
+}
+
+.statusDots {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.statusDot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.statusDotActive {
+  background: var(--pink);
+  box-shadow: 0 0 8px rgba(255, 20, 147, 0.55);
+}
+
+.spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 20, 147, 0.25);
+  border-top-color: var(--pink);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.spinnerLarge {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-width: 3px;
+}
+
+.btnBusy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.spinnerInline {
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.collapseList {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+}
+
+.collapseItem {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.collapseHeader {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.collapseHeader:hover {
+  background: var(--bg-hover);
+}
+
+.collapseBody {
+  border-top: 1px solid var(--border);
+  padding: 0.85rem 1rem 1rem;
+}
+
+.collapseActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.docPre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  max-height: 420px;
+  overflow: auto;
+  padding: 0.85rem;
+  background: var(--bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .pageTitle {
+    font-size: 1.4rem;
+  }
+}

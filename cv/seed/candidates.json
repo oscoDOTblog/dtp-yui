@@ -1,0 +1,44 @@
+{
+  "_id": "primary-candidate",
+  "name": "Oscar Sandoval",
+  "location": "Oakland, California",
+  "email": "oscarkevin@protonmail.com",
+  "phone": "(775) 442-2193",
+  "linkedin": "https://linkedin.com/in/oscodotblog",
+  "github": "https://github.com/oscoDOTblog",
+  "education": [
+    {
+      "institution": "University of Virginia",
+      "school": "School of Engineering and Applied Science",
+      "degree": "Bachelor of Science in Computer Science",
+      "location": "Charlottesville, Virginia",
+      "graduatedAt": "2017-05"
+    }
+  ],
+  "preferredRoles": [
+    "Full-Stack Product Engineer",
+    "Forward Deployed Engineer",
+    "AI Product Engineer",
+    "Mobile Engineer",
+    "Systems and Platform Engineer",
+    "Staff Systems Engineer",
+    "Solutions Engineer",
+    "Founding Engineer"
+  ],
+  "preferredLocations": [
+    "Remote",
+    "Oakland",
+    "San Francisco Bay Area",
+    "Emeryville"
+  ],
+  "minimumSalary": 120000,
+  "remotePreference": "preferred",
+  "positioningSummaries": {
+    "systems": "Systems-focused software engineer with more than six years of enterprise engineering experience at Capital One, progressing from Associate Software Engineer to Principal Associate Software Engineer. Experienced in cloud infrastructure, distributed data processing, infrastructure automation, deployment automation, observability, production support, and modernization of on-premises workloads for AWS environments.",
+    "product": "Full-stack product engineer with cross-platform mobile experience, strong media/video engineering depth, and hands-on cloud/serverless deployment experience. Builds end-to-end products spanning auth, payments, AI, video processing, cloud storage, native clients, and real user workflows.",
+    "mobile": "Native mobile and media engineer building iOS and Android video applications with SwiftUI, Jetpack Compose, AVFoundation, Media3, and cross-platform parity with web product surfaces.",
+    "ai": "Product engineer integrating OpenAI and Google GenAI into feedback and content workflows with async job tracking, prompt-driven systems, and user-facing AI product design."
+  },
+  "profileVersion": 1,
+  "updatedAt": "2026-07-17T21:30:00Z"
+}

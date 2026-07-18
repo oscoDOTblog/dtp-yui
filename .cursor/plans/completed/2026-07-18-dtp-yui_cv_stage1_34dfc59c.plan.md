@@ -4,28 +4,28 @@ overview: "Create `cv/` inside dtp-yui as a Docker Compose local job-search copi
 todos:
   - id: scaffold
     content: Create cv/ Docker Compose layout, .env.example, gitignore, README, ARCHITECTURE/COLLECTIONS/ROADMAP docs
-    status: pending
+    status: completed
   - id: seed
     content: "Seed JSON from templates + Pixar draft gaps: candidates (identity/education), workHistory (Capital One bullets), skills (systems/IaC/observability/Spark/Snowflake/etc), projects, evidence; idempotent Mongo upsert"
-    status: pending
+    status: completed
   - id: api
     content: "FastAPI: health, candidate/skills/projects reads, jobs CRUD, analyze, decisions, generate"
-    status: pending
+    status: completed
   - id: matching
     content: Ollama extraction + weighted match/gap engine with evidence grounding rules
-    status: pending
+    status: completed
   - id: docs-gen
     content: Application package generator (docx/pdf/md) into generated-applications/
-    status: pending
+    status: completed
   - id: web
     content: "Next.js JS + CSS Modules dashboard: inbox, analyze, job detail, profile, applications"
-    status: pending
+    status: completed
   - id: worker
     content: "Worker: indexes, seed-on-empty, APScheduler stubs for Stage 2–3 cron jobs"
-    status: pending
+    status: completed
   - id: root-pointer
     content: Update dtp-yui root README with cv/ pointer and compose run commands
-    status: pending
+    status: completed
 isProject: false
 ---
 

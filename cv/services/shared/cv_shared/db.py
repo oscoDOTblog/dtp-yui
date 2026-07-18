@@ -1,0 +1,36 @@
+import os
+from functools import lru_cache
+
+from pymongo import MongoClient
+from pymongo.database import Database
+
+from . import collections as C
+
+
+@lru_cache(maxsize=1)
+def get_client() -> MongoClient:
+    uri = os.environ.get(
+        "MONGO_URI",
+        "mongodb://cvadmin:change-me-local@localhost:27017/DTP?authSource=admin",
+    )
+    return MongoClient(uri)
+
+
+def get_db() -> Database:
+    # Atlas / shared DTP database; CV collections are all prefixed with cv_
+    name = os.environ.get("MONGO_DB", "DTP")
+    return get_client()[name]
+
+
+def ensure_indexes(db: Database | None = None) -> None:
+    if db is None:
+        db = get_db()
+    db[C.JOBS].create_index("contentHash", unique=False)
+    db[C.JOBS].create_index("status")
+    db[C.JOBS].create_index("discoveredAt")
+    db[C.JOB_MATCHES].create_index([("jobId", 1), ("candidateId", 1)])
+    db[C.APPLICATIONS].create_index("jobId")
+    db[C.USER_DECISIONS].create_index("jobId")
+    db[C.SYSTEM_RUNS].create_index("startedAt")
+    db[C.SKILLS].create_index("name")
+    db[C.EVIDENCE].create_index("skillIds")

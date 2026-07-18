@@ -1,0 +1,80 @@
+services:
+  mongodb:
+    image: mongo:8
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-cvadmin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-change-me-local}
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+    env_file:
+      - .env
+    environment:
+      MONGO_URI: ${MONGO_URI:-mongodb://cvadmin:change-me-local@mongodb:27017/DTP?authSource=admin}
+      MONGO_DB: ${MONGO_DB:-DTP}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      GENERATED_APPLICATIONS_DIR: /app/generated-applications
+      SEED_DIR: /app/seed
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./generated-applications:/app/generated-applications
+      - ./seed:/app/seed:ro
+      - ./secrets:/app/secrets:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+    env_file:
+      - .env
+    environment:
+      MONGO_URI: ${MONGO_URI:-mongodb://cvadmin:change-me-local@mongodb:27017/DTP?authSource=admin}
+      MONGO_DB: ${MONGO_DB:-DTP}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      GENERATED_APPLICATIONS_DIR: /app/generated-applications
+      SEED_DIR: /app/seed
+      AUTO_SEED: "true"
+    volumes:
+      - ./generated-applications:/app/generated-applications
+      - ./seed:/app/seed:ro
+      - ./secrets:/app/secrets:ro
+      - ./repository-cache:/app/repository-cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    build:
+      context: ./services/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
+      API_BASE_INTERNAL: ${API_BASE_INTERNAL:-http://api:8000}
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  mongodb_data:

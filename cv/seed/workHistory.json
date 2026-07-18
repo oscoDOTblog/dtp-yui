@@ -1,0 +1,111 @@
+[
+  {
+    "_id": "work_c1_associate",
+    "candidateId": "primary-candidate",
+    "company": "Capital One",
+    "companyLocation": "McLean, Virginia",
+    "title": "Associate Software Engineer",
+    "startDate": "2018-02",
+    "endDate": "2020-01",
+    "bullets": [
+      "Built infrastructure for a Salesforce-to-S3 backup solution using Apache Spark, HashiCorp Vault, AWS S3, AWS ECS, Jenkins, and Python.",
+      "Created infrastructure supporting enterprise Automation Anywhere deployments using AWS EC2, Terraform, Jenkins, S3, and Artifactory.",
+      "Implemented production monitoring and observability using Datadog and the ELK stack.",
+      "Modernized on-premises batch workloads for AWS using Apache Spark, Jenkins, Chef, and CloudFormation.",
+      "Developed an automated solution using AWS CloudWatch and Lambda to maintain ECS clusters with current Amazon Machine Images.",
+      "Migrated more than half a dozen Teradata reporting workflows to Snowflake SQL.",
+      "Created Splunk dashboards and PagerDuty alerts to monitor production service health and surface operational failures.",
+      "Supported cloud infrastructure, deployment pipelines, data-processing workflows, and production troubleshooting in a regulated enterprise environment."
+    ],
+    "skillIds": [
+      "skill_apache_spark",
+      "skill_hashicorp_vault",
+      "skill_aws_s3",
+      "skill_aws_ecs",
+      "skill_jenkins",
+      "skill_python",
+      "skill_terraform",
+      "skill_aws_ec2",
+      "skill_artifactory",
+      "skill_datadog",
+      "skill_elk",
+      "skill_chef",
+      "skill_cloudformation",
+      "skill_cloudwatch",
+      "skill_aws_lambda",
+      "skill_snowflake",
+      "skill_teradata",
+      "skill_splunk",
+      "skill_pagerduty",
+      "skill_linux",
+      "skill_java"
+    ],
+    "evidenceIds": [
+      "evidence_c1_salesforce_s3",
+      "evidence_c1_aa_terraform",
+      "evidence_c1_datadog_elk",
+      "evidence_c1_batch_modernization",
+      "evidence_c1_ecs_ami",
+      "evidence_c1_teradata_snowflake",
+      "evidence_c1_splunk_pagerduty"
+    ]
+  },
+  {
+    "_id": "work_c1_senior",
+    "candidateId": "primary-candidate",
+    "company": "Capital One",
+    "companyLocation": "McLean, Virginia",
+    "title": "Senior Associate Software Engineer",
+    "startDate": "2020-02",
+    "endDate": "2022-01",
+    "bullets": [
+      "Designed and implemented infrastructure and automation supporting enterprise applications, data workflows, and internal technology platforms.",
+      "Contributed to the modernization of legacy and on-premises systems through cloud architecture, automated deployment, and managed AWS services.",
+      "Developed and maintained CI/CD workflows supporting repeatable application and infrastructure delivery.",
+      "Built monitoring and alerting capabilities to improve service visibility and detection of operational failures.",
+      "Investigated production issues across applications, infrastructure, data flows, and external service integrations.",
+      "Partnered with engineers and stakeholders to define technical requirements, sequence delivery, and resolve cross-system dependencies.",
+      "Contributed to architecture and implementation decisions for systems requiring security, scalability, reliability, and ongoing operational support."
+    ],
+    "skillIds": [
+      "skill_cicd",
+      "skill_aws",
+      "skill_observability",
+      "skill_production_support",
+      "skill_system_design"
+    ],
+    "evidenceIds": [
+      "evidence_c1_senior_infra",
+      "evidence_c1_senior_cicd",
+      "evidence_c1_senior_ops"
+    ]
+  },
+  {
+    "_id": "work_c1_principal",
+    "candidateId": "primary-candidate",
+    "company": "Capital One",
+    "companyLocation": "McLean, Virginia",
+    "title": "Principal Associate Software Engineer",
+    "startDate": "2022-02",
+    "endDate": "2024-04",
+    "bullets": [
+      "Led and contributed to the design and delivery of software and infrastructure initiatives within a large-scale enterprise technology environment.",
+      "Provided technical direction across application architecture, cloud services, deployment workflows, data integrations, and production reliability.",
+      "Coordinated delivery across engineering teams and stakeholders, translating business and operational requirements into maintainable technical solutions.",
+      "Evaluated system designs, implementation approaches, operational risks, and deployment strategies for enterprise services.",
+      "Supported the development and troubleshooting of distributed applications and cloud-hosted workloads.",
+      "Promoted engineering practices focused on automation, observability, reliability, security, and long-term maintainability.",
+      "Mentored engineers through architecture discussions, implementation reviews, debugging, and delivery planning."
+    ],
+    "skillIds": [
+      "skill_technical_leadership",
+      "skill_system_design",
+      "skill_observability",
+      "skill_mentoring"
+    ],
+    "evidenceIds": [
+      "evidence_c1_principal_leadership",
+      "evidence_c1_principal_architecture"
+    ]
+  }
+]
