@@ -23,7 +23,7 @@ DOCUMENTS = f"{PREFIX}documents"
 USER_DECISIONS = f"{PREFIX}userDecisions"
 SYSTEM_RUNS = f"{PREFIX}systemRuns"
 
-# Stage 2+ stubs (documented names)
+GAP_INSIGHTS = f"{PREFIX}gapInsights"
 JOB_SOURCES = f"{PREFIX}jobSources"
 GMAIL_MESSAGES = f"{PREFIX}gmailMessages"
 REPOSITORIES = f"{PREFIX}repositories"

@@ -43,8 +43,9 @@ The worker auto-seeds MongoDB from `seed/` on first start.
 
 1. Open **Analyze** and paste a job description (URL fetch is best-effort; LinkedIn usually blocks).
 2. Review score, strong evidence, and meaningful gaps.
-3. Click **Generate documents** → files land in `generated-applications/{company}-{role}/`.
-4. Open the listing yourself and submit (Level 1 automation).
+3. Check **Gaps** for recurring missing requirements ranked by frequency (mark Learning / Resolved as you close them).
+4. Click **Generate documents** → files land in `generated-applications/{company}-{role}/`.
+5. Open the listing yourself and submit (Level 1 automation).
 
 ## Seed data
 
@@ -76,6 +77,6 @@ ssh -L 3000:localhost:3000 -L 8000:localhost:8000 user@legion-wireguard-ip
 
 ## Stage 1 scope
 
-In: profile seed, manual job paste, Ollama match, document generation, dashboard, Docker Compose.
+In: profile seed, manual job paste, Ollama match, gap insights aggregation, document generation, dashboard, Docker Compose.
 
 Out: Gmail LinkedIn alerts, Telegram, GitHub polling, Playwright ATS (see roadmap).

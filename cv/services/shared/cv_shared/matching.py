@@ -509,6 +509,13 @@ def analyze_job(job_id: str) -> dict:
     match = score_job(job, extracted)
     db[C.JOB_MATCHES].replace_one({"_id": match["_id"]}, match, upsert=True)
 
+    try:
+        from .gap_insights import record_gaps_from_match
+
+        record_gaps_from_match(match, job)
+    except Exception:
+        logger.exception("gap insights upsert failed for job %s", job_id)
+
     db[C.SYSTEM_RUNS].insert_one(
         {
             "type": "analyze",

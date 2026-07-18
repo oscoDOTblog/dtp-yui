@@ -257,6 +257,61 @@
   border-bottom: none;
 }
 
+.gapRowHeavy td:first-child {
+  box-shadow: inset 3px 0 0 var(--red);
+}
+
+.gapRowWarn td:first-child {
+  box-shadow: inset 3px 0 0 var(--amber);
+}
+
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.filterGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.filterChip {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.filterChip:hover {
+  border-color: var(--pink-dim);
+  color: var(--text);
+}
+
+.filterChipActive {
+  border-color: var(--pink);
+  color: var(--pink);
+  background: rgba(255, 20, 147, 0.1);
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.btnSmall {
+  padding: 0.3rem 0.55rem;
+  font-size: 0.75rem;
+}
+
 .pillRow {
   display: flex;
   flex-wrap: wrap;

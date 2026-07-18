@@ -65,3 +65,22 @@ export async function apiPost(path, body) {
   }
   return res.json();
 }
+
+export async function apiPatch(path, body) {
+  const url = `${getApiBase()}${path}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    throw new Error(`fetch failed (${url}): ${err.message || err}`);
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  return res.json();
+}

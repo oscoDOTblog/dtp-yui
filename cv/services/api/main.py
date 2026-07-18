@@ -474,3 +474,40 @@ def get_application(app_id: str) -> dict:
     item["package"] = _serialize(pkg)
     item["job"] = _serialize(job)
     return item
+
+
+class GapStatusBody(BaseModel):
+    status: str = Field(..., description="open | learning | resolved")
+
+
+@app.get("/gaps")
+def list_gaps(kind: str = "all", status: str = "all") -> list:
+    from cv_shared.gap_insights import list_gap_insights
+
+    kind = (kind or "all").lower()
+    status = (status or "all").lower()
+    if kind not in ("all", "gap", "warning"):
+        raise HTTPException(400, "kind must be all|gap|warning")
+    if status not in ("all", "open", "learning", "resolved"):
+        raise HTTPException(400, "status must be all|open|learning|resolved")
+    return _serialize(list_gap_insights(kind=kind, status=status))
+
+
+@app.patch("/gaps/{gap_id}")
+def patch_gap(gap_id: str, body: GapStatusBody) -> dict:
+    from cv_shared.gap_insights import update_gap_status
+
+    try:
+        doc = update_gap_status(gap_id, body.status)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not doc:
+        raise HTTPException(404, "Gap insight not found")
+    return _serialize(doc)
+
+
+@app.post("/gaps/rebuild")
+def rebuild_gaps() -> dict:
+    from cv_shared.gap_insights import rebuild_gap_insights
+
+    return rebuild_gap_insights()

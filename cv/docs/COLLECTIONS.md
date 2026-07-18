@@ -22,8 +22,13 @@ Field names use **camelCase**.
 | `cv_documents` | Metadata for generated resume/cover letter files |
 | `cv_userDecisions` | apply / save / reject / draft |
 | `cv_systemRuns` | Seed and analyze run logs |
+| `cv_gapInsights` | Aggregated recurring gaps/warnings across analyses (ranked by `totalSeen`) |
 
 Evidence levels: `mentioned` | `installed` | `implemented` | `substantial` | `tested` | `deployed` | `maintained`
+
+### `cv_gapInsights`
+
+One document per normalized requirement. Upserted on each successful job analyze (counts once per `jobId`). Status: `open` | `learning` | `resolved`.
 
 ## Stage 2+ (stub names)
 

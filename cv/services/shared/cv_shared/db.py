@@ -34,3 +34,6 @@ def ensure_indexes(db: Database | None = None) -> None:
     db[C.SYSTEM_RUNS].create_index("startedAt")
     db[C.SKILLS].create_index("name")
     db[C.EVIDENCE].create_index("skillIds")
+    db[C.GAP_INSIGHTS].create_index("totalSeen")
+    db[C.GAP_INSIGHTS].create_index("status")
+    db[C.GAP_INSIGHTS].create_index("normalizedName")

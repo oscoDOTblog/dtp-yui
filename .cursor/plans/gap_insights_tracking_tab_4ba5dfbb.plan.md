@@ -4,16 +4,16 @@ overview: Add a Gap Insights aggregator that records recurring missing requireme
 todos:
   - id: gap-collection
     content: Add cv_gapInsights collection + normalize/upsert helpers; hook into analyze_job
-    status: pending
+    status: completed
   - id: gap-api
     content: GET /gaps, PATCH /gaps/{id}, POST /gaps/rebuild
-    status: pending
+    status: completed
   - id: gap-tab
     content: New Gaps nav tab + ranked table with filters and status actions
-    status: pending
+    status: completed
   - id: gap-docs
     content: Update COLLECTIONS.md and README
-    status: pending
+    status: completed
 isProject: false
 ---
 
