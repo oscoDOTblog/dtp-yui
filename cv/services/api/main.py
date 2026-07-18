@@ -339,6 +339,20 @@ def get_job(job_id: str) -> dict:
     return item
 
 
+@app.delete("/jobs/{job_id}")
+def delete_job_endpoint(job_id: str) -> dict:
+    from cv_shared.jobs import delete_job
+
+    try:
+        result = delete_job(job_id)
+    except KeyError:
+        raise HTTPException(404, "Job not found") from None
+    except Exception as exc:
+        logger.exception("delete job failed")
+        raise HTTPException(500, str(exc)) from exc
+    return result
+
+
 @app.get("/jobs/{job_id}/match")
 def get_match(job_id: str) -> dict:
     match = get_db()[C.JOB_MATCHES].find_one({"jobId": job_id})

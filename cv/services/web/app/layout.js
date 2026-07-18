@@ -10,8 +10,8 @@ const links = [
   { href: "/", label: "Inbox" },
   { href: "/analyze", label: "Analyze" },
   { href: "/gaps", label: "Gaps" },
-  { href: "/profile", label: "Profile" },
   { href: "/applications", label: "Applications" },
+  { href: "/profile", label: "Profile" },
 ];
 
 export default function RootLayout({ children }) {

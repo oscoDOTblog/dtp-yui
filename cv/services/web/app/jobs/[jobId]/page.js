@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
-import { apiGet, apiPost } from "../../../lib/api";
+import { useParams, useRouter } from "next/navigation";
+import { apiDelete, apiGet, apiPost } from "../../../lib/api";
 import DocumentPackagePanel, {
+  clearPackageFromBrowser,
   loadPackageFromBrowser,
   savePackageToBrowser,
 } from "../../components/DocumentPackagePanel";
@@ -48,6 +49,7 @@ const GENERATE_STEPS = [
 
 export default function JobDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const jobId = params.jobId;
   const [job, setJob] = useState(null);
   const [error, setError] = useState("");
@@ -124,6 +126,27 @@ export default function JobDetailPage() {
     } catch (err) {
       setError(err.message || "Action failed");
     } finally {
+      setBusy("");
+      setStatusText("");
+    }
+  }
+
+  async function deleteJob() {
+    const label = `${job?.title || "this job"} — ${job?.company || ""}`.trim();
+    const ok = window.confirm(
+      `Delete ${label}?\n\nThis removes the job, match, decisions, application package, generated files, and gap references. This cannot be undone.`
+    );
+    if (!ok) return;
+
+    setBusy("delete");
+    setMessage("");
+    setError("");
+    try {
+      await apiDelete(`/jobs/${jobId}`);
+      clearPackageFromBrowser(jobId);
+      router.push("/");
+    } catch (err) {
+      setError(err.message || "Delete failed");
       setBusy("");
       setStatusText("");
     }
@@ -274,6 +297,13 @@ export default function JobDetailPage() {
           disabled={!!busy}
         >
           Reject
+        </button>
+        <button
+          className={`${styles.btn} ${styles.btnDanger}`}
+          onClick={deleteJob}
+          disabled={!!busy}
+        >
+          {busy === "delete" ? "Deleting…" : "Delete job"}
         </button>
       </div>
 

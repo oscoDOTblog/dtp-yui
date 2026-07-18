@@ -36,6 +36,15 @@ export function loadPackageFromBrowser(jobId) {
   }
 }
 
+export function clearPackageFromBrowser(jobId) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(packageStorageKey(jobId));
+  } catch {
+    // ignore
+  }
+}
+
 async function copyText(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);

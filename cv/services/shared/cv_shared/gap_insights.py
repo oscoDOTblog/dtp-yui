@@ -212,6 +212,85 @@ def update_gap_status(gap_id: str, status: str) -> dict | None:
     )
 
 
+def remove_job_from_gap_insights(job_id: str, match: dict | None = None) -> int:
+    """Remove a job's contribution from gap aggregates. Returns docs touched."""
+    db = get_db()
+    if not job_id:
+        return 0
+
+    touched = 0
+    merged: dict[str, dict] = {}
+    if match:
+        for item in _items_from_match(match):
+            normalized = normalize_requirement(item["name"])
+            if not normalized:
+                continue
+            entry = merged.setdefault(
+                normalized,
+                {"kinds": set(), "severities": set()},
+            )
+            entry["kinds"].add(item["kind"])
+            entry["severities"].add(item["severity"])
+
+    # Always clear job refs from any gap that lists this job
+    cursor = db[C.GAP_INSIGHTS].find(
+        {
+            "$or": [
+                {"recentJobIds": job_id},
+                {"lastJobId": job_id},
+            ]
+        }
+    )
+    for existing in cursor:
+        doc_id = existing["_id"]
+        recent = [jid for jid in (existing.get("recentJobIds") or []) if jid != job_id]
+        was_counted = job_id in (existing.get("recentJobIds") or [])
+
+        kind_counts = dict(existing.get("kindCounts") or {"gap": 0, "warning": 0})
+        severity_counts = dict(existing.get("severityCounts") or {})
+        total_seen = int(existing.get("totalSeen") or 0)
+
+        normalized = existing.get("normalizedName") or ""
+        entry = merged.get(normalized)
+        if was_counted and entry:
+            total_seen = max(0, total_seen - 1)
+            for kind in entry["kinds"]:
+                kind_counts[kind] = max(0, int(kind_counts.get(kind) or 0) - 1)
+            for sev in entry["severities"]:
+                severity_counts[sev] = max(0, int(severity_counts.get(sev) or 0) - 1)
+        elif was_counted:
+            total_seen = max(0, total_seen - 1)
+
+        if total_seen <= 0 and not recent:
+            db[C.GAP_INSIGHTS].delete_one({"_id": doc_id})
+            touched += 1
+            continue
+
+        update_set = {
+            "kindCounts": kind_counts,
+            "severityCounts": severity_counts,
+            "totalSeen": total_seen,
+            "recentJobIds": recent,
+        }
+        if existing.get("lastJobId") == job_id:
+            # Point last-seen at the most recent remaining job if possible
+            last_id = recent[-1] if recent else None
+            if last_id:
+                job = db[C.JOBS].find_one({"_id": last_id}) or {}
+                update_set["lastJobId"] = last_id
+                update_set["lastJobTitle"] = job.get("title") or ""
+                update_set["lastCompany"] = job.get("company") or ""
+            else:
+                update_set["lastJobId"] = None
+                update_set["lastJobTitle"] = ""
+                update_set["lastCompany"] = ""
+
+        db[C.GAP_INSIGHTS].update_one({"_id": doc_id}, {"$set": update_set})
+        touched += 1
+
+    return touched
+
+
 def rebuild_gap_insights() -> dict:
     """Clear aggregates and rebuild from all stored job matches (once per job)."""
     db = get_db()

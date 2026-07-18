@@ -177,6 +177,18 @@
   background: transparent;
 }
 
+.btnDanger {
+  background: transparent;
+  color: var(--red);
+  border-color: rgba(255, 92, 122, 0.55);
+}
+
+.btnDanger:hover {
+  background: rgba(255, 92, 122, 0.12);
+  border-color: var(--red);
+  color: var(--red);
+}
+
 .btn:disabled {
   opacity: 0.55;
   cursor: wait;

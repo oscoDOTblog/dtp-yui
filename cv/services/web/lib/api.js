@@ -84,3 +84,25 @@ export async function apiPatch(path, body) {
   }
   return res.json();
 }
+
+export async function apiDelete(path) {
+  const url = `${getApiBase()}${path}`;
+  let res;
+  try {
+    res = await fetch(url, { method: "DELETE" });
+  } catch (err) {
+    throw new Error(`fetch failed (${url}): ${err.message || err}`);
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  if (res.status === 204) return null;
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
