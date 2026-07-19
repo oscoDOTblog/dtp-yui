@@ -5,6 +5,9 @@ todos:
   - id: rewrite-roadmap-docs
     content: Rewrite ROADMAP.md + COLLECTIONS for intake-first stages (2A–6)
     status: pending
+  - id: gmail-setup-doc
+    content: "Create cv/docs/GMAIL_SETUP.md: dedicated inbox + OAuth + alert/label setup guide; link from README + secrets/README"
+    status: pending
   - id: intake-foundation
     content: Shared JobSource interface, normalizer, fingerprints, cv_jobs field extensions
     status: pending
@@ -160,7 +163,22 @@ Extend `cv_jobs` fields (camelCase): `externalId`, `source`, `sourceUrl`, `canon
 
 - Rewrite [`cv/docs/ROADMAP.md`](cv/docs/ROADMAP.md) to this stage map
 - Document new fields in [`cv/docs/COLLECTIONS.md`](cv/docs/COLLECTIONS.md)
-- Gmail setup steps in README / secrets README
+- **New dedicated guide:** [`cv/docs/GMAIL_SETUP.md`](cv/docs/GMAIL_SETUP.md) — how to set up the Gmail inbox for job-alert intake (not just a blurb in README)
+- Short pointers from [`cv/README.md`](cv/README.md) and [`cv/secrets/README.md`](cv/secrets/README.md) → `docs/GMAIL_SETUP.md`
+
+### `cv/docs/GMAIL_SETUP.md` contents (required)
+
+Dedicated operator doc covering:
+
+1. **Dedicated vs personal inbox** — recommend a dedicated Gmail (or clear label isolation) so job alerts stay separable from personal mail
+2. **Google Cloud OAuth** — create Desktop OAuth client, enable Gmail API, download client secret to `cv/secrets/gmail-client-secret.json`
+3. **First-time auth** — run the local token flow; where `gmail-token.json` lands; scopes needed (readonly is enough for Stage 2A)
+4. **Job alert subscriptions** — how to create narrow LinkedIn / Indeed / Built In / Wellfound / Google Jobs alerts aimed at Bay Area + role families; send all to this inbox
+5. **Gmail labels + filters** — create `JobAlerts` (and optional per-source labels); auto-label by sender so ingest can use `label:JobAlerts`
+6. **Example Gmail search** the worker will use (document the exact query string)
+7. **Processed mail** — optional `AI Job Agent/Processed` label behavior
+8. **Verification checklist** — send a test alert, run ingest, confirm a job appears in Inbox
+9. **Security** — secrets never committed; localhost-only; revoke/re-auth steps
 
 ### Out of Stage 2A
 
@@ -175,6 +193,7 @@ Extend `cv_jobs` fields (camelCase): `externalId`, `source`, `sourceUrl`, `canon
 - Re-running ingest does not duplicate the same listing
 - Non–Bay Area alerts are stored or skipped per policy but do not flood “apply now” recommendations
 - Manual Analyze paste path still works unchanged
+- [`cv/docs/GMAIL_SETUP.md`](cv/docs/GMAIL_SETUP.md) exists and is linked from README / secrets README so setup is followable without reading code
 
 ### Suggested implementation todos (when you approve build)
 
@@ -183,10 +202,11 @@ Extend `cv_jobs` fields (camelCase): `externalId`, `source`, `sourceUrl`, `canon
 3. Gmail OAuth + fetch/parse + `cv_gmailMessages`
 4. Worker ingest job + optional `POST /ingest/run` for manual trigger
 5. Inbox source/location chips + eligible filter
-6. ROADMAP + COLLECTIONS + secrets docs
+6. ROADMAP + COLLECTIONS updates
+7. **Create `cv/docs/GMAIL_SETUP.md`** + link from README and `secrets/README.md`
 
 ---
 
 ## Prerequisite you do outside code (before/during 2A)
 
-Create **narrow** Gmail/Outlook alerts (Bay Area cities + role families) and optionally a Gmail label `JobAlerts` so the query stays simple. Without good alerts, Stage 2A has little to ingest.
+Follow [`cv/docs/GMAIL_SETUP.md`](cv/docs/GMAIL_SETUP.md) (once written): create **narrow** job alerts (Bay Area cities + role families) and a Gmail label `JobAlerts` so the ingest query stays simple. Without good alerts, Stage 2A has little to ingest.
