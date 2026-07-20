@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY services/shared/cv_shared /app/cv_shared
 COPY services/worker/main.py /app/main.py
+COPY config /app/config
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1

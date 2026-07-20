@@ -382,6 +382,27 @@
   animation: statusPulse 2.4s ease-in-out infinite;
 }
 
+.statusPanelIngest {
+  max-width: none;
+  align-items: center;
+  gap: 1.35rem;
+  padding: 1.25rem 1.35rem;
+  box-shadow: 0 0 0 1px rgba(255, 20, 147, 0.12), 0 12px 40px rgba(0, 0, 0, 0.35);
+  animation: statusPulse 2.4s ease-in-out infinite;
+}
+
+.statusPanelBody {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .statusPanelIngest {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
 @keyframes statusPulse {
   0%,
   100% {

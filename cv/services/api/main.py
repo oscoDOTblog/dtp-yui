@@ -293,7 +293,10 @@ def create_job(body: JobCreate) -> dict:
         "_id": job_id,
         "source": "manual",
         "sourceJobId": None,
+        "externalId": f"manual:{digest[:16]}",
         "url": body.url,
+        "sourceUrl": body.url,
+        "canonicalApplyUrl": body.url,
         "title": title,
         "company": body.company or "Unknown",
         "location": body.location or "",
@@ -304,16 +307,46 @@ def create_job(body: JobCreate) -> dict:
         "preferredSkills": [],
         "postedAt": None,
         "discoveredAt": now,
+        "firstSeenAt": now,
+        "lastSeenAt": now,
         "status": "new",
         "contentHash": digest,
+        "discoveredBy": {"source": "manual"},
+        "fingerprints": None,
+        "locationAssessment": None,
     }
+    try:
+        from cv_shared.intake.fingerprints import build_fingerprints
+        from cv_shared.intake.location import assess_location
+
+        job["fingerprints"] = build_fingerprints(
+            job["company"], job["title"], job["location"]
+        )
+        job["locationAssessment"] = assess_location(
+            location=job["location"],
+            title=job["title"],
+            description=description,
+            work_mode_hint=job["workMode"],
+        )
+        if job["locationAssessment"].get("workArrangement") != "unknown":
+            job["workMode"] = job["locationAssessment"]["workArrangement"]
+    except Exception:
+        logger.exception("manual job location/fingerprint enrichment failed")
+
     db[C.JOBS].insert_one(job)
     return _serialize(job)
 
 
 @app.get("/jobs")
-def list_jobs() -> list:
-    jobs = list(get_db()[C.JOBS].find().sort("discoveredAt", -1))
+def list_jobs(eligible: str | None = None) -> list:
+    """List jobs. eligible=true|false filters on locationAssessment.bayAreaEligible."""
+    query: dict = {}
+    if eligible is not None and eligible.lower() in ("true", "1", "yes"):
+        query["locationAssessment.bayAreaEligible"] = True
+    elif eligible is not None and eligible.lower() in ("false", "0", "no"):
+        query["locationAssessment.bayAreaEligible"] = False
+
+    jobs = list(get_db()[C.JOBS].find(query).sort("discoveredAt", -1))
     matches = {
         m["jobId"]: m
         for m in get_db()[C.JOB_MATCHES].find(
@@ -525,3 +558,19 @@ def rebuild_gaps() -> dict:
     from cv_shared.gap_insights import rebuild_gap_insights
 
     return rebuild_gap_insights()
+
+
+@app.post("/ingest/run")
+def post_ingest_run(analyze: bool = True, reprocess: bool = False) -> dict:
+    """Manually trigger Gmail job-alert ingest (same path as the hourly worker).
+
+    Pass reprocess=true to clear processed-message markers and re-read recent alerts
+    (needed after a failed ingest that incorrectly marked mail as done).
+    """
+    from cv_shared.intake.pipeline import run_ingest
+
+    try:
+        return run_ingest(analyze=analyze, reprocess=reprocess)
+    except Exception as exc:
+        logger.exception("ingest failed")
+        raise HTTPException(500, str(exc)) from exc

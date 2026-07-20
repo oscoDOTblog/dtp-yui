@@ -26,13 +26,18 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
       GENERATED_APPLICATIONS_DIR: /app/generated-applications
       SEED_DIR: /app/seed
+      SECRETS_DIR: /app/secrets
+      LOCATION_CONFIG: /app/config/location.json
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      GMAIL_QUERY: ${GMAIL_QUERY:-label:JobAlerts newer_than:2d}
+      GMAIL_PROCESSED_LABEL: ${GMAIL_PROCESSED_LABEL:-false}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./generated-applications:/app/generated-applications
       - ./seed:/app/seed:ro
       - ./secrets:/app/secrets:ro
+      - ./config:/app/config:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -52,11 +57,17 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
       GENERATED_APPLICATIONS_DIR: /app/generated-applications
       SEED_DIR: /app/seed
+      SECRETS_DIR: /app/secrets
+      LOCATION_CONFIG: /app/config/location.json
       AUTO_SEED: "true"
+      INGEST_ON_START: ${INGEST_ON_START:-true}
+      GMAIL_QUERY: ${GMAIL_QUERY:-label:JobAlerts newer_than:2d}
+      GMAIL_PROCESSED_LABEL: ${GMAIL_PROCESSED_LABEL:-false}
     volumes:
       - ./generated-applications:/app/generated-applications
       - ./seed:/app/seed:ro
-      - ./secrets:/app/secrets:ro
+      - ./secrets:/app/secrets
+      - ./config:/app/config:ro
       - ./repository-cache:/app/repository-cache
     extra_hosts:
       - "host.docker.internal:host-gateway"

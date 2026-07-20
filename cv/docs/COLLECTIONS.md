@@ -21,7 +21,7 @@ Field names use **camelCase**.
 | `cv_applications` | Pipeline status (`discovered` → `drafted`, …) |
 | `cv_documents` | Metadata for generated resume/cover letter files |
 | `cv_userDecisions` | apply / save / reject / draft |
-| `cv_systemRuns` | Seed and analyze run logs |
+| `cv_systemRuns` | Seed, analyze, and ingest run logs |
 | `cv_gapInsights` | Aggregated recurring gaps/warnings across analyses (ranked by `totalSeen`) |
 
 Evidence levels: `mentioned` | `installed` | `implemented` | `substantial` | `tested` | `deployed` | `maintained`
@@ -30,10 +30,43 @@ Evidence levels: `mentioned` | `installed` | `implemented` | `substantial` | `te
 
 One document per normalized requirement. Upserted on each successful job analyze (counts once per `jobId`). Status: `open` | `learning` | `resolved`.
 
-## Stage 2+ (stub names)
+### `cv_jobs` intake fields (Stage 2A+)
 
-- `cv_jobSources` — LinkedIn email alerts, ATS feeds
-- `cv_gmailMessages` — processed Gmail message ids
+| Field | Purpose |
+|---|---|
+| `externalId` | Stable id from source, e.g. `gmail:msgId:linkHash` or `greenhouse:token:123` |
+| `source` | `manual` \| `gmail` \| `greenhouse` \| `lever` \| … |
+| `sourceUrl` | URL as discovered |
+| `canonicalApplyUrl` | Prefer company ATS URL after redirect resolve |
+| `discoveredBy` | `{ source, alertName?, alertLocation?, messageId? }` |
+| `locationAssessment` | Classifier output (see below) |
+| `firstSeenAt` / `lastSeenAt` | Intake timestamps |
+| `fingerprints.exact` / `fingerprints.fuzzy` | Dedup keys |
+| `contentHash` | Hash of description text (legacy + still used) |
+| `status` | Includes `out_of_area` when Bay Area gate fails |
+
+### `locationAssessment`
+
+```json
+{
+  "workArrangement": "hybrid",
+  "geographicEligibility": "bay_area",
+  "officeCities": ["San Francisco"],
+  "bayAreaEligible": true,
+  "confidence": 0.9,
+  "evidence": ["location mentions San Francisco"]
+}
+```
+
+## Stage 2A (active)
+
+| Collection | Purpose |
+|---|---|
+| `cv_gmailMessages` | Processed Gmail message ids (idempotent ingest) |
+| `cv_jobSources` | Configured sources (email query + future ATS boards) |
+
+## Stage 2B+ / later stubs
+
 - `cv_repositories` — GitHub repo scan state
 - `cv_repositoryScans` — per-commit analysis records
 

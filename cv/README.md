@@ -1,6 +1,8 @@
-# CV Job Copilot (Stage 1)
+# CV Job Copilot
 
 Local AI job-search copilot with **human approval**. Score jobs against a grounded candidate knowledge base, generate tailored application packages, and track decisions.
+
+Stage **2A** adds Gmail job-alert intake with a Bay Area location gate. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Prerequisites
 
@@ -39,9 +41,20 @@ Open:
 
 The worker auto-seeds MongoDB from `seed/` on first start.
 
+## Gmail job-alert intake (Stage 2A)
+
+Follow the full guide: **[docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md)**
+
+Short version:
+
+1. Put `gmail-client-secret.json` in `secrets/`
+2. Run `PYTHONPATH=services/shared python scripts/gmail_auth.py`
+3. Label alerts with `JobAlerts`
+4. `curl -X POST http://localhost:8000/ingest/run` or wait for the hourly worker
+
 ## Workflow
 
-1. Open **Analyze** and paste a job description (URL fetch is best-effort; LinkedIn usually blocks).
+1. Open **Analyze** and paste a job description (URL fetch is best-effort; LinkedIn usually blocks), **or** let Gmail ingest fill the Inbox.
 2. Review score, strong evidence, and meaningful gaps.
 3. Check **Gaps** for recurring missing requirements ranked by frequency (mark Learning / Resolved as you close them).
 4. Click **Generate documents** → files land in `generated-applications/{company}-{role}/`.
@@ -73,10 +86,11 @@ ssh -L 3000:localhost:3000 -L 8000:localhost:8000 user@legion-wireguard-ip
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [COLLECTIONS.md](docs/COLLECTIONS.md)
-- [ROADMAP.md](docs/ROADMAP.md) — Stages 2–5
+- [ROADMAP.md](docs/ROADMAP.md)
+- [GMAIL_SETUP.md](docs/GMAIL_SETUP.md) — Gmail inbox + OAuth for job alerts
 
-## Stage 1 scope
+## Current scope
 
-In: profile seed, manual job paste, Ollama match, gap insights aggregation, document generation, dashboard, Docker Compose.
+In: profile seed, manual job paste, Gmail alert ingest, Bay Area location gate, Ollama match, gap insights, document generation, dashboard, Docker Compose.
 
-Out: Gmail LinkedIn alerts, Telegram, GitHub polling, Playwright ATS (see roadmap).
+Out: Greenhouse/Lever polling (2B/2C), Telegram digests, GitHub evidence polling, Playwright ATS (see roadmap).

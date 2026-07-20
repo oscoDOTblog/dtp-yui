@@ -46,6 +46,10 @@ Then open `http://localhost:3000`.
 
 Every resume claim must cite an `evidence` document linked to `workHistory` and/or `projects`. The matcher and document generator must not invent experience.
 
+## Stage 2A intake
+
+Hourly worker (and `POST /ingest/run`) pulls Gmail job alerts → normalize/dedupe → Bay Area location gate → `analyze_job` for eligible listings. Config: `config/location.json`. Setup: [GMAIL_SETUP.md](GMAIL_SETUP.md).
+
 ## Role families
 
 Matching detects role family (`systems`, `product`, `mobile`, `ai`) and leads generated documents with the matching evidence source (Capital One systems vs SwayQuest product vs mobile).

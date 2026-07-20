@@ -4,25 +4,25 @@ overview: "Revise the dtp-yui `cv` post–Stage-1 roadmap around multi-source in
 todos:
   - id: rewrite-roadmap-docs
     content: Rewrite ROADMAP.md + COLLECTIONS for intake-first stages (2A–6)
-    status: pending
+    status: completed
   - id: gmail-setup-doc
     content: "Create cv/docs/GMAIL_SETUP.md: dedicated inbox + OAuth + alert/label setup guide; link from README + secrets/README"
-    status: pending
+    status: completed
   - id: intake-foundation
     content: Shared JobSource interface, normalizer, fingerprints, cv_jobs field extensions
-    status: pending
+    status: completed
   - id: location-classifier
     content: Bay Area cities + workArrangement/geoEligibility gate (rule-first)
-    status: pending
+    status: completed
   - id: gmail-adapter
     content: Gmail OAuth, alert parse, cv_gmailMessages, redirect resolve
-    status: pending
+    status: completed
   - id: worker-ingest
     content: Wire hourly ingest → upsert → analyze; optional POST /ingest/run
-    status: pending
+    status: completed
   - id: inbox-chips
     content: Inbox source + location chips and eligible filter
-    status: pending
+    status: completed
 isProject: false
 ---
 

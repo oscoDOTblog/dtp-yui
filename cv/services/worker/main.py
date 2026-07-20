@@ -1,4 +1,4 @@
-"""CV worker: seed on startup + APScheduler stubs for Stage 2/3."""
+"""CV worker: seed on startup + hourly Gmail ingest + GitHub stub."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import time
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from cv_shared.db import ensure_indexes
+from cv_shared.intake.pipeline import run_ingest
 from cv_shared.seed import seed_all
 
 logging.basicConfig(
@@ -18,14 +19,18 @@ logging.basicConfig(
 logger = logging.getLogger("cv.worker")
 
 
-def stub_ingest_jobs() -> None:
-    """Stage 2: Gmail LinkedIn alert ingestion (not implemented)."""
-    logger.info("[stub] ingest-jobs — Stage 2 not implemented yet")
+def ingest_jobs() -> None:
+    """Stage 2A: Gmail job-alert ingestion."""
+    try:
+        summary = run_ingest(analyze=True)
+        logger.info("ingest-jobs finished: %s", summary)
+    except Exception:
+        logger.exception("ingest-jobs failed")
 
 
 def stub_scan_github() -> None:
-    """Stage 3: GitHub repository polling (not implemented)."""
-    logger.info("[stub] scan-github — Stage 3 not implemented yet")
+    """Stage 4: GitHub repository polling (not implemented)."""
+    logger.info("[stub] scan-github — Stage 4 not implemented yet")
 
 
 def main() -> None:
@@ -38,12 +43,17 @@ def main() -> None:
             logger.exception("Seed failed: %s", exc)
 
     scheduler = BackgroundScheduler(timezone="UTC")
-    # Hourly at :00 — Stage 2 stub
-    scheduler.add_job(stub_ingest_jobs, "cron", minute=0, id="ingest-jobs")
-    # Hourly at :30 — Stage 3 stub
+    scheduler.add_job(ingest_jobs, "cron", minute=0, id="ingest-jobs")
     scheduler.add_job(stub_scan_github, "cron", minute=30, id="scan-github")
     scheduler.start()
-    logger.info("Worker started with Stage 2/3 scheduler stubs")
+    logger.info("Worker started (ingest hourly at :00)")
+
+    # Optional: run once shortly after boot so first alerts appear without waiting
+    if os.environ.get("INGEST_ON_START", "true").lower() in ("1", "true", "yes"):
+        try:
+            ingest_jobs()
+        except Exception:
+            logger.exception("startup ingest failed")
 
     try:
         while True:
