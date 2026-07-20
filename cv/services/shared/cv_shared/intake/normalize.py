@@ -52,6 +52,7 @@ def normalize_raw_job(raw: dict[str, Any]) -> dict[str, Any]:
         "sourceUrl": source_url,
         "canonicalApplyUrl": apply_url,
         "url": apply_url or source_url,
+        "fetchStatus": raw.get("fetchStatus"),
         "title": title,
         "company": company,
         "location": location,

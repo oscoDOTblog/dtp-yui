@@ -20,8 +20,13 @@ logger = logging.getLogger("cv.worker")
 
 
 def ingest_jobs() -> None:
-    """Stage 2A: Gmail job-alert ingestion."""
+    """Stage 2A: Gmail job-alert ingestion (skips if API ingest already running)."""
     try:
+        from cv_shared.intake.pipeline import get_running_ingest, run_ingest
+
+        if get_running_ingest():
+            logger.info("ingest-jobs skipped — another ingest is already running")
+            return
         summary = run_ingest(analyze=True)
         logger.info("ingest-jobs finished: %s", summary)
     except Exception:

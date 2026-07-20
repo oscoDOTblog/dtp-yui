@@ -403,6 +403,15 @@ def post_analyze(job_id: str) -> dict:
     except Exception as exc:
         logger.exception("analyze failed")
         raise HTTPException(500, str(exc)) from exc
+    try:
+        from cv_shared.telegram import notify_apply_match
+
+        job = get_db()[C.JOBS].find_one({"_id": job_id}) or {}
+        notify_apply_match(job, match)
+        # reload match for telegramNotifiedAt
+        match = get_db()[C.JOB_MATCHES].find_one({"_id": match.get("_id")}) or match
+    except Exception:
+        logger.exception("telegram notify after analyze failed")
     return _serialize(match)
 
 
@@ -562,15 +571,35 @@ def rebuild_gaps() -> dict:
 
 @app.post("/ingest/run")
 def post_ingest_run(analyze: bool = True, reprocess: bool = False) -> dict:
-    """Manually trigger Gmail job-alert ingest (same path as the hourly worker).
+    """Start Gmail ingest in the background. Returns immediately.
 
-    Pass reprocess=true to clear processed-message markers and re-read recent alerts
-    (needed after a failed ingest that incorrectly marked mail as done).
+    Pass reprocess=true to clear processed-message markers first.
+    Returns 409 payload (accepted=false) if an ingest is already running.
     """
-    from cv_shared.intake.pipeline import run_ingest
+    from cv_shared.intake.pipeline import start_ingest_async
 
     try:
-        return run_ingest(analyze=analyze, reprocess=reprocess)
+        result = start_ingest_async(analyze=analyze, reprocess=reprocess)
     except Exception as exc:
-        logger.exception("ingest failed")
+        logger.exception("ingest start failed")
         raise HTTPException(500, str(exc)) from exc
+    if result.get("conflict"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": result.get("message") or "Ingest already running",
+                "runId": result.get("runId"),
+                "status": "running",
+            },
+        )
+    return result
+
+
+@app.get("/ingest/status")
+def get_ingest_status_endpoint(runId: str | None = None) -> dict:
+    from cv_shared.intake.pipeline import get_ingest_status
+
+    doc = get_ingest_status(runId)
+    if not doc:
+        return {"status": "idle", "runId": None}
+    return _serialize(doc)

@@ -46,15 +46,31 @@ def upsert_normalized_job(normalized: dict[str, Any]) -> dict[str, Any]:
             "locationAssessment": normalized.get("locationAssessment"),
             "discoveredBy": normalized.get("discoveredBy") or existing.get("discoveredBy"),
         }
+        # Always refresh URLs when present; never clear existing URL fields
         if normalized.get("canonicalApplyUrl"):
             updates["canonicalApplyUrl"] = normalized["canonicalApplyUrl"]
-            updates["url"] = normalized.get("url") or normalized["canonicalApplyUrl"]
+        if normalized.get("sourceUrl"):
+            updates["sourceUrl"] = normalized["sourceUrl"]
+        new_url = (
+            normalized.get("url")
+            or normalized.get("canonicalApplyUrl")
+            or normalized.get("sourceUrl")
+        )
+        if new_url:
+            updates["url"] = new_url
+        if normalized.get("fetchStatus"):
+            updates["fetchStatus"] = normalized["fetchStatus"]
+        if normalized.get("title") and normalized["title"] not in ("Untitled",):
+            updates["title"] = normalized["title"]
+        if normalized.get("company") and normalized["company"] not in ("Unknown",):
+            updates["company"] = normalized["company"]
+        if normalized.get("location"):
+            updates["location"] = normalized["location"]
         if normalized.get("descriptionRaw") and len(normalized["descriptionRaw"]) > len(
             existing.get("descriptionRaw") or ""
         ):
             updates["descriptionRaw"] = normalized["descriptionRaw"]
             updates["contentHash"] = content_hash
-        # Do not reopen out_of_area → analyzed; refresh status only if still new/out_of_area
         if existing.get("status") in (None, "new", "out_of_area"):
             updates["status"] = normalized.get("status") or existing.get("status")
         db[C.JOBS].update_one({"_id": existing["_id"]}, {"$set": updates})
@@ -90,8 +106,15 @@ def upsert_normalized_job(normalized: dict[str, Any]) -> dict[str, Any]:
         "fingerprints": fingerprints,
         "discoveredBy": normalized.get("discoveredBy"),
         "locationAssessment": normalized.get("locationAssessment"),
+        "fetchStatus": normalized.get("fetchStatus"),
     }
     if external_id:
         doc["externalId"] = external_id
+    # Prefer resolved apply URL
+    doc["url"] = (
+        normalized.get("url")
+        or normalized.get("canonicalApplyUrl")
+        or normalized.get("sourceUrl")
+    )
     db[C.JOBS].insert_one(doc)
     return {"job": doc, "created": True, "reason": "inserted"}

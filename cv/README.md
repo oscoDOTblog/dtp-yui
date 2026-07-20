@@ -50,7 +50,7 @@ Short version:
 1. Put `gmail-client-secret.json` in `secrets/`
 2. Run `PYTHONPATH=services/shared python scripts/gmail_auth.py`
 3. Label alerts with `JobAlerts`
-4. `curl -X POST http://localhost:8000/ingest/run` or wait for the hourly worker
+4. `curl -X POST http://localhost:8000/ingest/run` (background; poll `/ingest/status`) or wait for the hourly worker
 
 ## Workflow
 
@@ -91,6 +91,6 @@ ssh -L 3000:localhost:3000 -L 8000:localhost:8000 user@legion-wireguard-ip
 
 ## Current scope
 
-In: profile seed, manual job paste, Gmail alert ingest, Bay Area location gate, Ollama match, gap insights, document generation, dashboard, Docker Compose.
+In: profile seed, manual job paste, Gmail digest → per-listing ingest (background), Bay Area location gate, Ollama match, Telegram on apply (≥85), gap insights, document generation, dashboard, Docker Compose.
 
-Out: Greenhouse/Lever polling (2B/2C), Telegram digests, GitHub evidence polling, Playwright ATS (see roadmap).
+Out: Greenhouse/Lever polling (2B/2C), Telegram digests for consider-band, GitHub evidence polling, Playwright ATS (see roadmap).

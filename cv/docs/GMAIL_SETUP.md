@@ -138,7 +138,42 @@ When `GMAIL_PROCESSED_LABEL=true` and the modify scope was granted:
 - After a message is ingested, the worker applies `AI Job Agent/Processed`
 - Message ids are always recorded in Mongo `cv_gmailMessages` (idempotent even if labeling fails)
 
-## 8. Verification checklist
+## 8. Digest emails → per-listing jobs
+
+Glassdoor / Indeed / LinkedIn digests list many roles in one message. Ingest:
+
+- Parses HTML listing cards (company, title, location, link)
+- Skips footer noise (unsubscribe, privacy, create alert)
+- Creates **one `cv_jobs` row per listing** (no product cap; pathological guard at 100/message)
+- Resolves redirects and best-effort fetches the listing page (~8s); falls back to card text if blocked
+- Processes listings **sequentially** (fetch → upsert → analyze when Bay Area eligible)
+- Runs in the **background** from `POST /ingest/run` — Inbox stays browsable and polls `/ingest/status`
+- Stores `canonicalApplyUrl` / `url` / `sourceUrl` so **Open** works on cards and job detail
+
+```bash
+# Start (returns immediately with runId)
+curl -X POST http://localhost:8000/ingest/run
+
+# Live progress
+curl http://localhost:8000/ingest/status
+
+# Already running → HTTP 409
+```
+
+## 9. Telegram apply alerts
+
+When a match scores **`recommendation=apply`** (≥ `SCORE_URGENT`, default 85), the API/worker can notify Telegram using the same env names as osco-dot-blog:
+
+```bash
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+```
+
+- Soft-fail if unset (ingest continues)
+- Deduped via `telegramNotifiedAt` on the match (reprocess does not spam)
+- Does **not** fire for `consider` / `skip` / `reject`
+
+## 10. Verification checklist
 
 1. Client secret + token files exist under `cv/secrets/`
 2. At least one recent message has label `JobAlerts`
@@ -146,13 +181,14 @@ When `GMAIL_PROCESSED_LABEL=true` and the modify scope was granted:
 
 ```bash
 curl -X POST http://localhost:8000/ingest/run
+curl http://localhost:8000/ingest/status
 ```
 
-4. Open http://localhost:3000 — a new job card should appear (or `out_of_area` if the location gate rejected it)
-5. Re-run ingest — the same Gmail message must not create duplicates
-6. Check API logs / `cv_systemRuns` for type `ingest`
+4. Open http://localhost:3000 — job cards appear as each listing finishes; **Open** uses the stored listing URL
+5. Re-run ingest — the same Gmail message must not create duplicates; second concurrent run returns 409
+6. Check API logs / `cv_systemRuns` for type `ingest` with `listingsProcessed` progress
 
-## 9. Security
+## 11. Security
 
 - Never commit `gmail-client-secret.json` or `gmail-token.json`
 - Bind services to `127.0.0.1` only; use WireGuard + SSH if remote

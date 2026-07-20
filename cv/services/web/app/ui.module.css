@@ -391,13 +391,32 @@
   animation: statusPulse 2.4s ease-in-out infinite;
 }
 
+.statusPanelIngestLive {
+  max-width: none;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
 .statusPanelBody {
   flex: 1;
   min-width: 0;
 }
 
+.cardLinkTitle {
+  color: inherit;
+  text-decoration: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.cardLinkTitle:hover .title {
+  color: var(--pink);
+}
+
 @media (max-width: 720px) {
-  .statusPanelIngest {
+  .statusPanelIngest,
+  .statusPanelIngestLive {
     flex-direction: column;
     align-items: stretch;
   }

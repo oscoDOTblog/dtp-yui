@@ -31,6 +31,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       GMAIL_QUERY: ${GMAIL_QUERY:-label:JobAlerts newer_than:2d}
       GMAIL_PROCESSED_LABEL: ${GMAIL_PROCESSED_LABEL:-false}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -63,6 +65,8 @@ services:
       INGEST_ON_START: ${INGEST_ON_START:-true}
       GMAIL_QUERY: ${GMAIL_QUERY:-label:JobAlerts newer_than:2d}
       GMAIL_PROCESSED_LABEL: ${GMAIL_PROCESSED_LABEL:-false}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     volumes:
       - ./generated-applications:/app/generated-applications
       - ./seed:/app/seed:ro

@@ -1,28 +1,28 @@
 ---
 name: Digest email job split
-overview: "Split Gmail digests into per-listing jobs (sequential background ingest, Open URLs), and Telegram-alert when match recommendation is apply — same TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID pattern as osco-dot-blog."
+overview: Split Gmail digests into per-listing jobs (sequential background ingest, Open URLs), and Telegram-alert when match recommendation is apply — same TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID pattern as osco-dot-blog.
 todos:
   - id: digest-parser
     content: HTML digest listing extractor (company/title/location/link); no product cap; footer-link filtering only
-    status: pending
+    status: completed
   - id: deep-link-fetch
     content: Per-listing redirect resolve + best-effort JD fetch with card-text fallback
-    status: pending
+    status: completed
   - id: pipeline-wire
     content: Sequential per-listing loop (fetch→upsert→analyze); progress fields on ingest run doc
-    status: pending
+    status: completed
   - id: background-ingest
     content: Async POST /ingest/run + GET /ingest/status; single-flight lock; Inbox polls and stays browsable
-    status: pending
+    status: completed
   - id: persist-open-url
     content: Persist listing URL on every job; Open on Inbox + job detail
-    status: pending
+    status: completed
   - id: telegram-apply-alert
-    content: "Notify Telegram on recommendation=apply (SCORE_URGENT); osco env names; dedupe per job"
-    status: pending
+    content: Notify Telegram on recommendation=apply (SCORE_URGENT); osco env names; dedupe per job
+    status: completed
   - id: ui-docs
     content: Compact live ingest banner + GMAIL_SETUP / .env.example Telegram note
-    status: pending
+    status: completed
 isProject: false
 ---
 

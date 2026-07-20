@@ -176,24 +176,32 @@ export default function JobDetailPage() {
         ? GENERATE_STEPS
         : [];
 
+  const openHref =
+    job.canonicalApplyUrl || job.url || job.sourceUrl || "";
+
   return (
     <div>
-      <h1 className={styles.pageTitle}>
-        {job.title} — {job.company}
-      </h1>
-      <p className={styles.subtitle}>
-        {job.location || "Location n/a"} · {job.workMode || "unknown"} · status:{" "}
-        {job.status}
-        {job.url ? (
-          <>
-            {" "}
-            ·{" "}
-            <a href={job.url} target="_blank" rel="noreferrer">
-              Open listing
-            </a>
-          </>
+      <div className={styles.row}>
+        <div>
+          <h1 className={styles.pageTitle}>
+            {job.title} — {job.company}
+          </h1>
+          <p className={styles.subtitle}>
+            {job.location || "Location n/a"} · {job.workMode || "unknown"} · status:{" "}
+            {job.status}
+          </p>
+        </div>
+        {openHref ? (
+          <a
+            className={styles.btn}
+            href={openHref}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open
+          </a>
         ) : null}
-      </p>
+      </div>
 
       {error ? <div className={styles.error}>{error}</div> : null}
       {message && !busy ? <p className={styles.meta}>{message}</p> : null}

@@ -5,24 +5,6 @@ import { apiGet, apiPost } from "../lib/api";
 import LoadingGif from "./components/LoadingGif";
 import styles from "./ui.module.css";
 
-const INGEST_STEPS = [
-  "Connecting to Gmail…",
-  "Searching JobAlerts mailbox…",
-  "Reading alert emails…",
-  "Extracting titles, companies, and links…",
-  "Resolving apply URLs…",
-  "Checking Bay Area eligibility…",
-  "Deduping against existing jobs…",
-  "Scoring new matches with Ollama…",
-  "Writing gap insights…",
-  "Refreshing Inbox…",
-];
-
-const REPROCESS_STEPS = [
-  "Clearing processed-message markers…",
-  ...INGEST_STEPS,
-];
-
 function badgeClass(recommendation) {
   if (recommendation === "apply") return `${styles.badge} ${styles.badgeApply}`;
   if (recommendation === "consider") return `${styles.badge} ${styles.badgeConsider}`;
@@ -35,6 +17,10 @@ function sourceLabel(job) {
   const discovered = job.discoveredBy?.source;
   if (src === "gmail" && discovered) return discovered.replace(/-email$/, "");
   return src;
+}
+
+function listingUrl(job) {
+  return job.canonicalApplyUrl || job.url || job.sourceUrl || "";
 }
 
 function locationChip(job) {
@@ -53,22 +39,39 @@ function locationChip(job) {
   return null;
 }
 
+function statusBannerText(status) {
+  if (!status || status.status === "idle") return "";
+  if (status.status === "running") {
+    const processed = status.listingsProcessed || 0;
+    const total = status.listingsTotal || 0;
+    const current = status.currentTitle || "Working…";
+    if (total > 0) {
+      return `Ingesting ${processed}/${total} — ${current}`;
+    }
+    return current || "Starting ingest…";
+  }
+  if (status.status === "completed") {
+    const s = status.summary || status;
+    return `Ingest complete: ${s.jobsCreated || 0} new · ${s.analyzed || 0} analyzed · ${s.outOfArea || 0} out of area`;
+  }
+  if (status.status === "failed") {
+    return "Ingest failed — check API logs";
+  }
+  return "";
+}
+
 export default function HomePage() {
   const [eligibleFilter, setEligibleFilter] = useState("eligible");
   const [jobs, setJobs] = useState([]);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(true);
-  const [ingesting, setIngesting] = useState(false);
-  const [reprocessing, setReprocessing] = useState(false);
-  const [statusIndex, setStatusIndex] = useState(0);
-  const [statusText, setStatusText] = useState("");
+  const [ingestStatus, setIngestStatus] = useState(null);
+  const [runId, setRunId] = useState(null);
 
-  const statusSteps = reprocessing ? REPROCESS_STEPS : INGEST_STEPS;
+  const ingesting = ingestStatus?.status === "running";
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
+  const loadJobs = useCallback(async () => {
     try {
       let path = "/jobs";
       if (eligibleFilter === "eligible") path = "/jobs?eligible=true";
@@ -78,63 +81,82 @@ export default function HomePage() {
     } catch (err) {
       setError(err.message || "Failed to load jobs");
       setJobs([]);
-    } finally {
-      setLoading(false);
     }
   }, [eligibleFilter]);
 
+  const refreshStatus = useCallback(async () => {
+    try {
+      const path = runId
+        ? `/ingest/status?runId=${encodeURIComponent(runId)}`
+        : "/ingest/status";
+      const data = await apiGet(path);
+      setIngestStatus(data);
+      return data;
+    } catch {
+      return null;
+    }
+  }, [runId]);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError("");
+      await loadJobs();
+      if (!cancelled) {
+        const status = await refreshStatus();
+        if (status?.status === "running" && status._id) {
+          setRunId(status._id);
+        }
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadJobs, refreshStatus]);
 
   useEffect(() => {
     if (!ingesting) return undefined;
-    const steps = reprocessing ? REPROCESS_STEPS : INGEST_STEPS;
-    setStatusIndex(0);
-    setStatusText(steps[0]);
-    const id = setInterval(() => {
-      setStatusIndex((prev) => {
-        const next = Math.min(prev + 1, steps.length - 1);
-        setStatusText(steps[next]);
-        return next;
-      });
-    }, 2200);
+    const id = setInterval(async () => {
+      const status = await refreshStatus();
+      await loadJobs();
+      if (status && status.status !== "running") {
+        setInfo(statusBannerText(status));
+      }
+    }, 3000);
     return () => clearInterval(id);
-  }, [ingesting, reprocessing]);
+  }, [ingesting, refreshStatus, loadJobs]);
 
   async function runIngest(reprocess = false) {
-    setIngesting(true);
-    setReprocessing(reprocess);
     setInfo("");
     setError("");
     try {
       const path = reprocess ? "/ingest/run?reprocess=true" : "/ingest/run";
       const result = await apiPost(path);
-      const parts = [
-        `Ingest complete: ${result.jobsCreated || 0} new`,
-        `${result.jobsUpdated || 0} updated`,
-        `${result.analyzed || 0} analyzed`,
-        `${result.outOfArea || 0} out of area`,
-        `${result.messagesSeen || 0} messages seen`,
-      ];
-      if (result.reprocessCleared) {
-        parts.push(`cleared ${result.reprocessCleared} markers`);
-      }
-      if (result.skippedNoCreds) {
-        parts.push("Gmail credentials missing — see docs/GMAIL_SETUP.md");
-      }
-      if (Array.isArray(result.errors) && result.errors.length) {
-        parts.push(`${result.errors.length} errors`);
-      }
-      setInfo(parts.join(" · "));
-      await load();
+      setRunId(result.runId);
+      setIngestStatus({
+        status: "running",
+        _id: result.runId,
+        currentTitle: reprocess
+          ? "Clearing markers… then reading JobAlerts"
+          : "Starting…",
+        listingsProcessed: 0,
+        listingsTotal: 0,
+      });
     } catch (err) {
-      setError(err.message || "Ingest failed");
-    } finally {
-      setIngesting(false);
-      setReprocessing(false);
-      setStatusText("");
-      setStatusIndex(0);
+      if (err.status === 409 || (err.detail && err.detail.runId)) {
+        const detail = err.detail || {};
+        setRunId(detail.runId);
+        setIngestStatus({
+          status: "running",
+          _id: detail.runId,
+          currentTitle: "Ingest already running…",
+        });
+        setInfo("Ingest already running — browsing while it finishes.");
+        return;
+      }
+      setError(err.message || "Ingest failed to start");
     }
   }
 
@@ -144,7 +166,8 @@ export default function HomePage() {
         <div>
           <h1 className={styles.pageTitle}>Inbox</h1>
           <p className={styles.subtitle}>
-            Scored jobs awaiting your decision. Alerts ingest hourly; paste on Analyze anytime.
+            Digests split into per-listing jobs. Ingest runs in the background — browse
+            and Open while scoring continues.
           </p>
         </div>
         <div className={styles.actionRow}>
@@ -154,7 +177,7 @@ export default function HomePage() {
             onClick={() => runIngest(false)}
             disabled={ingesting}
           >
-            {ingesting && !reprocessing ? "Ingesting…" : "Run ingest"}
+            {ingesting ? "Ingesting…" : "Run ingest"}
           </button>
           <button
             type="button"
@@ -162,7 +185,7 @@ export default function HomePage() {
             onClick={() => {
               if (
                 window.confirm(
-                  "Clear processed Gmail markers and re-read recent JobAlerts? Use after a failed ingest."
+                  "Clear processed Gmail markers and re-read recent JobAlerts?"
                 )
               ) {
                 runIngest(true);
@@ -170,7 +193,7 @@ export default function HomePage() {
             }}
             disabled={ingesting}
           >
-            {ingesting && reprocessing ? "Reprocessing…" : "Reprocess alerts"}
+            Reprocess alerts
           </button>
         </div>
       </div>
@@ -180,36 +203,21 @@ export default function HomePage() {
 
       {ingesting ? (
         <div
-          className={`${styles.statusPanel} ${styles.statusPanelIngest}`}
+          className={`${styles.statusPanel} ${styles.statusPanelIngestLive}`}
           role="status"
           aria-live="polite"
         >
           <LoadingGif
-            message={reprocessing ? "Reprocessing alerts" : "Ingesting job alerts"}
+            message="Background ingest"
             alt="Ingest loading animation"
           />
           <div className={styles.statusPanelBody}>
-            <p className={styles.statusTitle}>
-              {reprocessing ? "Reprocessing JobAlerts" : "Ingesting JobAlerts"}
+            <p className={styles.statusTitle}>Ingesting JobAlerts</p>
+            <p className={styles.statusText}>{statusBannerText(ingestStatus)}</p>
+            <p className={styles.meta}>
+              Splitting digests · fetching listing pages · Bay Area gate · scoring one
+              by one. You can Open finished jobs below while this runs.
             </p>
-            <p className={styles.statusText}>{statusText}</p>
-            <ul className={styles.statusStepList}>
-              {statusSteps.map((step, idx) => (
-                <li
-                  key={step}
-                  className={
-                    idx < statusIndex
-                      ? styles.statusStepDone
-                      : idx === statusIndex
-                        ? styles.statusStepCurrent
-                        : styles.statusStepPending
-                  }
-                >
-                  {idx < statusIndex ? "✓ " : idx === statusIndex ? "→ " : "○ "}
-                  {step}
-                </li>
-              ))}
-            </ul>
           </div>
         </div>
       ) : null}
@@ -226,7 +234,6 @@ export default function HomePage() {
               type="button"
               className={`${styles.filterChip} ${eligibleFilter === f.id ? styles.filterChipActive : ""}`}
               onClick={() => setEligibleFilter(f.id)}
-              disabled={ingesting}
             >
               {f.label}
             </button>
@@ -234,67 +241,82 @@ export default function HomePage() {
         </div>
       </div>
 
-      {loading && !ingesting ? <p className={styles.empty}>Loading…</p> : null}
+      {loading ? <p className={styles.empty}>Loading…</p> : null}
 
-      {!loading && !ingesting && jobs.length === 0 ? (
+      {!loading && jobs.length === 0 ? (
         <p className={styles.empty}>
           No jobs yet.{" "}
           <a href="/analyze">Analyze a job description</a>
-          {" "}or configure Gmail alerts (<code>docs/GMAIL_SETUP.md</code>) then click Run
+          {" "}or configure Gmail alerts (<code>docs/GMAIL_SETUP.md</code>) then Run
           ingest.
         </p>
       ) : null}
 
-      {!ingesting ? (
-        <div className={styles.grid}>
-          {jobs.map((job) => {
-            const match = job.match;
-            const loc = locationChip(job);
-            return (
-              <a
-                key={job._id}
-                href={`/jobs/${job._id}`}
-                className={`${styles.card} ${styles.cardLink}`}
-              >
-                <div className={styles.row}>
+      <div className={styles.grid}>
+        {jobs.map((job) => {
+          const match = job.match;
+          const loc = locationChip(job);
+          const openHref = listingUrl(job);
+          return (
+            <div key={job._id} className={styles.card}>
+              <div className={styles.row}>
+                <a href={`/jobs/${job._id}`} className={styles.cardLinkTitle}>
                   <h2 className={styles.title}>
                     {job.title} — {job.company}
                   </h2>
-                  {match ? (
-                    <span className={styles.score}>{match.score}/100</span>
-                  ) : (
-                    <span className={styles.meta}>
-                      {job.status === "out_of_area" ? "Out of area" : "Not analyzed"}
-                    </span>
-                  )}
-                </div>
-                <p className={styles.meta}>
-                  {job.location || "Location n/a"} · {job.workMode || "unknown"} ·{" "}
-                  {job.status}
-                </p>
-                <div className={styles.pillRow}>
-                  <span className={`${styles.pill} ${styles.pillNeutral}`}>
-                    {sourceLabel(job)}
+                </a>
+                {match ? (
+                  <span className={styles.score}>{match.score}/100</span>
+                ) : (
+                  <span className={styles.meta}>
+                    {job.status === "out_of_area" ? "Out of area" : "Not analyzed"}
                   </span>
-                  {loc ? (
-                    <span className={`${styles.pill} ${loc.className}`}>{loc.label}</span>
-                  ) : null}
-                  {match ? (
-                    <span className={badgeClass(match.recommendation)}>
-                      {match.recommendation}
-                    </span>
-                  ) : null}
-                  {match?.roleFamily ? (
-                    <span className={`${styles.pill} ${styles.pillNeutral}`}>
-                      {match.roleFamily}
-                    </span>
-                  ) : null}
-                </div>
-              </a>
-            );
-          })}
-        </div>
-      ) : null}
+                )}
+              </div>
+              <p className={styles.meta}>
+                {job.location || "Location n/a"} · {job.workMode || "unknown"} ·{" "}
+                {job.status}
+              </p>
+              <div className={styles.pillRow}>
+                <span className={`${styles.pill} ${styles.pillNeutral}`}>
+                  {sourceLabel(job)}
+                </span>
+                {loc ? (
+                  <span className={`${styles.pill} ${loc.className}`}>{loc.label}</span>
+                ) : null}
+                {match ? (
+                  <span className={badgeClass(match.recommendation)}>
+                    {match.recommendation}
+                  </span>
+                ) : null}
+                {match?.roleFamily ? (
+                  <span className={`${styles.pill} ${styles.pillNeutral}`}>
+                    {match.roleFamily}
+                  </span>
+                ) : null}
+              </div>
+              <div className={styles.actionRow}>
+                <a
+                  className={`${styles.btn} ${styles.btnSecondary} ${styles.btnSmall}`}
+                  href={`/jobs/${job._id}`}
+                >
+                  Details
+                </a>
+                {openHref ? (
+                  <a
+                    className={`${styles.btn} ${styles.btnSmall}`}
+                    href={openHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open
+                  </a>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
