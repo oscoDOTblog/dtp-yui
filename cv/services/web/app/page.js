@@ -176,8 +176,9 @@ export default function HomePage() {
             className={`${styles.btn} ${styles.btnSecondary}`}
             onClick={() => runIngest(false)}
             disabled={ingesting}
+            title="Fetch only new JobAlerts mail that has not been ingested yet"
           >
-            {ingesting ? "Ingesting…" : "Run ingest"}
+            {ingesting ? "Ingesting…" : "Fetch new alerts"}
           </button>
           <button
             type="button"
@@ -185,15 +186,18 @@ export default function HomePage() {
             onClick={() => {
               if (
                 window.confirm(
-                  "Clear processed Gmail markers and re-read recent JobAlerts?"
+                  "Re-read recent JobAlerts from the start?\n\n" +
+                    "Use this after a failed run or parser changes. " +
+                    "Already-saved jobs are still deduped (not duplicated)."
                 )
               ) {
                 runIngest(true);
               }
             }}
             disabled={ingesting}
+            title="Clear processed markers and re-read recent JobAlerts (dedupes existing jobs)"
           >
-            Reprocess alerts
+            Re-read all recent
           </button>
         </div>
       </div>
