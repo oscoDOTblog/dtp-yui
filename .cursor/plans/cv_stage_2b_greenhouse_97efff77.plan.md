@@ -1,25 +1,28 @@
 ---
 name: CV Stage 2B Greenhouse
-overview: Add a Bay Area company watchlist in cv_jobSources, a Greenhouse Job Board API adapter on the existing JobSource/normalize/upsert/analyze path, multi-source hourly ingest, and a simple Sources page for poll status.
+overview: Add a Bay Area company watchlist in cv_jobSources, a Greenhouse Job Board API adapter on the existing JobSource/normalize/upsert/analyze path, multi-source hourly ingest, a Settings master toggle for Greenhouse, and a simple Sources page for poll status.
 todos:
   - id: schema-seed
     content: Define cv_jobSources schema, indexes, seed/jobSources.json + seed upsert that preserves poll state
-    status: pending
+    status: completed
   - id: greenhouse-adapter
     content: "Implement GreenhouseBoardSource: boards API fetch, HTML to text, raw job mapping, per-source lastPolledAt/lastError"
-    status: pending
+    status: completed
   - id: pipeline-multisource
-    content: "Refactor run_ingest: shared raw-job loop; Gmail + Greenhouse; do not abort when Gmail creds missing"
-    status: pending
+    content: "Refactor run_ingest: shared raw-job loop; Gmail + Greenhouse; do not abort when Gmail creds missing; gate Greenhouse on Settings"
+    status: completed
+  - id: settings-greenhouse-toggle
+    content: Extend cv_settings + Settings UI with atsIngest.greenhouse master toggle; gate poll in run_ingest
+    status: completed
   - id: sources-api
     content: Add GET/PATCH/POST /sources and POST /sources/{id}/poll
-    status: pending
+    status: completed
   - id: sources-ui
     content: "Sources page: list, enable toggle, poll status/errors, add company; nav link"
-    status: pending
+    status: completed
   - id: docs-2b
-    content: Update ROADMAP/COLLECTIONS/ARCHITECTURE/README + create GREENHOUSE_SETUP.md
-    status: pending
+    content: Update ROADMAP/COLLECTIONS/ARCHITECTURE/README + create GREENHOUSE_SETUP.md; document Settings toggle
+    status: completed
 isProject: false
 ---
 
@@ -39,16 +42,21 @@ Poll curated Greenhouse career boards hourly, feed listings through the existing
 ```mermaid
 flowchart TD
   cron[Hourly ingest]
+  settings[(cv_settings)]
   gmail[Gmail adapter]
   gh[Greenhouse adapter]
   sources[(cv_jobSources)]
   norm[normalize plus location gate]
   jobs[(cv_jobs)]
   analyze[analyze_job]
+  settingsUi[Settings toggle]
   ui[Sources UI]
 
+  settingsUi --> settings
+  cron --> settings
   cron --> gmail
   cron --> gh
+  settings -->|"atsIngest.greenhouse"| gh
   sources --> gh
   gmail --> norm
   gh --> norm
@@ -67,8 +75,11 @@ flowchart TD
 | Greenhouse API | Public boards API only — no API key: `GET https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true` |
 | Rate limit | Sequential board polls with a short delay (~200–300ms); per-source `lastError` on failure; continue other boards |
 | Dedup | `externalId = greenhouse:{boardToken}:{jobId}` + existing fingerprint/`contentHash` path |
+| Settings vs Sources enable | **Settings** = master on/off for all Greenhouse polling (`atsIngest.greenhouse`). **Sources** per-company `enabled` = which boards poll when the master is on. Both required to poll a board |
 | Sources UI | List + enable/disable + last poll/error/job count + Poll now; simple add for name / boardToken / priority |
 | Out of 2B | Lever/Ashby (2C), commute reweight/digests (3), LinkedIn scraping |
+
+**Note:** Settings today only has Gmail alert toggles ([`settings.py`](cv/services/shared/cv_shared/settings.py) / [`settings/page.js`](cv/services/web/app/settings/page.js)). The Settings+Glassdoor plan explicitly deferred Greenhouse here — this stage adds it.
 
 ---
 
@@ -142,17 +153,57 @@ Refactor [`pipeline.py`](cv/services/shared/cv_shared/intake/pipeline.py):
 1. Extract shared `_ingest_raw_jobs(raw_jobs, summary, analyze, …)` from the current per-listing loop (enrich → normalize → upsert → analyze / telegram).
 2. `run_ingest`:
    - Run Gmail path as today (creds missing → skip Gmail only, do **not** abort whole ingest)
-   - Then `fetch_greenhouse_raw_jobs()` → same `_ingest_raw_jobs`
+   - Then, **only if** `atsIngest.greenhouse` is true in `cv_settings`, call `fetch_greenhouse_raw_jobs()` → same `_ingest_raw_jobs`
+   - If master toggle is off: skip Greenhouse entirely; set `summary.skippedDisabledAts.greenhouse = true` (mirror Gmail’s `skippedDisabledSource` pattern)
    - Summary additions: `gmailJobs*`, `greenhouseJobs*`, `sourcesPolled`, `sourcesFailed`
 3. `cv_systemRuns` type remains `ingest`; include source breakdown in summary.
 4. Worker [`main.py`](cv/services/worker/main.py) unchanged at cron level (still hourly `ingest_jobs` → `run_ingest`).
-5. `POST /ingest/run` continues to trigger full multi-source ingest; accept optional `sources=gmail|greenhouse|all` query (default `all`).
+5. `POST /ingest/run` continues to trigger full multi-source ingest; accept optional `sources=gmail|greenhouse|all` query (default `all`). Explicit `sources=greenhouse` still respects the Settings master toggle (no silent override) unless we later add an operator force flag — keep it gated.
 
-Fix today’s early-return when Gmail creds are missing so Greenhouse still runs.
+Fix today’s early-return when Gmail creds are missing so Greenhouse still runs (when Settings allows it).
 
 ---
 
-## 4. Sources API
+## 4. Settings — Greenhouse master toggle
+
+Extend existing Settings (already shipped for Gmail alerts). Not present today — must add in 2B.
+
+**`cv_settings` shape** (extend [`settings.py`](cv/services/shared/cv_shared/settings.py)):
+
+```json
+{
+  "_id": "app",
+  "gmailIngest": { "...existing...": true },
+  "atsIngest": {
+    "greenhouse": true
+  },
+  "updatedAt": "ISO-8601"
+}
+```
+
+- Defaults: `atsIngest.greenhouse: true` (on by default once 2B ships, so seed boards start polling without a trip to Settings)
+- `get_app_settings` / `patch_app_settings`: normalize + allow patching `atsIngest.greenhouse` bool only (ignore unknown ATS keys for now; leave room for `lever` in 2C)
+- Helper: `is_ats_source_enabled("greenhouse", settings=...) -> bool`
+- API `PATCH /settings` body may include `{ "atsIngest": { "greenhouse": false } }` alongside existing `gmailIngest`
+
+**Settings UI** ([`settings/page.js`](cv/services/web/app/settings/page.js)):
+
+- New section under Gmail alerts: **ATS board ingest**
+- One switch: **Greenhouse** — “Poll curated company boards from the Sources watchlist.”
+- Same Switch UX / optimistic PATCH pattern as Gmail toggles
+- Copy: master switch; individual companies still managed on Sources
+
+**Layering:**
+
+| Control | Effect |
+|---|---|
+| Settings `atsIngest.greenhouse` off | No Greenhouse HTTP polls in hourly / Run ingest |
+| Settings on + source `enabled: false` | That board skipped; others still poll |
+| Settings on + source enabled | Board polled |
+
+---
+
+## 5. Sources API
 
 Add to [`cv/services/api/main.py`](cv/services/api/main.py):
 
@@ -167,7 +218,7 @@ Keep localhost-only; no auth change.
 
 ---
 
-## 5. Sources UI
+## 6. Sources UI
 
 **New page:** [`cv/services/web/app/sources/page.js`](cv/services/web/app/sources/page.js) + CSS module using existing Netflix / hot-pink tokens from [`ui.module.css`](cv/services/web/app/ui.module.css) / [`globals.css`](cv/services/web/app/globals.css).
 
@@ -176,29 +227,32 @@ Keep localhost-only; no auth change.
 - Compact Add company form: name + board token (+ optional priority)
 - Nav link in [`layout.js`](cv/services/web/app/layout.js): Sources
 - Footer stage label can move to Stage 2B when shipping
+- Banner/hint when Settings Greenhouse toggle is off: “Greenhouse ingest is disabled in Settings”
 
 Inbox: ensure `sourceLabel()` treats `greenhouse` cleanly (show `greenhouse` or company from job fields).
 
 ---
 
-## 6. Docs
+## 7. Docs
 
 | Doc | Update |
 |---|---|
 | [`ROADMAP.md`](cv/docs/ROADMAP.md) | Mark 2A done; 2B as current |
-| [`COLLECTIONS.md`](cv/docs/COLLECTIONS.md) | Full `cv_jobSources` field table |
+| [`COLLECTIONS.md`](cv/docs/COLLECTIONS.md) | Full `cv_jobSources` field table; `cv_settings.atsIngest` |
 | [`ARCHITECTURE.md`](cv/docs/ARCHITECTURE.md) | Multi-source ingest paragraph |
-| **New** [`GREENHOUSE_SETUP.md`](cv/docs/GREENHOUSE_SETUP.md) | How to find board tokens, add via seed/UI, verify poll, rate-limit notes |
+| **New** [`GREENHOUSE_SETUP.md`](cv/docs/GREENHOUSE_SETUP.md) | Board tokens, seed/UI, Settings master toggle, verify poll, rate-limit notes |
 | [`README.md`](cv/README.md) | Point to Greenhouse setup; 2B in scope |
+| Settings / Gmail docs | Note ATS section on Settings page |
 
 ---
 
 ## Acceptance criteria
 
 - Seeded Greenhouse sources appear in Sources UI after seed/start
+- Settings shows a Greenhouse switch; turning it off skips all board polls on next ingest (no env/redeploy); turning it on resumes
 - Hourly (or Run ingest / Poll) creates new Bay Area–eligible jobs from boards without duplicating on re-poll
 - Non–Bay Area Greenhouse roles land as `out_of_area` and are not auto-analyzed
-- Gmail ingest still works; missing Gmail creds does not block Greenhouse
+- Gmail ingest still works; missing Gmail creds does not block Greenhouse (when Settings allows)
 - Bad/invalid `boardToken` records `lastError` and does not crash the run
 - Manual Analyze paste path unchanged
 - `GREENHOUSE_SETUP.md` is followable without reading code
@@ -207,7 +261,8 @@ Inbox: ensure `sourceLabel()` treats `greenhouse` cleanly (show `greenhouse` or 
 
 1. Schema + indexes + `jobSources.json` seed upsert
 2. `greenhouse_source.py` + HTML strip + raw mapping
-3. Pipeline multi-source refactor (fix Gmail early-return)
-4. Sources API
-5. Sources UI + nav
-6. Docs
+3. Settings `atsIngest.greenhouse` + UI toggle + helper
+4. Pipeline multi-source refactor (fix Gmail early-return; gate on Settings)
+5. Sources API
+6. Sources UI + nav (incl. disabled-in-Settings hint)
+7. Docs

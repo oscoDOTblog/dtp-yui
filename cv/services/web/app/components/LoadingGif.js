@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { LOADING_GIFS, pickRandomLoadingGif } from "../../lib/loadingGifs";
-import styles from "./LoadingGif.module.css";
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
 
 export default function LoadingGif({
   message = "Working…",
@@ -27,25 +28,40 @@ export default function LoadingGif({
   }, []);
 
   return (
-    <div className={`${styles.container} ${className}`.trim()}>
+    <div
+      className={cn(
+        "flex shrink-0 flex-col items-center gap-3",
+        className,
+      )}
+    >
       {src ? (
-        <div className={styles.gifWrap}>
+        <div className="flex items-center justify-center">
           <img
             src={src}
             alt={alt}
             width={160}
             height={160}
-            className={styles.gifImage}
+            className="size-40 rounded-2xl border border-primary/35 bg-gradient-to-br from-primary/12 to-pink-400/8 object-contain p-3 shadow-[0_18px_45px_rgba(255,20,147,0.18)] max-md:size-32"
           />
         </div>
       ) : (
-        <div className={styles.spinner} aria-hidden="true" />
+        <Spinner className="size-10 text-primary" />
       )}
-      {message ? <p className={styles.caption}>{message}</p> : null}
-      <div className={styles.dots} aria-hidden="true">
-        <span className={styles.dot}>•</span>
-        <span className={styles.dot}>•</span>
-        <span className={styles.dot}>•</span>
+      {message ? (
+        <p className="m-0 max-w-[260px] text-center text-sm leading-snug text-foreground/90">
+          {message}
+        </p>
+      ) : null}
+      <div className="flex gap-2 text-primary" aria-hidden="true">
+        <span className="animate-[pulse_1.4s_ease-in-out_infinite] text-2xl leading-none">
+          •
+        </span>
+        <span className="animate-[pulse_1.4s_ease-in-out_0.2s_infinite] text-2xl leading-none">
+          •
+        </span>
+        <span className="animate-[pulse_1.4s_ease-in-out_0.4s_infinite] text-2xl leading-none">
+          •
+        </span>
       </div>
     </div>
   );

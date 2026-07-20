@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { getApiBase } from "../../lib/api";
-import styles from "../ui.module.css";
+import { Button } from "@/components/ui/button";
+import { Card, CardPanel } from "@/components/ui/card";
 
 function packageStorageKey(jobId) {
   return `cv-package-${jobId}`;
@@ -99,45 +100,49 @@ function CollapsibleDoc({ title, filename, content, jobId, defaultOpen }) {
   }
 
   return (
-    <div className={styles.collapseItem}>
+    <Card className="overflow-hidden">
       <button
         type="button"
-        className={styles.collapseHeader}
+        className="flex w-full cursor-pointer items-center justify-between gap-4 border-0 bg-transparent px-4 py-3.5 text-left font-semibold text-foreground hover:bg-accent/50"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
         <span>
           {open ? "▼" : "▶"} {title}
         </span>
-        <span className={styles.meta}>{filename}</span>
+        <span className="text-sm font-normal text-muted-foreground">
+          {filename}
+        </span>
       </button>
       {open ? (
-        <div className={styles.collapseBody}>
-          <div className={styles.collapseActions}>
-            <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={onCopy}>
+        <CardPanel className="border-t border-border pt-4">
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={onCopy}>
               {copied ? "Copied!" : "Copy to clipboard"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className={`${styles.btn} ${styles.btnSecondary}`}
+              variant="outline"
               onClick={() => downloadTextFile(filename, content || "")}
             >
               Save .txt
-            </button>
+            </Button>
             {jobId && filename ? (
-              <button
+              <Button
                 type="button"
-                className={`${styles.btn} ${styles.btnSecondary}`}
+                variant="outline"
                 onClick={() => downloadFromApi(jobId, filename)}
               >
                 Download original
-              </button>
+              </Button>
             ) : null}
           </div>
-          <pre className={styles.docPre}>{content || "(empty)"}</pre>
-        </div>
+          <pre className="m-0 max-h-[420px] overflow-auto rounded-lg border border-border bg-background p-3.5 font-mono text-sm leading-relaxed break-words whitespace-pre-wrap text-foreground">
+            {content || "(empty)"}
+          </pre>
+        </CardPanel>
       ) : null}
-    </div>
+    </Card>
   );
 }
 
@@ -148,14 +153,15 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
   const downloads = pkg.downloads || [];
 
   return (
-    <section className={styles.section}>
-      <h2>Generated documents</h2>
-      <p className={styles.meta}>
+    <section className="mt-7">
+      <h2 className="mb-3 text-lg font-semibold">Generated documents</h2>
+      <p className="m-0 text-sm text-muted-foreground">
         Package <code>{pkg.folderName}</code>
-        {pkg.generatedAt ? ` · ${pkg.generatedAt}` : ""} · also saved in this browser
+        {pkg.generatedAt ? ` · ${pkg.generatedAt}` : ""} · also saved in this
+        browser
       </p>
 
-      <div className={styles.collapseList}>
+      <div className="mt-3.5 grid gap-2.5">
         {previewEntries.map((item, idx) => (
           <CollapsibleDoc
             key={item.filename || item.title}
@@ -169,20 +175,19 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
       </div>
 
       {downloads.length > 0 ? (
-        <div className={styles.actions} style={{ marginTop: "1rem" }}>
+        <div className="mt-4 flex flex-wrap gap-2.5">
           {downloads.map((item) => (
-            <button
+            <Button
               key={item.filename}
               type="button"
-              className={`${styles.btn} ${styles.btnSecondary}`}
+              variant="outline"
               onClick={() => downloadFromApi(jobId, item.filename)}
             >
               Download {item.label}
-            </button>
+            </Button>
           ))}
-          <button
+          <Button
             type="button"
-            className={styles.btn}
             onClick={() => {
               previewEntries.forEach((item) => {
                 if (item.content) downloadTextFile(item.filename, item.content);
@@ -190,7 +195,7 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
             }}
           >
             Save all text to downloads
-          </button>
+          </Button>
         </div>
       ) : null}
     </section>

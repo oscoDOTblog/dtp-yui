@@ -1,21 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import LoadingGif from "./components/LoadingGif";
-import styles from "./ui.module.css";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardPanel } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
 
-function badgeClass(recommendation) {
-  if (recommendation === "apply") return `${styles.badge} ${styles.badgeApply}`;
-  if (recommendation === "consider") return `${styles.badge} ${styles.badgeConsider}`;
-  if (recommendation === "reject") return `${styles.badge} ${styles.badgeReject}`;
-  return `${styles.badge} ${styles.badgeSkip}`;
+function recommendationVariant(recommendation) {
+  if (recommendation === "apply") return "success";
+  if (recommendation === "consider") return "warning";
+  if (recommendation === "reject") return "error";
+  return "outline";
 }
 
 function sourceLabel(job) {
   const src = job.source || "manual";
   const discovered = job.discoveredBy?.source;
   if (src === "gmail" && discovered) return discovered.replace(/-email$/, "");
+  if (src === "greenhouse") return "greenhouse";
   return src;
 }
 
@@ -27,14 +33,14 @@ function locationChip(job) {
   const la = job.locationAssessment;
   if (!la) return null;
   if (la.bayAreaEligible === false) {
-    return { label: "Out of area", className: styles.pillBad };
+    return { label: "Out of area", variant: "error" };
   }
   const arr = la.workArrangement || job.workMode || "unknown";
-  if (arr === "remote") return { label: "Remote", className: styles.pillGood };
-  if (arr === "hybrid") return { label: "Hybrid", className: styles.pillWarn };
-  if (arr === "onsite") return { label: "Onsite", className: styles.pillNeutral };
+  if (arr === "remote") return { label: "Remote", variant: "success" };
+  if (arr === "hybrid") return { label: "Hybrid", variant: "warning" };
+  if (arr === "onsite") return { label: "Onsite", variant: "outline" };
   if (la.geographicEligibility === "bay_area") {
-    return { label: "Bay Area", className: styles.pillGood };
+    return { label: "Bay Area", variant: "success" };
   }
   return null;
 }
@@ -68,6 +74,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [ingestStatus, setIngestStatus] = useState(null);
   const [runId, setRunId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const ingesting = ingestStatus?.status === "running";
 
@@ -77,7 +85,14 @@ export default function HomePage() {
       if (eligibleFilter === "eligible") path = "/jobs?eligible=true";
       if (eligibleFilter === "out") path = "/jobs?eligible=false";
       const data = await apiGet(path);
-      setJobs(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setJobs(list);
+      setSelectedIds((prev) => {
+        if (prev.size === 0) return prev;
+        const visible = new Set(list.map((j) => j._id));
+        const next = new Set([...prev].filter((id) => visible.has(id)));
+        return next.size === prev.size ? prev : next;
+      });
     } catch (err) {
       setError(err.message || "Failed to load jobs");
       setJobs([]);
@@ -128,6 +143,60 @@ export default function HomePage() {
     return () => clearInterval(id);
   }, [ingesting, refreshStatus, loadJobs]);
 
+  const allVisibleSelected = useMemo(
+    () => jobs.length > 0 && jobs.every((j) => selectedIds.has(j._id)),
+    [jobs, selectedIds],
+  );
+  const selectedCount = selectedIds.size;
+
+  function toggleJob(jobId) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (allVisibleSelected) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds(new Set(jobs.map((j) => j._id)));
+  }
+
+  async function deleteSelected() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    const ok = window.confirm(
+      `Delete ${ids.length} job${ids.length === 1 ? "" : "s"}?\n\n` +
+        "This permanently removes matches, decisions, application packages, " +
+        "generated documents, and related gap insight data.",
+    );
+    if (!ok) return;
+
+    setDeleting(true);
+    setError("");
+    setInfo("");
+    try {
+      const result = await apiPost("/jobs/bulk-delete", { jobIds: ids });
+      const deleted = result.deletedCount || 0;
+      const missing = (result.missing || []).length;
+      const errors = (result.errors || []).length;
+      setSelectedIds(new Set());
+      await loadJobs();
+      let msg = `Deleted ${deleted} job${deleted === 1 ? "" : "s"}.`;
+      if (missing) msg += ` ${missing} already gone.`;
+      if (errors) msg += ` ${errors} failed — check API logs.`;
+      setInfo(msg);
+    } catch (err) {
+      setError(err.message || "Bulk delete failed");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function runIngest(reprocess = false) {
     setInfo("");
     setError("");
@@ -160,54 +229,70 @@ export default function HomePage() {
     }
   }
 
+  const filters = [
+    { id: "eligible", label: "Bay Area eligible" },
+    { id: "all", label: "All" },
+    { id: "out", label: "Out of area" },
+  ];
+
   return (
     <div>
-      <div className={styles.row}>
+      <div className="mb-6 flex flex-wrap items-baseline justify-between gap-4">
         <div>
-          <h1 className={styles.pageTitle}>Inbox</h1>
-          <p className={styles.subtitle}>
-            Digests split into per-listing jobs. Ingest runs in the background — browse
-            and Open while scoring continues.
+          <h1 className="m-0 mb-1.5 text-3xl font-semibold tracking-tight max-sm:text-2xl">
+            Inbox
+          </h1>
+          <p className="m-0 text-muted-foreground">
+            Digests split into per-listing jobs. Ingest runs in the background —
+            browse and Open while scoring continues.
           </p>
         </div>
-        <div className={styles.actionRow}>
-          <button
+        <div className="flex flex-wrap gap-2">
+          <Button
             type="button"
-            className={`${styles.btn} ${styles.btnSecondary}`}
+            variant="outline"
             onClick={() => runIngest(false)}
-            disabled={ingesting}
+            disabled={ingesting || deleting}
             title="Fetch only new JobAlerts mail that has not been ingested yet"
           >
             {ingesting ? "Ingesting…" : "Fetch new alerts"}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className={`${styles.btn} ${styles.btnSecondary}`}
+            variant="outline"
             onClick={() => {
               if (
                 window.confirm(
                   "Re-read recent JobAlerts from the start?\n\n" +
                     "Use this after a failed run or parser changes. " +
-                    "Already-saved jobs are still deduped (not duplicated)."
+                    "Already-saved jobs are still deduped (not duplicated).",
                 )
               ) {
                 runIngest(true);
               }
             }}
-            disabled={ingesting}
+            disabled={ingesting || deleting}
             title="Clear processed markers and re-read recent JobAlerts (dedupes existing jobs)"
           >
             Re-read all recent
-          </button>
+          </Button>
         </div>
       </div>
 
-      {error ? <div className={styles.error}>{error}</div> : null}
-      {info && !ingesting ? <div className={styles.info}>{info}</div> : null}
+      {error ? (
+        <Alert variant="error" className="mb-4">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {info && !ingesting ? (
+        <Alert variant="warning" className="mb-4">
+          <AlertDescription>{info}</AlertDescription>
+        </Alert>
+      ) : null}
 
       {ingesting ? (
         <div
-          className={`${styles.statusPanel} ${styles.statusPanelIngestLive}`}
+          className="mb-5 flex items-center gap-5 rounded-xl border border-primary/35 bg-primary/8 p-5 max-md:flex-col max-md:items-stretch"
           role="status"
           aria-live="polite"
         >
@@ -215,109 +300,180 @@ export default function HomePage() {
             message="Background ingest"
             alt="Ingest loading animation"
           />
-          <div className={styles.statusPanelBody}>
-            <p className={styles.statusTitle}>Ingesting JobAlerts</p>
-            <p className={styles.statusText}>{statusBannerText(ingestStatus)}</p>
-            <p className={styles.meta}>
-              Splitting digests · fetching listing pages · Bay Area gate · scoring one
-              by one. You can Open finished jobs below while this runs.
+          <div className="min-w-0 flex-1">
+            <p className="m-0 mb-1 font-semibold text-foreground">
+              Ingesting JobAlerts
+            </p>
+            <p className="m-0 text-sm text-foreground/90">
+              {statusBannerText(ingestStatus)}
+            </p>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Splitting digests · fetching listing pages · Bay Area gate ·
+              scoring one by one. You can Open finished jobs below while this
+              runs.
             </p>
           </div>
         </div>
       ) : null}
 
-      <div className={styles.filterBar}>
-        <div className={styles.filterGroup}>
-          {[
-            { id: "eligible", label: "Bay Area eligible" },
-            { id: "all", label: "All" },
-            { id: "out", label: "Out of area" },
-          ].map((f) => (
-            <button
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {filters.map((f) => (
+            <Button
               key={f.id}
               type="button"
-              className={`${styles.filterChip} ${eligibleFilter === f.id ? styles.filterChipActive : ""}`}
-              onClick={() => setEligibleFilter(f.id)}
+              size="sm"
+              variant={eligibleFilter === f.id ? "default" : "outline"}
+              className="rounded-full"
+              onClick={() => {
+                setEligibleFilter(f.id);
+                setSelectedIds(new Set());
+              }}
             >
               {f.label}
-            </button>
+            </Button>
           ))}
         </div>
+
+        {!loading && jobs.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={toggleSelectAll}
+              disabled={deleting}
+            >
+              {allVisibleSelected ? "Clear selection" : "Select all"}
+            </Button>
+            {selectedCount > 0 ? (
+              <>
+                <span className="text-xs text-muted-foreground">
+                  {selectedCount} selected
+                </span>
+                <Button
+                  type="button"
+                  variant="destructive-outline"
+                  size="sm"
+                  onClick={deleteSelected}
+                  disabled={deleting}
+                  title="Cascade-delete selected jobs and related data"
+                >
+                  {deleting
+                    ? "Deleting…"
+                    : `Delete selected (${selectedCount})`}
+                </Button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
-      {loading ? <p className={styles.empty}>Loading…</p> : null}
+      {loading ? (
+        <p className="py-8 text-muted-foreground">Loading…</p>
+      ) : null}
 
       {!loading && jobs.length === 0 ? (
-        <p className={styles.empty}>
-          No jobs yet.{" "}
-          <a href="/analyze">Analyze a job description</a>
-          {" "}or configure Gmail alerts (<code>docs/GMAIL_SETUP.md</code>) then Run
-          ingest.
+        <p className="py-8 text-muted-foreground">
+          No jobs yet. <a href="/analyze">Analyze a job description</a> or
+          configure Gmail alerts (<code>docs/GMAIL_SETUP.md</code>) then Fetch
+          new alerts.
         </p>
       ) : null}
 
-      <div className={styles.grid}>
+      <div className="grid gap-3.5">
         {jobs.map((job) => {
           const match = job.match;
           const loc = locationChip(job);
           const openHref = listingUrl(job);
+          const selected = selectedIds.has(job._id);
           return (
-            <div key={job._id} className={styles.card}>
-              <div className={styles.row}>
-                <a href={`/jobs/${job._id}`} className={styles.cardLinkTitle}>
-                  <h2 className={styles.title}>
-                    {job.title} — {job.company}
-                  </h2>
-                </a>
-                {match ? (
-                  <span className={styles.score}>{match.score}/100</span>
-                ) : (
-                  <span className={styles.meta}>
-                    {job.status === "out_of_area" ? "Out of area" : "Not analyzed"}
-                  </span>
-                )}
-              </div>
-              <p className={styles.meta}>
-                {job.location || "Location n/a"} · {job.workMode || "unknown"} ·{" "}
-                {job.status}
-              </p>
-              <div className={styles.pillRow}>
-                <span className={`${styles.pill} ${styles.pillNeutral}`}>
-                  {sourceLabel(job)}
-                </span>
-                {loc ? (
-                  <span className={`${styles.pill} ${loc.className}`}>{loc.label}</span>
-                ) : null}
-                {match ? (
-                  <span className={badgeClass(match.recommendation)}>
-                    {match.recommendation}
-                  </span>
-                ) : null}
-                {match?.roleFamily ? (
-                  <span className={`${styles.pill} ${styles.pillNeutral}`}>
-                    {match.roleFamily}
-                  </span>
-                ) : null}
-              </div>
-              <div className={styles.actionRow}>
-                <a
-                  className={`${styles.btn} ${styles.btnSecondary} ${styles.btnSmall}`}
-                  href={`/jobs/${job._id}`}
-                >
-                  Details
-                </a>
-                {openHref ? (
-                  <a
-                    className={`${styles.btn} ${styles.btnSmall}`}
-                    href={openHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Open
-                  </a>
-                ) : null}
-              </div>
-            </div>
+            <Card
+              key={job._id}
+              className={cn(
+                "transition-colors hover:border-primary/50",
+                selected && "border-primary shadow-[0_0_0_1px_rgba(255,20,147,0.25)]",
+              )}
+            >
+              <CardPanel className="p-4">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    checked={selected}
+                    onCheckedChange={() => toggleJob(job._id)}
+                    disabled={deleting}
+                    aria-label={`Select ${job.title} at ${job.company}`}
+                    className="mt-1"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <a
+                        href={`/jobs/${job._id}`}
+                        className="min-w-0 flex-1 text-inherit no-underline hover:no-underline"
+                      >
+                        <h2 className="m-0 text-base font-semibold hover:text-primary">
+                          {job.title} — {job.company}
+                        </h2>
+                      </a>
+                      {match ? (
+                        <span className="text-xl font-bold text-primary">
+                          {match.score}/100
+                        </span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">
+                          {job.status === "out_of_area"
+                            ? "Out of area"
+                            : "Not analyzed"}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1.5 m-0 text-sm text-muted-foreground">
+                      {job.location || "Location n/a"} ·{" "}
+                      {job.workMode || "unknown"} · {job.status}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <Badge variant="outline">{sourceLabel(job)}</Badge>
+                      {loc ? (
+                        <Badge variant={loc.variant}>{loc.label}</Badge>
+                      ) : null}
+                      {match ? (
+                        <Badge
+                          variant={recommendationVariant(match.recommendation)}
+                          className="uppercase tracking-wide"
+                        >
+                          {match.recommendation}
+                        </Badge>
+                      ) : null}
+                      {match?.roleFamily ? (
+                        <Badge variant="outline">{match.roleFamily}</Badge>
+                      ) : null}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        render={<a href={`/jobs/${job._id}`} />}
+                      >
+                        Details
+                      </Button>
+                      {openHref ? (
+                        <Button
+                          size="sm"
+                          render={
+                            <a
+                              href={openHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            />
+                          }
+                        >
+                          Open
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </CardPanel>
+            </Card>
           );
         })}
       </div>

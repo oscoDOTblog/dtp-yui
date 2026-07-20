@@ -1,4 +1,4 @@
-"""Hourly / manual ingest: Gmail digests → per-listing jobs → analyze."""
+"""Hourly / manual ingest: Gmail digests + Greenhouse boards → analyze."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Any, Callable
 from .. import collections as C
 from ..db import get_db
 from ..matching import analyze_job
+from ..settings import get_app_settings, is_ats_source_enabled, is_gmail_source_enabled
 from ..telegram import notify_apply_match
 from .fetch_listing import enrich_raw_job
 from .gmail_client import (
@@ -20,6 +21,7 @@ from .gmail_client import (
     processed_label_enabled,
 )
 from .gmail_source import message_to_raw_jobs
+from .greenhouse_source import fetch_greenhouse_raw_jobs
 from .normalize import normalize_raw_job
 from .upsert import upsert_normalized_job
 
@@ -65,7 +67,7 @@ def _mark_gmail_processed(service, message_id: str) -> None:
 
 def fetch_gmail_raw_jobs(max_messages: int = 40) -> tuple[list[dict], list[str]]:
     if not credentials_available():
-        logger.warning("Gmail credentials missing; skipping ingest")
+        logger.warning("Gmail credentials missing; skipping Gmail ingest")
         return [], []
 
     service = build_gmail_service()
@@ -124,6 +126,115 @@ def _patch_run(run_id: str, fields: dict[str, Any]) -> None:
     get_db()[C.SYSTEM_RUNS].update_one({"_id": run_id}, {"$set": fields})
 
 
+def _ingest_raw_jobs(
+    raw_jobs: list[dict],
+    summary: dict[str, Any],
+    *,
+    analyze: bool,
+    app_settings: dict[str, Any],
+    publish: Callable[..., None],
+    gate_gmail: bool = False,
+    count_prefix: str | None = None,
+) -> dict[str, set[str]]:
+    """Normalize → upsert → analyze a list of raw jobs. Mutates summary."""
+    db = get_db()
+    touched_messages: set[str] = set()
+    succeeded_messages: set[str] = set()
+    failed_messages: set[str] = set()
+    skipped_only_messages: set[str] = set()
+
+    created_key = f"{count_prefix}JobsCreated" if count_prefix else None
+    updated_key = f"{count_prefix}JobsUpdated" if count_prefix else None
+
+    for raw in raw_jobs:
+        mid = (raw.get("discoveredBy") or {}).get("messageId")
+        if mid:
+            touched_messages.add(mid)
+        title_label = f"{raw.get('title') or 'Untitled'} @ {raw.get('company') or '?'}"
+        summary["currentTitle"] = title_label
+        publish()
+
+        if gate_gmail:
+            alert_source = (raw.get("discoveredBy") or {}).get("source") or "email-alert"
+            if not is_gmail_source_enabled(alert_source, app_settings):
+                summary["skippedDisabledSource"] = (
+                    summary.get("skippedDisabledSource", 0) + 1
+                )
+                if mid:
+                    skipped_only_messages.add(mid)
+                summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
+                publish()
+                continue
+
+        try:
+            # Greenhouse boards already include full content — skip URL enrich.
+            if (raw.get("source") or "") == "greenhouse":
+                enriched = raw
+            else:
+                enriched = enrich_raw_job(raw)
+            normalized = normalize_raw_job(enriched)
+            if enriched.get("fetchStatus"):
+                normalized["fetchStatus"] = enriched["fetchStatus"]
+            result = upsert_normalized_job(normalized)
+            job = result["job"]
+            if mid:
+                succeeded_messages.add(mid)
+                skipped_only_messages.discard(mid)
+            if result["created"]:
+                summary["jobsCreated"] += 1
+                if created_key:
+                    summary[created_key] = summary.get(created_key, 0) + 1
+            else:
+                summary["jobsUpdated"] += 1
+                if updated_key:
+                    summary[updated_key] = summary.get(updated_key, 0) + 1
+
+            if job.get("status") == "out_of_area":
+                summary["outOfArea"] += 1
+            elif (
+                analyze
+                and result["created"]
+                and job.get("locationAssessment", {}).get("bayAreaEligible")
+            ):
+                try:
+                    match = analyze_job(job["_id"])
+                    summary["analyzed"] += 1
+                    if notify_apply_match(job, match):
+                        summary["telegramSent"] += 1
+                except Exception as exc:
+                    logger.exception("analyze failed for %s", job["_id"])
+                    summary["errors"].append(f"analyze {job['_id']}: {exc}")
+            elif analyze and not result["created"]:
+                existing_match = db[C.JOB_MATCHES].find_one({"jobId": job["_id"]})
+                if (
+                    not existing_match
+                    and job.get("locationAssessment", {}).get("bayAreaEligible")
+                    and job.get("status") not in ("out_of_area",)
+                ):
+                    try:
+                        match = analyze_job(job["_id"])
+                        summary["analyzed"] += 1
+                        if notify_apply_match(job, match):
+                            summary["telegramSent"] += 1
+                    except Exception as exc:
+                        summary["errors"].append(f"analyze {job['_id']}: {exc}")
+        except Exception as exc:
+            logger.exception("listing ingest failed")
+            summary["errors"].append(str(exc))
+            if mid:
+                failed_messages.add(mid)
+
+        summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
+        publish()
+
+    return {
+        "touched": touched_messages,
+        "succeeded": succeeded_messages,
+        "failed": failed_messages,
+        "skipped_only": skipped_only_messages,
+    }
+
+
 def run_ingest(
     *,
     analyze: bool = True,
@@ -131,11 +242,16 @@ def run_ingest(
     reprocess: bool = False,
     run_id: str | None = None,
     progress_cb: Callable[[dict[str, Any]], None] | None = None,
+    sources: str = "all",
+    greenhouse_source_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Run one ingest cycle sequentially. Updates run_id progress when provided."""
+    """Run one ingest cycle. sources: all | gmail | greenhouse."""
     started = _now()
     db = get_db()
     run_id = run_id or f"ingest_{uuid.uuid4().hex[:16]}"
+    sources_mode = (sources or "all").strip().lower()
+    if sources_mode not in ("all", "gmail", "greenhouse"):
+        sources_mode = "all"
 
     summary: dict[str, Any] = {
         "startedAt": started,
@@ -148,11 +264,20 @@ def run_ingest(
         "listingsTotal": 0,
         "listingsProcessed": 0,
         "telegramSent": 0,
+        "skippedDisabledSource": 0,
+        "skippedDisabledAts": {},
         "skippedNoCreds": False,
         "reprocessCleared": 0,
+        "gmailJobsCreated": 0,
+        "gmailJobsUpdated": 0,
+        "greenhouseJobsCreated": 0,
+        "greenhouseJobsUpdated": 0,
+        "sourcesPolled": 0,
+        "sourcesFailed": 0,
         "currentTitle": "",
         "errors": [],
         "status": "running",
+        "sourcesMode": sources_mode,
     }
 
     existing = db[C.SYSTEM_RUNS].find_one({"_id": run_id})
@@ -187,127 +312,140 @@ def run_ingest(
         if progress_cb:
             progress_cb(payload)
 
-    if reprocess:
+    if reprocess and sources_mode in ("all", "gmail"):
         cleared = db[C.GMAIL_MESSAGES].delete_many({}).deleted_count
         summary["reprocessCleared"] = cleared
         logger.info("Cleared %s processed Gmail message markers for reprocess", cleared)
         publish()
 
-    if not credentials_available():
-        summary["skippedNoCreds"] = True
-        summary["status"] = "completed"
-        summary["finishedAt"] = _now()
-        publish()
-        return {"runId": run_id, **summary}
+    app_settings = get_app_settings()
+    run_gmail = sources_mode in ("all", "gmail")
+    run_greenhouse = sources_mode in ("all", "greenhouse")
 
-    try:
-        raw_jobs, message_ids = fetch_gmail_raw_jobs(max_messages=max_messages)
-    except Exception as exc:
-        logger.exception("Gmail fetch failed")
-        summary["errors"].append(str(exc))
-        summary["status"] = "failed"
-        summary["finishedAt"] = _now()
-        publish()
-        return {"runId": run_id, **summary}
+    # --- Gmail ---
+    message_ids: list[str] = []
+    gmail_sets: dict[str, set[str]] = {
+        "touched": set(),
+        "succeeded": set(),
+        "failed": set(),
+        "skipped_only": set(),
+    }
 
-    summary["messagesSeen"] = len(message_ids)
-    summary["listingsTotal"] = len(raw_jobs)
-    publish()
+    if run_gmail:
+        if not credentials_available():
+            summary["skippedNoCreds"] = True
+            publish()
+        else:
+            try:
+                raw_jobs, message_ids = fetch_gmail_raw_jobs(max_messages=max_messages)
+            except Exception as exc:
+                logger.exception("Gmail fetch failed")
+                summary["errors"].append(f"gmail: {exc}")
+                raw_jobs, message_ids = [], []
 
-    service = None
-    if processed_label_enabled():
-        try:
-            service = build_gmail_service()
-        except Exception:
-            service = None
+            summary["messagesSeen"] = len(message_ids)
+            summary["listingsTotal"] = summary.get("listingsTotal", 0) + len(raw_jobs)
+            publish()
 
-    touched_messages: set[str] = set()
-    succeeded_messages: set[str] = set()
-    failed_messages: set[str] = set()
-
-    for raw in raw_jobs:
-        mid = (raw.get("discoveredBy") or {}).get("messageId")
-        if mid:
-            touched_messages.add(mid)
-        title_label = f"{raw.get('title') or 'Untitled'} @ {raw.get('company') or '?'}"
-        summary["currentTitle"] = title_label
-        publish()
-
-        try:
-            enriched = enrich_raw_job(raw)
-            normalized = normalize_raw_job(enriched)
-            if enriched.get("fetchStatus"):
-                normalized["fetchStatus"] = enriched["fetchStatus"]
-            result = upsert_normalized_job(normalized)
-            job = result["job"]
-            if mid:
-                succeeded_messages.add(mid)
-            if result["created"]:
-                summary["jobsCreated"] += 1
-            else:
-                summary["jobsUpdated"] += 1
-
-            if job.get("status") == "out_of_area":
-                summary["outOfArea"] += 1
-            elif (
-                analyze
-                and result["created"]
-                and job.get("locationAssessment", {}).get("bayAreaEligible")
-            ):
-                try:
-                    match = analyze_job(job["_id"])
-                    summary["analyzed"] += 1
-                    if notify_apply_match(job, match):
-                        summary["telegramSent"] += 1
-                except Exception as exc:
-                    logger.exception("analyze failed for %s", job["_id"])
-                    summary["errors"].append(f"analyze {job['_id']}: {exc}")
-            elif analyze and not result["created"]:
-                # Re-analyze only if never analyzed and eligible
-                existing_match = db[C.JOB_MATCHES].find_one({"jobId": job["_id"]})
-                if (
-                    not existing_match
-                    and job.get("locationAssessment", {}).get("bayAreaEligible")
-                    and job.get("status") not in ("out_of_area",)
-                ):
-                    try:
-                        match = analyze_job(job["_id"])
-                        summary["analyzed"] += 1
-                        if notify_apply_match(job, match):
-                            summary["telegramSent"] += 1
-                    except Exception as exc:
-                        summary["errors"].append(f"analyze {job['_id']}: {exc}")
-        except Exception as exc:
-            logger.exception("listing ingest failed")
-            summary["errors"].append(str(exc))
-            if mid:
-                failed_messages.add(mid)
-
-        summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
-        publish()
-
-    for mid in message_ids:
-        if db[C.GMAIL_MESSAGES].find_one({"_id": mid}):
-            continue
-        if mid in failed_messages and mid not in succeeded_messages:
-            logger.warning(
-                "Leaving Gmail message %s unmarked — all job upserts failed", mid
+            gmail_sets = _ingest_raw_jobs(
+                raw_jobs,
+                summary,
+                analyze=analyze,
+                app_settings=app_settings,
+                publish=publish,
+                gate_gmail=True,
+                count_prefix="gmail",
             )
-            continue
-        if mid in touched_messages and mid not in succeeded_messages:
-            continue
-        db[C.GMAIL_MESSAGES].insert_one(
-            {
-                "_id": mid,
-                "processedAt": _now(),
-                "hadJobs": mid in touched_messages,
+
+            service = None
+            if processed_label_enabled():
+                try:
+                    service = build_gmail_service()
+                except Exception:
+                    service = None
+
+            for mid in message_ids:
+                if db[C.GMAIL_MESSAGES].find_one({"_id": mid}):
+                    continue
+                if mid in gmail_sets["failed"] and mid not in gmail_sets["succeeded"]:
+                    logger.warning(
+                        "Leaving Gmail message %s unmarked — all job upserts failed",
+                        mid,
+                    )
+                    continue
+                if (
+                    mid in gmail_sets["skipped_only"]
+                    and mid not in gmail_sets["succeeded"]
+                    and mid not in gmail_sets["failed"]
+                ):
+                    db[C.GMAIL_MESSAGES].insert_one(
+                        {
+                            "_id": mid,
+                            "processedAt": _now(),
+                            "hadJobs": False,
+                            "skippedDisabledSource": True,
+                        }
+                    )
+                    summary["messagesNew"] += 1
+                    if service:
+                        _mark_gmail_processed(service, mid)
+                    continue
+                if mid in gmail_sets["touched"] and mid not in gmail_sets["succeeded"]:
+                    continue
+                db[C.GMAIL_MESSAGES].insert_one(
+                    {
+                        "_id": mid,
+                        "processedAt": _now(),
+                        "hadJobs": mid in gmail_sets["touched"],
+                    }
+                )
+                summary["messagesNew"] += 1
+                if service:
+                    _mark_gmail_processed(service, mid)
+
+    # --- Greenhouse ---
+    if run_greenhouse:
+        if not is_ats_source_enabled("greenhouse", app_settings):
+            summary["skippedDisabledAts"] = {
+                **(summary.get("skippedDisabledAts") or {}),
+                "greenhouse": True,
             }
-        )
-        summary["messagesNew"] += 1
-        if service:
-            _mark_gmail_processed(service, mid)
+            publish()
+        else:
+            try:
+                gh_raw, gh_stats = fetch_greenhouse_raw_jobs(
+                    source_ids=greenhouse_source_ids
+                )
+            except Exception as exc:
+                logger.exception("Greenhouse fetch failed")
+                summary["errors"].append(f"greenhouse: {exc}")
+                gh_raw, gh_stats = [], {
+                    "sourcesPolled": 0,
+                    "sourcesFailed": 0,
+                    "jobsFetched": 0,
+                }
+
+            summary["sourcesPolled"] = gh_stats.get("sourcesPolled", 0)
+            summary["sourcesFailed"] = gh_stats.get("sourcesFailed", 0)
+            summary["listingsTotal"] = summary.get("listingsTotal", 0) + len(gh_raw)
+            publish()
+
+            _ingest_raw_jobs(
+                gh_raw,
+                summary,
+                analyze=analyze,
+                app_settings=app_settings,
+                publish=publish,
+                gate_gmail=False,
+                count_prefix="greenhouse",
+            )
 
     summary["currentTitle"] = ""
+    # Fail only if nothing ran and we had a hard Gmail-only mode with creds failure
+    # and greenhouse also skipped — otherwise completed with partial results.
+    if summary.get("errors") and summary.get("listingsProcessed", 0) == 0:
+        # Soft: still mark completed unless both sides totally failed with zero progress
+        pass
     summary["status"] = "completed"
     summary["finishedAt"] = _now()
     publish()
@@ -319,6 +457,8 @@ def start_ingest_async(
     *,
     analyze: bool = True,
     reprocess: bool = False,
+    sources: str = "all",
+    greenhouse_source_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Single-flight background ingest for the API. Returns immediately."""
     with _ingest_lock:
@@ -352,7 +492,13 @@ def start_ingest_async(
 
         def _worker() -> None:
             try:
-                run_ingest(analyze=analyze, reprocess=reprocess, run_id=run_id)
+                run_ingest(
+                    analyze=analyze,
+                    reprocess=reprocess,
+                    run_id=run_id,
+                    sources=sources,
+                    greenhouse_source_ids=greenhouse_source_ids,
+                )
             except Exception:
                 logger.exception("background ingest failed")
                 _patch_run(

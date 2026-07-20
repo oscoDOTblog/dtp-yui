@@ -26,6 +26,7 @@ SYSTEM_RUNS = f"{PREFIX}systemRuns"
 GAP_INSIGHTS = f"{PREFIX}gapInsights"
 JOB_SOURCES = f"{PREFIX}jobSources"
 GMAIL_MESSAGES = f"{PREFIX}gmailMessages"
+SETTINGS = f"{PREFIX}settings"
 REPOSITORIES = f"{PREFIX}repositories"
 REPOSITORY_SCANS = f"{PREFIX}repositoryScans"
 

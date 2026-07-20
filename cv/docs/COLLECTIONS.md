@@ -58,14 +58,53 @@ One document per normalized requirement. Upserted on each successful job analyze
 }
 ```
 
-## Stage 2A (active)
+## Stage 2A / 2B (active)
 
 | Collection | Purpose |
 |---|---|
 | `cv_gmailMessages` | Processed Gmail message ids (idempotent ingest) |
-| `cv_jobSources` | Configured sources (email query + future ATS boards) |
+| `cv_settings` | App settings (UI source of truth). Doc `_id: "app"` with `gmailIngest` (alert senders) and `atsIngest` (e.g. `greenhouse`) master toggles |
+| `cv_jobSources` | ATS company watchlist (Greenhouse boards) |
 
-## Stage 2B+ / later stubs
+### `cv_settings`
+
+```json
+{
+  "_id": "app",
+  "gmailIngest": {
+    "linkedinEmail": true,
+    "indeedEmail": true,
+    "glassdoorEmail": true,
+    "builtinEmail": true,
+    "otherEmail": true
+  },
+  "atsIngest": {
+    "greenhouse": true
+  },
+  "updatedAt": "ISO-8601"
+}
+```
+
+### `cv_jobSources`
+
+| Field | Purpose |
+|---|---|
+| `_id` | e.g. `src_greenhouse_stripe` |
+| `name` | Display company name |
+| `ats` | `greenhouse` (Lever later) |
+| `boardToken` | Public Greenhouse board slug |
+| `priority` | Poll order (higher first) |
+| `locations` | Preferred / hint locations |
+| `enabled` | Per-company poll switch (also requires Settings `atsIngest.greenhouse`) |
+| `careersUrl` | Board careers URL |
+| `lastPolledAt` / `lastSuccessAt` | Poll timestamps |
+| `lastError` | Last poll error string (cleared on success) |
+| `lastJobCount` | Jobs returned on last successful poll |
+| `createdAt` / `updatedAt` | Audit timestamps |
+
+Seeded from [`seed/jobSources.json`](../seed/jobSources.json). Identity fields upsert on seed without wiping poll state or re-enabling disabled sources.
+
+## Stage 2C+ / later stubs
 
 - `cv_repositories` — GitHub repo scan state
 - `cv_repositoryScans` — per-commit analysis records

@@ -9,21 +9,24 @@
 - Local Next.js dashboard (Inbox, Analyze, Gaps, Applications, Profile)
 - Docker Compose on Legion
 
-## Stage 2A — Email intake + foundation *(current)*
+## Stage 2A — Email intake + foundation *(done)*
 
 - Shared `JobSource` intake: normalize, fingerprint, dedupe → `cv_jobs`
 - Bay Area location / work-arrangement classifier (hard gate before auto-analyze)
 - Gmail job-alert ingestion (LinkedIn, Indeed, Built In, Wellfound, Google Jobs, etc.)
 - Hourly worker ingest + `POST /ingest/run`
 - Inbox source + location chips
+- Settings toggles for Gmail alert senders
 - Setup guide: [GMAIL_SETUP.md](GMAIL_SETUP.md)
 
-## Stage 2B — Bay Area company watchlist + Greenhouse
+## Stage 2B — Bay Area company watchlist + Greenhouse *(current)*
 
 - Curated company list in `cv_jobSources` (board tokens, priority, locations)
 - Greenhouse Job Board API polling
 - Same normalizer → location gate → upsert → analyze
-- Simple Sources UI (last poll / errors)
+- Settings master toggle (`atsIngest.greenhouse`)
+- Sources UI (last poll / errors / per-company enable)
+- Setup guide: [GREENHOUSE_SETUP.md](GREENHOUSE_SETUP.md)
 
 ## Stage 2C — Lever (+ Ashby if watchlist needs it)
 

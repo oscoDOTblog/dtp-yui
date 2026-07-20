@@ -8,27 +8,40 @@ import DocumentPackagePanel, {
   loadPackageFromBrowser,
   savePackageToBrowser,
 } from "../../components/DocumentPackagePanel";
-import styles from "../../ui.module.css";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardPanel } from "@/components/ui/card";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
-function badgeClass(recommendation) {
-  if (recommendation === "apply") return `${styles.badge} ${styles.badgeApply}`;
-  if (recommendation === "consider") return `${styles.badge} ${styles.badgeConsider}`;
-  if (recommendation === "reject") return `${styles.badge} ${styles.badgeReject}`;
-  return `${styles.badge} ${styles.badgeSkip}`;
+function recommendationVariant(recommendation) {
+  if (recommendation === "apply") return "success";
+  if (recommendation === "consider") return "warning";
+  if (recommendation === "reject") return "error";
+  return "outline";
 }
 
 /** Score chips: >=80 green, 61–79 yellow, <=60 red. hardPenalty is inverted (0 = good). */
-function componentPillClass(key, value) {
+function componentPillVariant(key, value) {
   const num = Number(value);
-  if (Number.isNaN(num)) return styles.pillNeutral;
+  if (Number.isNaN(num)) return "outline";
   if (key === "hardPenalty") {
-    if (num <= 0) return styles.pillGood;
-    if (num < 25) return styles.pillWarn;
-    return styles.pillBad;
+    if (num <= 0) return "success";
+    if (num < 25) return "warning";
+    return "error";
   }
-  if (num >= 80) return styles.pillGood;
-  if (num >= 61) return styles.pillWarn;
-  return styles.pillBad;
+  if (num >= 80) return "success";
+  if (num >= 61) return "warning";
+  return "error";
 }
 
 const ANALYZE_STEPS = [
@@ -117,7 +130,9 @@ export default function JobDetailPage() {
         const generated = await apiPost(`/jobs/${jobId}/generate`);
         setPkg(generated);
         savePackageToBrowser(jobId, generated);
-        setMessage(`Package ready: ${generated.folderName} (saved in this browser)`);
+        setMessage(
+          `Package ready: ${generated.folderName} (saved in this browser)`,
+        );
       } else {
         await apiPost(`/jobs/${jobId}/decision`, { decision: action });
         setMessage(`Decision recorded: ${action}`);
@@ -134,7 +149,7 @@ export default function JobDetailPage() {
   async function deleteJob() {
     const label = `${job?.title || "this job"} — ${job?.company || ""}`.trim();
     const ok = window.confirm(
-      `Delete ${label}?\n\nThis removes the job, match, decisions, application package, generated files, and gap references. This cannot be undone.`
+      `Delete ${label}?\n\nThis removes the job, match, decisions, application package, generated files, and gap references. This cannot be undone.`,
     );
     if (!ok) return;
 
@@ -153,16 +168,25 @@ export default function JobDetailPage() {
   }
 
   if (error && !job) {
-    return <div className={styles.error}>{error}</div>;
+    return (
+      <Alert variant="error">
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
+    );
   }
 
   if (!job) {
     return (
-      <div className={styles.statusPanel} role="status">
-        <div className={styles.spinner} aria-hidden="true" />
+      <div
+        className="flex max-w-xl items-start gap-4 rounded-xl border border-primary/35 bg-primary/8 p-4"
+        role="status"
+      >
+        <Spinner className="mt-0.5 size-6 text-primary" />
         <div>
-          <p className={styles.statusTitle}>Loading job</p>
-          <p className={styles.statusText}>Fetching match details…</p>
+          <p className="m-0 mb-1 font-semibold">Loading job</p>
+          <p className="m-0 text-sm text-foreground/90">
+            Fetching match details…
+          </p>
         </div>
       </div>
     );
@@ -176,85 +200,96 @@ export default function JobDetailPage() {
         ? GENERATE_STEPS
         : [];
 
-  const openHref =
-    job.canonicalApplyUrl || job.url || job.sourceUrl || "";
+  const openHref = job.canonicalApplyUrl || job.url || job.sourceUrl || "";
 
   return (
     <div>
-      <div className={styles.row}>
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-4">
         <div>
-          <h1 className={styles.pageTitle}>
+          <h1 className="m-0 mb-1.5 text-3xl font-semibold tracking-tight max-sm:text-2xl">
             {job.title} — {job.company}
           </h1>
-          <p className={styles.subtitle}>
-            {job.location || "Location n/a"} · {job.workMode || "unknown"} · status:{" "}
-            {job.status}
+          <p className="m-0 text-muted-foreground">
+            {job.location || "Location n/a"} · {job.workMode || "unknown"} ·
+            status: {job.status}
           </p>
         </div>
         {openHref ? (
-          <a
-            className={styles.btn}
-            href={openHref}
-            target="_blank"
-            rel="noopener noreferrer"
+          <Button
+            render={
+              <a href={openHref} target="_blank" rel="noopener noreferrer" />
+            }
           >
             Open
-          </a>
+          </Button>
         ) : null}
       </div>
 
-      {error ? <div className={styles.error}>{error}</div> : null}
-      {message && !busy ? <p className={styles.meta}>{message}</p> : null}
+      {error ? (
+        <Alert variant="error" className="mb-4">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {message && !busy ? (
+        <p className="mb-4 text-sm text-muted-foreground">{message}</p>
+      ) : null}
 
       {busy === "analyze" || busy === "generate" ? (
         <div
-          className={
-            busy === "generate"
-              ? `${styles.statusPanel} ${styles.statusPanelGenerate}`
-              : styles.statusPanel
-          }
+          className={cn(
+            "mb-5 flex items-start gap-4 rounded-xl border border-primary/35 bg-primary/8 p-4",
+            busy === "generate" &&
+              "p-5 shadow-[0_0_0_1px_rgba(255,20,147,0.12),0_12px_40px_rgba(0,0,0,0.35)]",
+          )}
           role="status"
           aria-live="polite"
         >
-          <div
-            className={
-              busy === "generate" ? `${styles.spinner} ${styles.spinnerLarge}` : styles.spinner
-            }
-            aria-hidden="true"
+          <Spinner
+            className={cn(
+              "mt-0.5 text-primary",
+              busy === "generate" ? "size-8" : "size-6",
+            )}
           />
-          <div>
-            <p className={styles.statusTitle}>
-              {busy === "analyze" ? "Re-analyzing" : "Generating application package"}
+          <div className="min-w-0 flex-1">
+            <p className="m-0 mb-1 font-semibold">
+              {busy === "analyze"
+                ? "Re-analyzing"
+                : "Generating application package"}
             </p>
-            <p className={styles.statusText}>{statusText}</p>
+            <p className="m-0 min-h-[1.4em] text-sm text-foreground/90">
+              {statusText}
+            </p>
             {busy === "generate" ? (
-              <ul className={styles.statusStepList}>
+              <ul className="mt-3.5 m-0 grid list-none gap-1.5 p-0">
                 {GENERATE_STEPS.map((step, idx) => (
                   <li
                     key={step}
-                    className={
-                      idx < statusIndex
-                        ? styles.statusStepDone
-                        : idx === statusIndex
-                          ? styles.statusStepCurrent
-                          : styles.statusStepPending
-                    }
+                    className={cn(
+                      "text-sm",
+                      idx < statusIndex && "text-success-foreground",
+                      idx === statusIndex && "font-semibold text-primary",
+                      idx > statusIndex && "text-muted-foreground/65",
+                    )}
                   >
-                    {idx < statusIndex ? "✓ " : idx === statusIndex ? "→ " : "○ "}
+                    {idx < statusIndex
+                      ? "✓ "
+                      : idx === statusIndex
+                        ? "→ "
+                        : "○ "}
                     {step}
                   </li>
                 ))}
               </ul>
             ) : (
-              <div className={styles.statusDots}>
+              <div className="mt-3 flex gap-1.5">
                 {steps.map((_, idx) => (
                   <span
                     key={idx}
-                    className={
-                      idx <= statusIndex
-                        ? `${styles.statusDot} ${styles.statusDotActive}`
-                        : styles.statusDot
-                    }
+                    className={cn(
+                      "size-1.5 rounded-full bg-border",
+                      idx <= statusIndex &&
+                        "bg-primary shadow-[0_0_8px_rgba(255,20,147,0.55)]",
+                    )}
                   />
                 ))}
               </div>
@@ -263,157 +298,153 @@ export default function JobDetailPage() {
         </div>
       ) : null}
 
-      <div className={styles.actions}>
-        <button
-          className={styles.btnSecondary + " " + styles.btn}
+      <div className="mb-6 flex flex-wrap gap-2.5">
+        <Button
+          variant="outline"
           onClick={() => run("analyze")}
           disabled={!!busy}
         >
           {busy === "analyze" ? "Analyzing…" : "Re-analyze"}
-        </button>
-        <button
-          className={styles.btn}
+        </Button>
+        <Button
           onClick={() => run("generate")}
           disabled={!!busy || !match}
+          loading={busy === "generate"}
         >
-          {busy === "generate" ? (
-            <span className={styles.btnBusy}>
-              <span className={styles.spinnerInline} aria-hidden="true" />
-              Generating…
-            </span>
-          ) : (
-            "Generate documents"
-          )}
-        </button>
-        <button
-          className={styles.btnSecondary + " " + styles.btn}
+          {busy === "generate" ? "Generating…" : "Generate documents"}
+        </Button>
+        <Button
+          variant="outline"
           onClick={() => run("apply")}
           disabled={!!busy}
         >
           Apply
-        </button>
-        <button
-          className={styles.btnSecondary + " " + styles.btn}
+        </Button>
+        <Button
+          variant="outline"
           onClick={() => run("save")}
           disabled={!!busy}
         >
           Save
-        </button>
-        <button
-          className={styles.btnSecondary + " " + styles.btn}
+        </Button>
+        <Button
+          variant="outline"
           onClick={() => run("reject")}
           disabled={!!busy}
         >
           Reject
-        </button>
-        <button
-          className={`${styles.btn} ${styles.btnDanger}`}
+        </Button>
+        <Button
+          variant="destructive-outline"
           onClick={deleteJob}
           disabled={!!busy}
         >
           {busy === "delete" ? "Deleting…" : "Delete job"}
-        </button>
+        </Button>
       </div>
 
       {match ? (
         <>
-          <section className={styles.section}>
-            <div className={styles.row}>
-              <h2>Match {match.score}/100</h2>
-              <span className={badgeClass(match.recommendation)}>
+          <section className="mt-7">
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="m-0 text-lg font-semibold">
+                Match {match.score}/100
+              </h2>
+              <Badge
+                variant={recommendationVariant(match.recommendation)}
+                className="uppercase tracking-wide"
+              >
                 {match.recommendation}
-              </span>
+              </Badge>
             </div>
-            <p className={styles.meta}>
+            <p className="m-0 text-sm text-muted-foreground">
               Role family: {match.roleFamily}
               {match.whyViable ? ` · ${match.whyViable}` : ""}
             </p>
             {match.components ? (
-              <div className={styles.pillRow}>
+              <div className="mt-2 flex flex-wrap gap-1.5">
                 {Object.entries(match.components).map(([key, value]) => (
-                  <span
-                    className={`${styles.pill} ${componentPillClass(key, value)}`}
+                  <Badge
+                    variant={componentPillVariant(key, value)}
                     key={key}
                   >
                     {key}: {value}
-                  </span>
+                  </Badge>
                 ))}
               </div>
             ) : null}
           </section>
 
-          <section className={styles.section}>
-            <div className={styles.row}>
-              <h2>Fit assessment</h2>
-              <div className={styles.legend}>
-                <span className={styles.fitStrong}>Strength</span>
-                <span className={styles.fitWarning}>Warning</span>
-                <span className={styles.fitGap}>Gap</span>
+          <section className="mt-7">
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="m-0 text-lg font-semibold">Fit assessment</h2>
+              <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm font-bold">
+                <span className="text-success-foreground">Strength</span>
+                <span className="text-warning-foreground">Warning</span>
+                <span className="text-destructive-foreground">Gap</span>
               </div>
             </div>
-            <div className={styles.fitTableWrap}>
-              <table className={styles.fitTable}>
-                <thead>
-                  <tr>
-                    <th>Area</th>
-                    <th>Your fit</th>
-                    <th>Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
+            <div className="overflow-x-auto rounded-xl border border-border bg-card">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Area</TableHead>
+                    <TableHead>Your fit</TableHead>
+                    <TableHead>Notes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {(match.strongMatches || []).map((item, idx) => (
-                    <tr key={`s-${idx}`}>
-                      <td>{item.requirement}</td>
-                      <td className={styles.fitStrong}>
-                        <strong>Strong</strong>
-                      </td>
-                      <td className={styles.meta}>
+                    <TableRow key={`s-${idx}`}>
+                      <TableCell>{item.requirement}</TableCell>
+                      <TableCell className="font-bold text-success-foreground">
+                        Strong
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
                         {item.evidenceLevel || "verified evidence"}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
                   {(match.warnings || []).map((item, idx) => (
-                    <tr key={`w-${idx}`}>
-                      <td>{item.skill || item.requirement}</td>
-                      <td className={styles.fitWarning}>
-                        <strong>{item.label || "Warning"}</strong>
-                      </td>
-                      <td className={styles.meta}>{item.reason}</td>
-                    </tr>
+                    <TableRow key={`w-${idx}`}>
+                      <TableCell>{item.skill || item.requirement}</TableCell>
+                      <TableCell className="font-bold text-warning-foreground">
+                        {item.label || "Warning"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {item.reason}
+                      </TableCell>
+                    </TableRow>
                   ))}
                   {(match.meaningfulGaps || []).map((item, idx) => (
-                    <tr key={`g-${idx}`}>
-                      <td>{item.skill}</td>
-                      <td className={styles.fitGap}>
-                        <strong>{item.label || "Gap"}</strong>
-                      </td>
-                      <td className={styles.meta}>{item.reason}</td>
-                    </tr>
+                    <TableRow key={`g-${idx}`}>
+                      <TableCell>{item.skill}</TableCell>
+                      <TableCell className="font-bold text-destructive-foreground">
+                        {item.label || "Gap"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {item.reason}
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           </section>
         </>
       ) : (
-        <p className={styles.empty}>Not analyzed yet.</p>
+        <p className="py-8 text-muted-foreground">Not analyzed yet.</p>
       )}
 
-      <section className={styles.section}>
-        <h2>Description</h2>
-        <div className={styles.card}>
-          <pre
-            style={{
-              whiteSpace: "pre-wrap",
-              margin: 0,
-              color: "var(--text)",
-              fontFamily: "inherit",
-              fontSize: "0.9rem",
-            }}
-          >
-            {job.descriptionRaw}
-          </pre>
-        </div>
+      <section className="mt-7">
+        <h2 className="mb-3 text-lg font-semibold">Description</h2>
+        <Card>
+          <CardPanel className="p-4">
+            <pre className="m-0 font-sans text-sm whitespace-pre-wrap text-foreground">
+              {job.descriptionRaw}
+            </pre>
+          </CardPanel>
+        </Card>
       </section>
 
       {pkg ? <DocumentPackagePanel jobId={jobId} package={pkg} /> : null}

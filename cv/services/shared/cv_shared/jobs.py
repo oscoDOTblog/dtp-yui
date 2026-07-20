@@ -58,3 +58,32 @@ def delete_job(job_id: str) -> dict:
         "company": job.get("company"),
         "deleted": counts,
     }
+
+
+def delete_jobs(job_ids: list[str]) -> dict:
+    """Cascade-delete many jobs. Continues on missing ids; reports per-id results."""
+    deleted: list[dict] = []
+    missing: list[str] = []
+    errors: list[dict] = []
+
+    seen: set[str] = set()
+    for raw_id in job_ids:
+        job_id = (raw_id or "").strip()
+        if not job_id or job_id in seen:
+            continue
+        seen.add(job_id)
+        try:
+            deleted.append(delete_job(job_id))
+        except KeyError:
+            missing.append(job_id)
+        except Exception as exc:
+            logger.exception("bulk delete failed for %s", job_id)
+            errors.append({"jobId": job_id, "error": str(exc)})
+
+    return {
+        "requested": len(seen),
+        "deletedCount": len(deleted),
+        "deleted": deleted,
+        "missing": missing,
+        "errors": errors,
+    }

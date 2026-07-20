@@ -2,7 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPatch, apiPost } from "../../lib/api";
-import styles from "../ui.module.css";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 const KIND_FILTERS = [
   { id: "all", label: "All kinds" },
@@ -20,8 +31,12 @@ const STATUS_FILTERS = [
 function rowTone(gap) {
   const gapCount = gap.kindCounts?.gap || 0;
   const warnCount = gap.kindCounts?.warning || 0;
-  if (gapCount >= warnCount && gapCount > 0) return styles.gapRowHeavy;
-  if (warnCount > 0) return styles.gapRowWarn;
+  if (gapCount >= warnCount && gapCount > 0) {
+    return "shadow-[inset_3px_0_0_var(--destructive)]";
+  }
+  if (warnCount > 0) {
+    return "shadow-[inset_3px_0_0_var(--warning)]";
+  }
   return "";
 }
 
@@ -36,6 +51,12 @@ function formatSeen(iso) {
   } catch {
     return iso;
   }
+}
+
+function statusVariant(status) {
+  if (status === "resolved") return "success";
+  if (status === "learning") return "warning";
+  return "outline";
 }
 
 export default function GapsPage() {
@@ -87,7 +108,7 @@ export default function GapsPage() {
     try {
       const result = await apiPost("/gaps/rebuild");
       setInfo(
-        `Rebuilt from ${result.matchesScanned} matches · ${result.requirementsTouched} requirements · cleared ${result.deleted} prior rows`
+        `Rebuilt from ${result.matchesScanned} matches · ${result.requirementsTouched} requirements · cleared ${result.deleted} prior rows`,
       );
       await load();
     } catch (err) {
@@ -99,79 +120,95 @@ export default function GapsPage() {
 
   return (
     <div>
-      <div className={styles.row}>
+      <div className="mb-6 flex flex-wrap items-baseline justify-between gap-4">
         <div>
-          <h1 className={styles.pageTitle}>Gaps</h1>
-          <p className={styles.subtitle}>
+          <h1 className="m-0 mb-1.5 text-3xl font-semibold tracking-tight max-sm:text-2xl">
+            Gaps
+          </h1>
+          <p className="m-0 text-muted-foreground">
             Recurring missing requirements across analyses — prioritize what to
             learn or add evidence for.
           </p>
         </div>
-        <button
+        <Button
           type="button"
-          className={`${styles.btn} ${styles.btnSecondary}`}
+          variant="outline"
           onClick={rebuild}
           disabled={rebuilding}
+          loading={rebuilding}
         >
           {rebuilding ? "Rebuilding…" : "Rebuild from matches"}
-        </button>
+        </Button>
       </div>
 
-      {error ? <div className={styles.error}>{error}</div> : null}
-      {info ? <div className={styles.info}>{info}</div> : null}
+      {error ? (
+        <Alert variant="error" className="mb-4">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {info ? (
+        <Alert variant="warning" className="mb-4">
+          <AlertDescription>{info}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      <div className={styles.filterBar}>
-        <div className={styles.filterGroup}>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5">
           {KIND_FILTERS.map((f) => (
-            <button
+            <Button
               key={f.id}
               type="button"
-              className={`${styles.filterChip} ${kind === f.id ? styles.filterChipActive : ""}`}
+              size="sm"
+              variant={kind === f.id ? "default" : "outline"}
+              className="rounded-full"
               onClick={() => setKind(f.id)}
             >
               {f.label}
-            </button>
+            </Button>
           ))}
         </div>
-        <div className={styles.filterGroup}>
+        <div className="flex flex-wrap gap-1.5">
           {STATUS_FILTERS.map((f) => (
-            <button
+            <Button
               key={f.id}
               type="button"
-              className={`${styles.filterChip} ${status === f.id ? styles.filterChipActive : ""}`}
+              size="sm"
+              variant={status === f.id ? "default" : "outline"}
+              className="rounded-full"
               onClick={() => setStatus(f.id)}
             >
               {f.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
 
-      {loading ? <p className={styles.empty}>Loading…</p> : null}
+      {loading ? (
+        <p className="py-8 text-muted-foreground">Loading…</p>
+      ) : null}
 
       {!loading && gaps.length === 0 ? (
-        <p className={styles.empty}>
+        <p className="py-8 text-muted-foreground">
           No gap insights yet. Analyze jobs, or rebuild from existing matches.
         </p>
       ) : null}
 
       {!loading && gaps.length > 0 ? (
-        <div className={styles.fitTableWrap}>
-          <table className={styles.fitTable}>
-            <thead>
-              <tr>
-                <th>Requirement</th>
-                <th>Seen</th>
-                <th>Gaps</th>
-                <th>Warnings</th>
-                <th>Last seen</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className="overflow-x-auto rounded-xl border border-border bg-card">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Requirement</TableHead>
+                <TableHead>Seen</TableHead>
+                <TableHead>Gaps</TableHead>
+                <TableHead>Warnings</TableHead>
+                <TableHead>Last seen</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {gaps.map((gap) => {
-                const tone = rowTone(gap);
                 const lastJob = [
                   gap.lastJobTitle,
                   gap.lastCompany ? `@ ${gap.lastCompany}` : "",
@@ -179,24 +216,30 @@ export default function GapsPage() {
                   .filter(Boolean)
                   .join(" ");
                 return (
-                  <tr key={gap._id} className={tone}>
-                    <td>
+                  <TableRow key={gap._id} className={cn(rowTone(gap))}>
+                    <TableCell>
                       <strong>{gap.displayName || gap.normalizedName}</strong>
                       {gap.sampleReasons?.[0] ? (
-                        <p className={styles.meta}>{gap.sampleReasons[0]}</p>
+                        <p className="mt-1 m-0 text-sm text-muted-foreground">
+                          {gap.sampleReasons[0]}
+                        </p>
                       ) : null}
-                    </td>
-                    <td>
-                      <span className={styles.score}>{gap.totalSeen}</span>
-                    </td>
-                    <td className={styles.fitGap}>{gap.kindCounts?.gap || 0}</td>
-                    <td className={styles.fitWarning}>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-xl font-bold text-primary">
+                        {gap.totalSeen}
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-bold text-destructive-foreground">
+                      {gap.kindCounts?.gap || 0}
+                    </TableCell>
+                    <TableCell className="font-bold text-warning-foreground">
                       {gap.kindCounts?.warning || 0}
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       <div>{formatSeen(gap.lastSeenAt)}</div>
                       {lastJob ? (
-                        <p className={styles.meta}>
+                        <p className="mt-1 m-0 text-sm text-muted-foreground">
                           {gap.lastJobId ? (
                             <a href={`/jobs/${gap.lastJobId}`}>{lastJob}</a>
                           ) : (
@@ -204,59 +247,56 @@ export default function GapsPage() {
                           )}
                         </p>
                       ) : null}
-                    </td>
-                    <td>
-                      <span className={`${styles.badge} ${statusBadge(gap.status)}`}>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(gap.status)}>
                         {gap.status || "open"}
-                      </span>
-                    </td>
-                    <td>
-                      <div className={styles.actionRow}>
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1.5">
                         {gap.status !== "learning" ? (
-                          <button
+                          <Button
                             type="button"
-                            className={`${styles.btn} ${styles.btnSecondary} ${styles.btnSmall}`}
+                            variant="outline"
+                            size="sm"
                             disabled={busyId === gap._id}
                             onClick={() => setGapStatus(gap._id, "learning")}
                           >
                             Learning
-                          </button>
+                          </Button>
                         ) : null}
                         {gap.status !== "resolved" ? (
-                          <button
+                          <Button
                             type="button"
-                            className={`${styles.btn} ${styles.btnSecondary} ${styles.btnSmall}`}
+                            variant="outline"
+                            size="sm"
                             disabled={busyId === gap._id}
                             onClick={() => setGapStatus(gap._id, "resolved")}
                           >
                             Resolved
-                          </button>
+                          </Button>
                         ) : null}
                         {gap.status !== "open" ? (
-                          <button
+                          <Button
                             type="button"
-                            className={`${styles.btn} ${styles.btnSecondary} ${styles.btnSmall}`}
+                            variant="outline"
+                            size="sm"
                             disabled={busyId === gap._id}
                             onClick={() => setGapStatus(gap._id, "open")}
                           >
                             Reopen
-                          </button>
+                          </Button>
                         ) : null}
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       ) : null}
     </div>
   );
-}
-
-function statusBadge(status) {
-  if (status === "resolved") return styles.badgeApply;
-  if (status === "learning") return styles.badgeConsider;
-  return "";
 }

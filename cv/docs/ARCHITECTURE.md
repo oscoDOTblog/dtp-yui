@@ -48,7 +48,11 @@ Every resume claim must cite an `evidence` document linked to `workHistory` and/
 
 ## Stage 2A intake
 
-Hourly worker (and `POST /ingest/run`) pulls Gmail job alerts → normalize/dedupe → Bay Area location gate → `analyze_job` for eligible listings. Config: `config/location.json`. Setup: [GMAIL_SETUP.md](GMAIL_SETUP.md).
+Hourly worker (and `POST /ingest/run`) pulls Gmail job alerts → normalize/dedupe → Bay Area location gate → `analyze_job` for eligible listings. Config: `config/location.json`. Setup: [GMAIL_SETUP.md](GMAIL_SETUP.md). Settings toggles in `cv_settings.gmailIngest` gate which alert senders are processed.
+
+## Stage 2B Greenhouse watchlist
+
+Same ingest run also polls enabled Greenhouse boards from `cv_jobSources` when `cv_settings.atsIngest.greenhouse` is true. Public boards API (`boards-api.greenhouse.io`) — no API key. Setup: [GREENHOUSE_SETUP.md](GREENHOUSE_SETUP.md). Sources UI lists last poll / errors; Settings holds the master ATS toggle.
 
 ## Role families
 

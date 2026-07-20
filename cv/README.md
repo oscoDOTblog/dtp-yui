@@ -2,7 +2,7 @@
 
 Local AI job-search copilot with **human approval**. Score jobs against a grounded candidate knowledge base, generate tailored application packages, and track decisions.
 
-Stage **2A** adds Gmail job-alert intake with a Bay Area location gate. See [docs/ROADMAP.md](docs/ROADMAP.md).
+Stage **2B** adds a Greenhouse company watchlist on top of Stage 2A Gmail intake. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ Open:
 - API: http://localhost:8000/health
 - API docs: http://localhost:8000/docs
 
-The worker auto-seeds MongoDB from `seed/` on first start.
+The worker auto-seeds MongoDB from `seed/` on first start (profile + Greenhouse watchlist).
 
 ## Gmail job-alert intake (Stage 2A)
 
@@ -52,9 +52,19 @@ Short version:
 3. Label alerts with `JobAlerts`
 4. `curl -X POST http://localhost:8000/ingest/run` (background; poll `/ingest/status`) or wait for the hourly worker
 
+## Greenhouse company watchlist (Stage 2B)
+
+Follow: **[docs/GREENHOUSE_SETUP.md](docs/GREENHOUSE_SETUP.md)**
+
+Short version:
+
+1. Seed loads `seed/jobSources.json` into `cv_jobSources` (or add companies on **Sources**)
+2. Enable **Greenhouse** under Settings → ATS board ingest
+3. **Poll** on Sources, or `curl -X POST 'http://localhost:8000/ingest/run?sources=greenhouse'`
+
 ## Workflow
 
-1. Open **Analyze** and paste a job description (URL fetch is best-effort; LinkedIn usually blocks), **or** let Gmail ingest fill the Inbox.
+1. Open **Analyze** and paste a job description (URL fetch is best-effort; LinkedIn usually blocks), **or** let Gmail / Greenhouse ingest fill the Inbox.
 2. Review score, strong evidence, and meaningful gaps.
 3. Check **Gaps** for recurring missing requirements ranked by frequency (mark Learning / Resolved as you close them).
 4. Click **Generate documents** → files land in `generated-applications/{company}-{role}/`.
@@ -69,12 +79,15 @@ Short version:
 | `seed/skills.json` | Portfolio + Capital One skills bank |
 | `seed/projects.json` | SwayQuest / DTP project buckets |
 | `seed/evidence.json` | Grounded claims linked to skills/work/projects |
+| `seed/jobSources.json` | Greenhouse company watchlist (board tokens) |
 
-Force reseed:
+Force reseed (profile replace + watchlist identity upsert):
 
 ```bash
 curl -X POST 'http://localhost:8000/seed?force=true'
 ```
+
+Job sources also upsert on a normal `POST /seed` even when the candidate is already present.
 
 ## Remote access (WireGuard + SSH)
 
@@ -88,9 +101,10 @@ ssh -L 3000:localhost:3000 -L 8000:localhost:8000 user@legion-wireguard-ip
 - [COLLECTIONS.md](docs/COLLECTIONS.md)
 - [ROADMAP.md](docs/ROADMAP.md)
 - [GMAIL_SETUP.md](docs/GMAIL_SETUP.md) — Gmail inbox + OAuth for job alerts
+- [GREENHOUSE_SETUP.md](docs/GREENHOUSE_SETUP.md) — company watchlist + board tokens
 
 ## Current scope
 
-In: profile seed, manual job paste, Gmail digest → per-listing ingest (background), Bay Area location gate, Ollama match, Telegram on apply (≥85), gap insights, document generation, dashboard, Docker Compose.
+In: profile seed, manual job paste, Gmail digest → per-listing ingest (background), Greenhouse board watchlist + Sources UI, Settings toggles for Gmail senders and ATS (`cv_settings`), Bay Area location gate, Ollama match, Telegram on apply (≥85), gap insights, document generation, dashboard, Docker Compose.
 
-Out: Greenhouse/Lever polling (2B/2C), Telegram digests for consider-band, GitHub evidence polling, Playwright ATS (see roadmap).
+Out: Lever/Ashby (2C), Telegram digests for consider-band, GitHub evidence polling, Playwright ATS (see roadmap).

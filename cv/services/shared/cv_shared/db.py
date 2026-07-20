@@ -44,3 +44,9 @@ def ensure_indexes(db: Database | None = None) -> None:
     db[C.JOBS].create_index("locationAssessment.bayAreaEligible")
     db[C.GMAIL_MESSAGES].create_index("processedAt")
     db[C.JOB_SOURCES].create_index("enabled")
+    db[C.JOB_SOURCES].create_index("ats")
+    db[C.JOB_SOURCES].create_index(
+        [("ats", 1), ("boardToken", 1)],
+        unique=True,
+        name="ats_boardToken_unique",
+    )

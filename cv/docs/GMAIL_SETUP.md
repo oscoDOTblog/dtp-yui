@@ -143,6 +143,7 @@ When `GMAIL_PROCESSED_LABEL=true` and the modify scope was granted:
 Glassdoor / Indeed / LinkedIn digests list many roles in one message. Ingest:
 
 - Parses HTML listing cards (company, title, location, link)
+- **Glassdoor**: dedicated table-card walker (company + rating, title link, location, salary, `jobListing` URL)
 - Skips footer noise (unsubscribe, privacy, create alert)
 - Creates **one `cv_jobs` row per listing** (no product cap; pathological guard at 100/message)
 - Resolves redirects and best-effort fetches the listing page (~8s); falls back to card text if blocked
@@ -160,7 +161,25 @@ curl http://localhost:8000/ingest/status
 # Already running → HTTP 409
 ```
 
-## 9. Telegram apply alerts
+## 9. Settings — which alert senders to ingest
+
+The **Settings** tab (`/settings`) is the source of truth for Gmail alert provider toggles. Stored in Mongo `cv_settings` (`_id: "app"`).
+
+| Toggle | `detect_alert_source` values |
+|---|---|
+| LinkedIn | `linkedin-email` |
+| Indeed | `indeed-email` |
+| Glassdoor | `glassdoor-email` |
+| Built In | `builtin-email` |
+| Other alerts | Wellfound, Google, Dice, ZipRecruiter, unrecognized |
+
+- `GMAIL_QUERY` / `JobAlerts` still control **which mail is fetched**
+- Settings toggles control **which senders are processed** after fetch
+- API: `GET /settings`, `PATCH /settings` with `{ "gmailIngest": { "glassdoorEmail": false } }`
+- Worker and manual ingest both read the same doc — no redeploy when toggling
+- **ATS boards** (Greenhouse) have a separate master toggle under Settings → ATS board ingest (`atsIngest.greenhouse`). See [GREENHOUSE_SETUP.md](GREENHOUSE_SETUP.md).
+
+## 10. Telegram apply alerts
 
 When a match scores **`recommendation=apply`** (≥ `SCORE_URGENT`, default 85), the API/worker can notify Telegram using the same env names as osco-dot-blog:
 
@@ -173,7 +192,7 @@ TELEGRAM_CHAT_ID=
 - Deduped via `telegramNotifiedAt` on the match (reprocess does not spam)
 - Does **not** fire for `consider` / `skip` / `reject`
 
-## 10. Verification checklist
+## 11. Verification checklist
 
 1. Client secret + token files exist under `cv/secrets/`
 2. At least one recent message has label `JobAlerts`
@@ -187,8 +206,9 @@ curl http://localhost:8000/ingest/status
 4. Open http://localhost:3000 — job cards appear as each listing finishes; **Open** uses the stored listing URL
 5. Re-run ingest — the same Gmail message must not create duplicates; second concurrent run returns 409
 6. Check API logs / `cv_systemRuns` for type `ingest` with `listingsProcessed` progress
+7. Open **Settings** — turn Glassdoor off, re-read alerts, confirm Glassdoor listings are skipped (`skippedDisabledSource`)
 
-## 11. Security
+## 12. Security
 
 - Never commit `gmail-client-secret.json` or `gmail-token.json`
 - Bind services to `127.0.0.1` only; use WireGuard + SSH if remote
