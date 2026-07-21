@@ -27,6 +27,7 @@ GAP_INSIGHTS = f"{PREFIX}gapInsights"
 JOB_SOURCES = f"{PREFIX}jobSources"
 GMAIL_MESSAGES = f"{PREFIX}gmailMessages"
 SETTINGS = f"{PREFIX}settings"
+INTAKE_QUEUE = f"{PREFIX}intakeQueue"
 REPOSITORIES = f"{PREFIX}repositories"
 REPOSITORY_SCANS = f"{PREFIX}repositoryScans"
 

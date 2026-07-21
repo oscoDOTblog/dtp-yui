@@ -11,6 +11,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Keep in sync with cv/config/location.json (fallback when file missing).
 _DEFAULT_CONFIG = {
     "origin": "Oakland, CA",
     "bayAreaCities": [
@@ -18,19 +19,68 @@ _DEFAULT_CONFIG = {
         "oakland",
         "berkeley",
         "emeryville",
-        "bay area",
-        "sf bay area",
-        "san jose",
+        "south san francisco",
+        "daly city",
+        "san mateo",
+        "foster city",
+        "redwood city",
+        "menlo park",
         "palo alto",
         "mountain view",
+        "sunnyvale",
+        "santa clara",
+        "san jose",
+        "milpitas",
+        "fremont",
+        "hayward",
+        "san leandro",
+        "alameda",
+        "walnut creek",
+        "sf",
+        "bay area",
+        "san francisco bay area",
+        "sf bay area",
+        "east bay",
+        "south bay",
+        "peninsula",
     ],
     "commuteTiers": {
         "preferred": ["Oakland", "Berkeley", "Emeryville", "San Francisco"],
-        "acceptable": ["San Leandro", "Alameda", "Walnut Creek", "South San Francisco"],
-        "conditional": ["San Mateo", "Palo Alto", "Mountain View", "San Jose"],
+        "acceptable": [
+            "San Leandro",
+            "Alameda",
+            "Walnut Creek",
+            "South San Francisco",
+            "Daly City",
+        ],
+        "conditional": [
+            "San Mateo",
+            "Redwood City",
+            "Palo Alto",
+            "Mountain View",
+            "Sunnyvale",
+            "Santa Clara",
+            "San Jose",
+            "Menlo Park",
+            "Foster City",
+        ],
     },
-    "californiaTokens": ["california", "ca", "pacific time"],
-    "usTokens": ["united states", "usa", "u.s.", "remote - us", "remote us"],
+    "californiaTokens": [
+        "california",
+        "ca",
+        "pacific time",
+        "pt timezone",
+        "us - west",
+    ],
+    "usTokens": [
+        "united states",
+        "usa",
+        "u.s.",
+        "us only",
+        "nationwide",
+        "remote - us",
+        "remote us",
+    ],
 }
 
 
@@ -76,6 +126,12 @@ def load_location_config() -> dict:
         except Exception:
             logger.exception("Failed reading location config %s", path)
     return dict(_DEFAULT_CONFIG)
+
+
+def reload_location_config() -> dict:
+    """Clear the cached config and reload from disk (after editing location.json)."""
+    load_location_config.cache_clear()
+    return load_location_config()
 
 
 def _blob(*parts: str | None) -> str:
@@ -154,27 +210,17 @@ def assess_location(
     else:
         geo = "unknown"
 
-    # Eligibility policy (Bay Area–focused search)
+    # Eligibility: Bay Area offices / phrases, or any remote (unless CA excluded).
     bay_eligible = False
     if excludes_ca:
         bay_eligible = False
+    elif work == "remote":
+        bay_eligible = True
+        evidence.append("remote always eligible")
+        if geo == "unknown":
+            geo = "us"
     elif in_bay:
         bay_eligible = True
-    elif work == "remote" and (in_ca or in_us or geo == "unknown"):
-        # Remote US/CA (or unspecified remote from a Bay Area alert) counts as eligible
-        if alert_location and any(
-            c in (alert_location or "").lower() for c in ("bay", "oakland", "francisco", "jose")
-        ):
-            bay_eligible = True
-            evidence.append("Bay Area alert + remote")
-            geo = geo if geo != "unknown" else "us"
-        elif in_ca or in_us:
-            bay_eligible = True
-            evidence.append("remote eligible geography")
-        elif not location and alert_location:
-            bay_eligible = True
-            evidence.append("empty listing location; trusting alert location")
-            geo = "bay_area"
     elif work in ("hybrid", "onsite") and in_bay:
         bay_eligible = True
     elif alert_location and any(

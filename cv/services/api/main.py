@@ -60,6 +60,7 @@ class BulkDeleteBody(BaseModel):
 class SettingsPatchBody(BaseModel):
     gmailIngest: Optional[dict[str, bool]] = None
     atsIngest: Optional[dict[str, bool]] = None
+    githubEvidence: Optional[dict[str, Any]] = None
 
 
 class SourceCreateBody(BaseModel):
@@ -78,9 +79,37 @@ class SourcePatchBody(BaseModel):
     name: Optional[str] = None
 
 
+class RepositoryCreateBody(BaseModel):
+    fullName: str
+    defaultBranch: Optional[str] = None
+    projectIds: Optional[list[str]] = None
+    enabled: Optional[bool] = True
+
+
+class RepositoryPatchBody(BaseModel):
+    enabled: Optional[bool] = None
+    defaultBranch: Optional[str] = None
+    projectIds: Optional[list[str]] = None
+
+
+class RepositorySyncBody(BaseModel):
+    lookback: str = "7d"
+    repositoryIds: Optional[list[str]] = None
+    force: Optional[bool] = False
+
+
 class DecisionBody(BaseModel):
     decision: str = Field(..., description="apply | save | reject | draft")
     note: Optional[str] = None
+
+
+class IntakeQueueBody(BaseModel):
+    urls: Optional[Any] = None  # str | list[str]
+    descriptionRaw: Optional[str] = None
+
+
+class IntakeQueuePatchBody(BaseModel):
+    descriptionRaw: str
 
 
 def _serialize(doc: Any) -> Any:
@@ -354,10 +383,12 @@ def create_job(body: JobCreate) -> dict:
         "discoveredBy": {"source": "manual"},
         "fingerprints": None,
         "locationAssessment": None,
+        "roleAssessment": None,
     }
     try:
         from cv_shared.intake.fingerprints import build_fingerprints
         from cv_shared.intake.location import assess_location
+        from cv_shared.intake.role_filter import assess_role_fit
 
         job["fingerprints"] = build_fingerprints(
             job["company"], job["title"], job["location"]
@@ -368,8 +399,16 @@ def create_job(body: JobCreate) -> dict:
             description=description,
             work_mode_hint=job["workMode"],
         )
+        job["roleAssessment"] = assess_role_fit(
+            title=job["title"],
+            description=description,
+        )
         if job["locationAssessment"].get("workArrangement") != "unknown":
             job["workMode"] = job["locationAssessment"]["workArrangement"]
+        if not job["locationAssessment"].get("bayAreaEligible"):
+            job["status"] = "out_of_area"
+        elif not job["roleAssessment"].get("roleEligible"):
+            job["status"] = "wrong_role"
     except Exception:
         logger.exception("manual job location/fingerprint enrichment failed")
 
@@ -378,13 +417,35 @@ def create_job(body: JobCreate) -> dict:
 
 
 @app.get("/jobs")
-def list_jobs(eligible: str | None = None) -> list:
-    """List jobs. eligible=true|false filters on locationAssessment.bayAreaEligible."""
+def list_jobs(
+    eligible: str | None = None,
+    roleEligible: str | None = None,
+    applyReady: str | None = None,
+    status: str | None = None,
+) -> list:
+    """List jobs.
+
+    - eligible: locationAssessment.bayAreaEligible
+    - roleEligible: roleAssessment.roleEligible
+    - applyReady: both gates true (and status not out_of_area/wrong_role)
+    - status: exact job status (e.g. wrong_role, out_of_area, new)
+    """
     query: dict = {}
-    if eligible is not None and eligible.lower() in ("true", "1", "yes"):
+    if applyReady is not None and applyReady.lower() in ("true", "1", "yes"):
         query["locationAssessment.bayAreaEligible"] = True
-    elif eligible is not None and eligible.lower() in ("false", "0", "no"):
-        query["locationAssessment.bayAreaEligible"] = False
+        query["roleAssessment.roleEligible"] = True
+        query["status"] = {"$nin": ["out_of_area", "wrong_role"]}
+    else:
+        if eligible is not None and eligible.lower() in ("true", "1", "yes"):
+            query["locationAssessment.bayAreaEligible"] = True
+        elif eligible is not None and eligible.lower() in ("false", "0", "no"):
+            query["locationAssessment.bayAreaEligible"] = False
+        if roleEligible is not None and roleEligible.lower() in ("true", "1", "yes"):
+            query["roleAssessment.roleEligible"] = True
+        elif roleEligible is not None and roleEligible.lower() in ("false", "0", "no"):
+            query["roleAssessment.roleEligible"] = False
+        if status:
+            query["status"] = status.strip()
 
     jobs = list(get_db()[C.JOBS].find(query).sort("discoveredAt", -1))
     matches = {
@@ -634,7 +695,7 @@ def post_ingest_run(
 ) -> dict:
     """Start ingest in the background. Returns immediately.
 
-    sources: all | gmail | greenhouse (default all).
+    sources: all | gmail | greenhouse | manual (default all).
     Pass reprocess=true to clear processed-message markers first.
     Returns 409 payload (accepted=false) if an ingest is already running.
     """
@@ -667,6 +728,114 @@ def get_ingest_status_endpoint(runId: str | None = None) -> dict:
     if not doc:
         return {"status": "idle", "runId": None}
     return _serialize(doc)
+
+
+@app.post("/ingest/cancel")
+def post_ingest_cancel(force: bool = False, runId: str | None = None) -> dict:
+    """Request cancel on the running ingest, or force-clear a stuck lock."""
+    from cv_shared.intake.pipeline import cancel_ingest
+
+    try:
+        result = cancel_ingest(run_id=runId, force=force)
+    except Exception as exc:
+        logger.exception("ingest cancel failed")
+        raise HTTPException(500, str(exc)) from exc
+    if not result.get("found"):
+        raise HTTPException(404, result.get("message") or "No running ingest")
+    return result
+
+
+def _kick_manual_ingest() -> dict:
+    """Try to start a manual-queue ingest; return accepted/conflict payload."""
+    from cv_shared.intake.pipeline import start_ingest_async
+
+    return start_ingest_async(analyze=True, sources="manual")
+
+
+@app.post("/ingest/queue")
+def post_ingest_queue(body: IntakeQueueBody) -> dict:
+    """Enqueue job URLs and kick manual ingest if idle."""
+    from cv_shared.intake.manual_queue import enqueue_urls
+
+    try:
+        items = enqueue_urls(body.urls, description_raw=body.descriptionRaw)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("enqueue failed")
+        raise HTTPException(500, str(exc)) from exc
+
+    ingest = _kick_manual_ingest()
+    return {
+        "items": _serialize(items),
+        "ingest": {
+            "accepted": bool(ingest.get("accepted")),
+            "conflict": bool(ingest.get("conflict")),
+            "runId": ingest.get("runId"),
+            "status": ingest.get("status"),
+            "message": ingest.get("message"),
+        },
+    }
+
+
+@app.get("/ingest/queue")
+def get_ingest_queue(limit: int = 50) -> list:
+    from cv_shared.intake.manual_queue import list_queue
+
+    return _serialize(list_queue(limit=limit))
+
+
+@app.post("/ingest/queue/process")
+def post_ingest_queue_process() -> dict:
+    """Explicitly process pending queue items (manual ingest only)."""
+    ingest = _kick_manual_ingest()
+    if ingest.get("conflict"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": ingest.get("message") or "Ingest already running",
+                "runId": ingest.get("runId"),
+                "status": "running",
+            },
+        )
+    return ingest
+
+
+@app.patch("/ingest/queue/{item_id}")
+def patch_ingest_queue_item(item_id: str, body: IntakeQueuePatchBody) -> dict:
+    from cv_shared.intake.manual_queue import patch_queue_item
+
+    try:
+        item = patch_queue_item(item_id, description_raw=body.descriptionRaw)
+    except KeyError:
+        raise HTTPException(404, "Queue item not found") from None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    ingest = _kick_manual_ingest()
+    return {
+        "item": _serialize(item),
+        "ingest": {
+            "accepted": bool(ingest.get("accepted")),
+            "conflict": bool(ingest.get("conflict")),
+            "runId": ingest.get("runId"),
+            "status": ingest.get("status"),
+            "message": ingest.get("message"),
+        },
+    }
+
+
+@app.delete("/ingest/queue/{item_id}")
+def delete_ingest_queue_item(item_id: str) -> dict:
+    from cv_shared.intake.manual_queue import delete_queue_item
+
+    try:
+        deleted = delete_queue_item(item_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "Queue item not found")
+    return {"deleted": True, "id": item_id}
 
 
 @app.get("/sources")
@@ -792,3 +961,173 @@ def poll_source(source_id: str, analyze: bool = True) -> dict:
             },
         )
     return result
+
+
+@app.get("/repositories")
+def list_repositories() -> list:
+    docs = list(
+        get_db()[C.REPOSITORIES].find({}, sort=[("fullName", 1)])
+    )
+    return _serialize(docs)
+
+
+def _start_github_sync(
+    *,
+    lookback: str,
+    repository_ids: list[str] | None = None,
+    force: bool = False,
+) -> dict:
+    from cv_shared.github.pipeline import start_github_scan_async
+    from cv_shared.settings import LOOKBACK_PRESETS, is_github_evidence_enabled
+
+    if not is_github_evidence_enabled():
+        raise HTTPException(
+            400,
+            "GitHub evidence is disabled in Settings. Enable it under GitHub evidence.",
+        )
+    key = (lookback or "").strip().lower()
+    if key not in LOOKBACK_PRESETS:
+        raise HTTPException(
+            400,
+            f"Invalid lookback '{lookback}'. Use one of: {', '.join(LOOKBACK_PRESETS)}",
+        )
+    try:
+        result = start_github_scan_async(
+            lookback=key,
+            repository_ids=repository_ids,
+            force=force,
+        )
+    except Exception as exc:
+        logger.exception("github sync start failed")
+        raise HTTPException(500, str(exc)) from exc
+    if result.get("conflict"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": result.get("message") or "GitHub scan already running",
+                "runId": result.get("runId"),
+                "status": "running",
+            },
+        )
+    return result
+
+
+@app.get("/repositories/sync/status")
+def get_repositories_sync_status(runId: str | None = None) -> dict:
+    from cv_shared.github.pipeline import get_github_scan_status
+
+    doc = get_github_scan_status(runId)
+    if not doc:
+        return {"status": "idle", "runId": None}
+    return _serialize(doc)
+
+
+@app.post("/repositories/sync")
+def sync_repositories(body: RepositorySyncBody | None = None) -> dict:
+    """Manual GitHub evidence sync for all (or selected) enabled repos."""
+    payload = body or RepositorySyncBody()
+    return _start_github_sync(
+        lookback=payload.lookback,
+        repository_ids=payload.repositoryIds,
+        force=bool(payload.force),
+    )
+
+
+@app.post("/repositories")
+def create_repository(body: RepositoryCreateBody) -> dict:
+    from cv_shared.github.client import parse_full_name, probe_repository
+
+    full_name = (body.fullName or "").strip()
+    try:
+        owner, repo_name = parse_full_name(full_name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    probe = probe_repository(f"{owner}/{repo_name}")
+    if not probe.get("ok"):
+        raise HTTPException(
+            400,
+            f"Invalid GitHub repository '{full_name}': "
+            f"{probe.get('error') or 'probe failed'}",
+        )
+
+    db = get_db()
+    canonical = probe.get("fullName") or f"{owner}/{repo_name}"
+    existing = db[C.REPOSITORIES].find_one({"fullName": canonical})
+    if existing:
+        raise HTTPException(409, f"Repository already exists: {existing['_id']}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    slug = re.sub(r"[^a-z0-9]+", "_", f"{owner}_{repo_name}".lower()).strip("_")[
+        :50
+    ]
+    repo_id = f"repo_{slug}"
+    if db[C.REPOSITORIES].find_one({"_id": repo_id}):
+        repo_id = f"{repo_id}_{now[:10].replace('-', '')}"
+
+    doc = {
+        "_id": repo_id,
+        "fullName": canonical,
+        "defaultBranch": (
+            (body.defaultBranch or "").strip()
+            or probe.get("defaultBranch")
+            or "main"
+        ),
+        "projectIds": list(body.projectIds or []),
+        "enabled": bool(body.enabled if body.enabled is not None else True),
+        "lastSeenCommitSha": None,
+        "lastScannedAt": None,
+        "lastSuccessAt": None,
+        "lastError": None,
+        "lastCommitCount": 0,
+        "clonePath": None,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    db[C.REPOSITORIES].insert_one(doc)
+    return _serialize(doc)
+
+
+@app.patch("/repositories/{repo_id}")
+def patch_repository(repo_id: str, body: RepositoryPatchBody) -> dict:
+    db = get_db()
+    existing = db[C.REPOSITORIES].find_one({"_id": repo_id})
+    if not existing:
+        raise HTTPException(404, "Repository not found")
+
+    fields: dict[str, Any] = {"updatedAt": datetime.now(timezone.utc).isoformat()}
+    payload = body.model_dump(exclude_none=True)
+    if "enabled" in payload:
+        fields["enabled"] = bool(payload["enabled"])
+    if "defaultBranch" in payload:
+        branch = str(payload["defaultBranch"]).strip()
+        if not branch:
+            raise HTTPException(400, "defaultBranch cannot be empty")
+        fields["defaultBranch"] = branch
+    if "projectIds" in payload:
+        fields["projectIds"] = list(payload["projectIds"] or [])
+
+    db[C.REPOSITORIES].update_one({"_id": repo_id}, {"$set": fields})
+    doc = db[C.REPOSITORIES].find_one({"_id": repo_id})
+    return _serialize(doc)
+
+
+@app.post("/repositories/{repo_id}/sync")
+def sync_repository(
+    repo_id: str,
+    body: RepositorySyncBody | None = None,
+) -> dict:
+    """Manual sync for one repository."""
+    db = get_db()
+    existing = db[C.REPOSITORIES].find_one({"_id": repo_id})
+    if not existing:
+        raise HTTPException(404, "Repository not found")
+    if not existing.get("enabled", True):
+        raise HTTPException(400, "Repository is disabled. Enable it before syncing.")
+
+    payload = body or RepositorySyncBody()
+    return _start_github_sync(
+        lookback=payload.lookback,
+        repository_ids=[repo_id],
+        force=bool(payload.force),
+    )

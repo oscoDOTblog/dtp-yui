@@ -159,7 +159,10 @@ curl -X POST http://localhost:8000/ingest/run
 curl http://localhost:8000/ingest/status
 
 # Already running → HTTP 409
+# Stop: POST /ingest/cancel  (force clear stuck lock: ?force=true)
 ```
+
+Per-run listing cap: `INGEST_MAX_LISTINGS` (default **500**) truncates Gmail + Greenhouse + manual queue in one run so a huge board poll cannot run for hours.
 
 ## 9. Settings — which alert senders to ingest
 

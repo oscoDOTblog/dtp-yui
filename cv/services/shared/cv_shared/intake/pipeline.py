@@ -1,8 +1,9 @@
-"""Hourly / manual ingest: Gmail digests + Greenhouse boards → analyze."""
+"""Hourly / manual ingest: Gmail digests + Greenhouse boards + URL queue → analyze."""
 
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -22,8 +23,16 @@ from .gmail_client import (
 )
 from .gmail_source import message_to_raw_jobs
 from .greenhouse_source import fetch_greenhouse_raw_jobs
+from .manual_queue import (
+    claim_pending,
+    count_by_status,
+    mark_done,
+    mark_failed,
+    mark_needs_paste,
+)
 from .normalize import normalize_raw_job
 from .upsert import upsert_normalized_job
+from .url_to_raw import is_enrich_blocked_or_empty, queue_item_to_raw
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +41,124 @@ _ingest_lock = threading.Lock()
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def ingest_max_listings() -> int:
+    try:
+        return max(1, int(os.environ.get("INGEST_MAX_LISTINGS", "500")))
+    except ValueError:
+        return 500
+
+
+def _is_cancel_requested(run_id: str | None) -> bool:
+    if not run_id:
+        return False
+    doc = get_db()[C.SYSTEM_RUNS].find_one(
+        {"_id": run_id},
+        {"cancelRequested": 1},
+    )
+    return bool(doc and doc.get("cancelRequested"))
+
+
+def cancel_ingest(
+    *,
+    run_id: str | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Request cancel on the active ingest, or force-clear a stuck running lock."""
+    db = get_db()
+    if run_id:
+        doc = db[C.SYSTEM_RUNS].find_one({"_id": run_id, "type": "ingest"})
+    else:
+        doc = get_running_ingest()
+
+    if not doc:
+        return {
+            "ok": False,
+            "found": False,
+            "message": "No running ingest",
+            "runId": run_id,
+            "status": "idle",
+        }
+
+    rid = doc["_id"]
+    if doc.get("status") != "running" and not force:
+        return {
+            "ok": True,
+            "found": True,
+            "runId": rid,
+            "status": doc.get("status"),
+            "message": f"Ingest already {doc.get('status')}",
+            "forced": False,
+        }
+
+    if force:
+        _patch_run(
+            rid,
+            {
+                "cancelRequested": True,
+                "status": "cancelled",
+                "finishedAt": _now(),
+                "currentTitle": "Cancelled (force clear)",
+            },
+        )
+        return {
+            "ok": True,
+            "found": True,
+            "runId": rid,
+            "status": "cancelled",
+            "forced": True,
+            "message": "Ingest lock cleared",
+        }
+
+    _patch_run(
+        rid,
+        {
+            "cancelRequested": True,
+            "currentTitle": "Cancelling…",
+        },
+    )
+    return {
+        "ok": True,
+        "found": True,
+        "runId": rid,
+        "status": "cancelling",
+        "forced": False,
+        "message": "Cancel requested",
+    }
+
+
+def _truncate_listings(
+    raw_jobs: list[dict],
+    *,
+    remaining: int,
+    label: str,
+    max_listings: int,
+    summary: dict[str, Any],
+) -> tuple[list[dict], int]:
+    """Truncate a batch to remaining budget. Returns (jobs, new_remaining)."""
+    if remaining <= 0:
+        if raw_jobs:
+            msg = (
+                f"Skipped {len(raw_jobs)} {label} listings "
+                f"(INGEST_MAX_LISTINGS={max_listings} exhausted)"
+            )
+            summary.setdefault("errors", []).append(msg)
+            summary["listingsTruncated"] = (
+                summary.get("listingsTruncated", 0) + len(raw_jobs)
+            )
+        return [], 0
+    if len(raw_jobs) <= remaining:
+        return raw_jobs, remaining - len(raw_jobs)
+    truncated = len(raw_jobs) - remaining
+    msg = (
+        f"Truncated {label} listings from {len(raw_jobs)} to {remaining} "
+        f"(INGEST_MAX_LISTINGS={max_listings})"
+    )
+    summary.setdefault("errors", []).append(msg)
+    summary["listingsTruncated"] = summary.get("listingsTruncated", 0) + truncated
+    logger.warning(msg)
+    return raw_jobs[:remaining], 0
 
 
 def _mark_gmail_processed(service, message_id: str) -> None:
@@ -135,9 +262,9 @@ def _ingest_raw_jobs(
     publish: Callable[..., None],
     gate_gmail: bool = False,
     count_prefix: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, set[str]]:
     """Normalize → upsert → analyze a list of raw jobs. Mutates summary."""
-    db = get_db()
     touched_messages: set[str] = set()
     succeeded_messages: set[str] = set()
     failed_messages: set[str] = set()
@@ -147,6 +274,13 @@ def _ingest_raw_jobs(
     updated_key = f"{count_prefix}JobsUpdated" if count_prefix else None
 
     for raw in raw_jobs:
+        if run_id and _is_cancel_requested(run_id):
+            summary["status"] = "cancelled"
+            summary["currentTitle"] = "Cancelled"
+            summary["finishedAt"] = _now()
+            publish()
+            break
+
         mid = (raw.get("discoveredBy") or {}).get("messageId")
         if mid:
             touched_messages.add(mid)
@@ -167,11 +301,15 @@ def _ingest_raw_jobs(
                 continue
 
         try:
-            # Greenhouse boards already include full content — skip URL enrich.
-            if (raw.get("source") or "") == "greenhouse":
-                enriched = raw
+            # Greenhouse boards / pre-fetched content — skip URL enrich.
+            if (raw.get("source") or "") == "greenhouse" or (
+                raw.get("_queueMeta") or {}
+            ).get("skipEnrich"):
+                enriched = {k: v for k, v in raw.items() if k != "_queueMeta"}
             else:
-                enriched = enrich_raw_job(raw)
+                enriched = enrich_raw_job(
+                    {k: v for k, v in raw.items() if k != "_queueMeta"}
+                )
             normalized = normalize_raw_job(enriched)
             if enriched.get("fetchStatus"):
                 normalized["fetchStatus"] = enriched["fetchStatus"]
@@ -189,35 +327,9 @@ def _ingest_raw_jobs(
                 if updated_key:
                     summary[updated_key] = summary.get(updated_key, 0) + 1
 
-            if job.get("status") == "out_of_area":
-                summary["outOfArea"] += 1
-            elif (
-                analyze
-                and result["created"]
-                and job.get("locationAssessment", {}).get("bayAreaEligible")
-            ):
-                try:
-                    match = analyze_job(job["_id"])
-                    summary["analyzed"] += 1
-                    if notify_apply_match(job, match):
-                        summary["telegramSent"] += 1
-                except Exception as exc:
-                    logger.exception("analyze failed for %s", job["_id"])
-                    summary["errors"].append(f"analyze {job['_id']}: {exc}")
-            elif analyze and not result["created"]:
-                existing_match = db[C.JOB_MATCHES].find_one({"jobId": job["_id"]})
-                if (
-                    not existing_match
-                    and job.get("locationAssessment", {}).get("bayAreaEligible")
-                    and job.get("status") not in ("out_of_area",)
-                ):
-                    try:
-                        match = analyze_job(job["_id"])
-                        summary["analyzed"] += 1
-                        if notify_apply_match(job, match):
-                            summary["telegramSent"] += 1
-                    except Exception as exc:
-                        summary["errors"].append(f"analyze {job['_id']}: {exc}")
+            _analyze_after_upsert(
+                job, created=result["created"], analyze=analyze, summary=summary
+            )
         except Exception as exc:
             logger.exception("listing ingest failed")
             summary["errors"].append(str(exc))
@@ -235,6 +347,140 @@ def _ingest_raw_jobs(
     }
 
 
+def _analyze_after_upsert(
+    job: dict[str, Any],
+    *,
+    created: bool,
+    analyze: bool,
+    summary: dict[str, Any],
+) -> None:
+    """Shared auto-analyze gate used by Gmail/Greenhouse/manual queue paths."""
+    if job.get("status") == "out_of_area":
+        summary["outOfArea"] = summary.get("outOfArea", 0) + 1
+        return
+    if job.get("status") == "wrong_role":
+        summary["wrongRole"] = summary.get("wrongRole", 0) + 1
+        return
+    if not analyze:
+        return
+    db = get_db()
+    eligible = bool(
+        job.get("locationAssessment", {}).get("bayAreaEligible")
+        and job.get("roleAssessment", {}).get("roleEligible")
+    )
+    # Legacy jobs without roleAssessment: treat missing as eligible only if status is new
+    if job.get("roleAssessment") is None and job.get("status") not in (
+        "out_of_area",
+        "wrong_role",
+    ):
+        eligible = bool(job.get("locationAssessment", {}).get("bayAreaEligible"))
+
+    if created and eligible:
+        try:
+            match = analyze_job(job["_id"])
+            summary["analyzed"] += 1
+            if notify_apply_match(job, match):
+                summary["telegramSent"] += 1
+        except Exception as exc:
+            logger.exception("analyze failed for %s", job["_id"])
+            summary["errors"].append(f"analyze {job['_id']}: {exc}")
+        return
+    if not created and eligible and job.get("status") not in (
+        "out_of_area",
+        "wrong_role",
+    ):
+        existing_match = db[C.JOB_MATCHES].find_one({"jobId": job["_id"]})
+        if not existing_match:
+            try:
+                match = analyze_job(job["_id"])
+                summary["analyzed"] += 1
+                if notify_apply_match(job, match):
+                    summary["telegramSent"] += 1
+            except Exception as exc:
+                summary["errors"].append(f"analyze {job['_id']}: {exc}")
+
+
+def _drain_manual_queue(
+    summary: dict[str, Any],
+    *,
+    analyze: bool,
+    publish: Callable[..., None],
+    limit: int = 40,
+    run_id: str | None = None,
+) -> None:
+    """Claim pending URL queue items and ingest them through normalize/upsert."""
+    claim_limit = max(0, min(limit, ingest_max_listings()))
+    if claim_limit <= 0:
+        return
+    claimed = claim_pending(limit=claim_limit)
+    summary["listingsTotal"] = summary.get("listingsTotal", 0) + len(claimed)
+    summary["queueClaimed"] = len(claimed)
+    publish()
+
+    for item in claimed:
+        if run_id and _is_cancel_requested(run_id):
+            summary["status"] = "cancelled"
+            summary["currentTitle"] = "Cancelled"
+            summary["finishedAt"] = _now()
+            publish()
+            break
+
+        queue_id = item["_id"]
+        title_label = item.get("url") or queue_id
+        summary["currentTitle"] = f"Queue: {title_label}"
+        publish()
+        try:
+            raw = queue_item_to_raw(item)
+            queue_meta = raw.pop("_queueMeta", {}) or {}
+            if queue_meta.get("skipEnrich") or (raw.get("source") or "") == "greenhouse":
+                enriched = raw
+            else:
+                enriched = enrich_raw_job(raw)
+
+            if queue_meta.get("needsPasteIfBlocked") and is_enrich_blocked_or_empty(
+                enriched
+            ):
+                mark_needs_paste(
+                    queue_id,
+                    error="Could not read that page. Paste the job description.",
+                    fetch_status=enriched.get("fetchStatus") or "blocked",
+                )
+                summary["queueNeedsPaste"] = summary.get("queueNeedsPaste", 0) + 1
+                summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
+                publish()
+                continue
+
+            normalized = normalize_raw_job(enriched)
+            if enriched.get("fetchStatus"):
+                normalized["fetchStatus"] = enriched["fetchStatus"]
+            result = upsert_normalized_job(normalized)
+            job = result["job"]
+            if result["created"]:
+                summary["jobsCreated"] += 1
+                summary["manualJobsCreated"] = summary.get("manualJobsCreated", 0) + 1
+            else:
+                summary["jobsUpdated"] += 1
+                summary["manualJobsUpdated"] = summary.get("manualJobsUpdated", 0) + 1
+
+            _analyze_after_upsert(
+                job, created=result["created"], analyze=analyze, summary=summary
+            )
+            mark_done(
+                queue_id,
+                job_id=job.get("_id"),
+                fetch_status=enriched.get("fetchStatus"),
+            )
+        except Exception as exc:
+            logger.exception("manual queue ingest failed for %s", queue_id)
+            summary["errors"].append(f"queue {queue_id}: {exc}")
+            mark_failed(queue_id, error=str(exc))
+
+        summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
+        publish()
+
+    summary["queuePending"] = count_by_status("pending")
+
+
 def run_ingest(
     *,
     analyze: bool = True,
@@ -245,12 +491,12 @@ def run_ingest(
     sources: str = "all",
     greenhouse_source_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Run one ingest cycle. sources: all | gmail | greenhouse."""
+    """Run one ingest cycle. sources: all | gmail | greenhouse | manual."""
     started = _now()
     db = get_db()
     run_id = run_id or f"ingest_{uuid.uuid4().hex[:16]}"
     sources_mode = (sources or "all").strip().lower()
-    if sources_mode not in ("all", "gmail", "greenhouse"):
+    if sources_mode not in ("all", "gmail", "greenhouse", "manual"):
         sources_mode = "all"
 
     summary: dict[str, Any] = {
@@ -261,6 +507,7 @@ def run_ingest(
         "jobsUpdated": 0,
         "analyzed": 0,
         "outOfArea": 0,
+        "wrongRole": 0,
         "listingsTotal": 0,
         "listingsProcessed": 0,
         "telegramSent": 0,
@@ -272,8 +519,14 @@ def run_ingest(
         "gmailJobsUpdated": 0,
         "greenhouseJobsCreated": 0,
         "greenhouseJobsUpdated": 0,
+        "manualJobsCreated": 0,
+        "manualJobsUpdated": 0,
+        "queueClaimed": 0,
+        "queuePending": 0,
+        "queueNeedsPaste": 0,
         "sourcesPolled": 0,
         "sourcesFailed": 0,
+        "listingsTruncated": 0,
         "currentTitle": "",
         "errors": [],
         "status": "running",
@@ -302,8 +555,13 @@ def run_ingest(
             "jobsCreated": summary.get("jobsCreated", 0),
             "analyzed": summary.get("analyzed", 0),
             "outOfArea": summary.get("outOfArea", 0),
+            "wrongRole": summary.get("wrongRole", 0),
             "currentTitle": summary.get("currentTitle", ""),
             "errors": summary.get("errors", []),
+            "cancelRequested": bool(
+                summary.get("status") == "cancelled"
+                or _is_cancel_requested(run_id)
+            ),
             "startedAt": started,
         }
         if summary.get("finishedAt"):
@@ -311,6 +569,17 @@ def run_ingest(
         _patch_run(run_id, payload)
         if progress_cb:
             progress_cb(payload)
+
+    def was_cancelled() -> bool:
+        if summary.get("status") == "cancelled":
+            return True
+        if _is_cancel_requested(run_id):
+            summary["status"] = "cancelled"
+            summary["currentTitle"] = "Cancelled"
+            summary["finishedAt"] = _now()
+            publish()
+            return True
+        return False
 
     if reprocess and sources_mode in ("all", "gmail"):
         cleared = db[C.GMAIL_MESSAGES].delete_many({}).deleted_count
@@ -321,6 +590,9 @@ def run_ingest(
     app_settings = get_app_settings()
     run_gmail = sources_mode in ("all", "gmail")
     run_greenhouse = sources_mode in ("all", "greenhouse")
+    run_manual = sources_mode in ("all", "manual")
+    max_listings = ingest_max_listings()
+    remaining = max_listings
 
     # --- Gmail ---
     message_ids: list[str] = []
@@ -331,7 +603,7 @@ def run_ingest(
         "skipped_only": set(),
     }
 
-    if run_gmail:
+    if run_gmail and not was_cancelled():
         if not credentials_available():
             summary["skippedNoCreds"] = True
             publish()
@@ -344,6 +616,13 @@ def run_ingest(
                 raw_jobs, message_ids = [], []
 
             summary["messagesSeen"] = len(message_ids)
+            raw_jobs, remaining = _truncate_listings(
+                raw_jobs,
+                remaining=remaining,
+                label="Gmail",
+                max_listings=max_listings,
+                summary=summary,
+            )
             summary["listingsTotal"] = summary.get("listingsTotal", 0) + len(raw_jobs)
             publish()
 
@@ -355,56 +634,59 @@ def run_ingest(
                 publish=publish,
                 gate_gmail=True,
                 count_prefix="gmail",
+                run_id=run_id,
             )
 
-            service = None
-            if processed_label_enabled():
-                try:
-                    service = build_gmail_service()
-                except Exception:
-                    service = None
+            if not was_cancelled():
+                service = None
+                if processed_label_enabled():
+                    try:
+                        service = build_gmail_service()
+                    except Exception:
+                        service = None
 
-            for mid in message_ids:
-                if db[C.GMAIL_MESSAGES].find_one({"_id": mid}):
-                    continue
-                if mid in gmail_sets["failed"] and mid not in gmail_sets["succeeded"]:
-                    logger.warning(
-                        "Leaving Gmail message %s unmarked — all job upserts failed",
-                        mid,
-                    )
-                    continue
-                if (
-                    mid in gmail_sets["skipped_only"]
-                    and mid not in gmail_sets["succeeded"]
-                    and mid not in gmail_sets["failed"]
-                ):
+                for mid in message_ids:
+                    if db[C.GMAIL_MESSAGES].find_one({"_id": mid}):
+                        continue
+                    if mid in gmail_sets["failed"] and mid not in gmail_sets["succeeded"]:
+                        logger.warning(
+                            "Leaving Gmail message %s unmarked — all job upserts failed",
+                            mid,
+                        )
+                        continue
+                    if (
+                        mid in gmail_sets["skipped_only"]
+                        and mid not in gmail_sets["succeeded"]
+                        and mid not in gmail_sets["failed"]
+                    ):
+                        db[C.GMAIL_MESSAGES].insert_one(
+                            {
+                                "_id": mid,
+                                "processedAt": _now(),
+                                "hadJobs": False,
+                                "skippedDisabledSource": True,
+                            }
+                        )
+                        summary["messagesNew"] += 1
+                        if service:
+                            _mark_gmail_processed(service, mid)
+                        continue
+                    if mid in gmail_sets["touched"] and mid not in gmail_sets["succeeded"]:
+                        # Partial cancel mid-message: leave unmarked so reprocess can finish
+                        continue
                     db[C.GMAIL_MESSAGES].insert_one(
                         {
                             "_id": mid,
                             "processedAt": _now(),
-                            "hadJobs": False,
-                            "skippedDisabledSource": True,
+                            "hadJobs": mid in gmail_sets["touched"],
                         }
                     )
                     summary["messagesNew"] += 1
                     if service:
                         _mark_gmail_processed(service, mid)
-                    continue
-                if mid in gmail_sets["touched"] and mid not in gmail_sets["succeeded"]:
-                    continue
-                db[C.GMAIL_MESSAGES].insert_one(
-                    {
-                        "_id": mid,
-                        "processedAt": _now(),
-                        "hadJobs": mid in gmail_sets["touched"],
-                    }
-                )
-                summary["messagesNew"] += 1
-                if service:
-                    _mark_gmail_processed(service, mid)
 
     # --- Greenhouse ---
-    if run_greenhouse:
+    if run_greenhouse and not was_cancelled():
         if not is_ats_source_enabled("greenhouse", app_settings):
             summary["skippedDisabledAts"] = {
                 **(summary.get("skippedDisabledAts") or {}),
@@ -427,6 +709,13 @@ def run_ingest(
 
             summary["sourcesPolled"] = gh_stats.get("sourcesPolled", 0)
             summary["sourcesFailed"] = gh_stats.get("sourcesFailed", 0)
+            gh_raw, remaining = _truncate_listings(
+                gh_raw,
+                remaining=remaining,
+                label="Greenhouse",
+                max_listings=max_listings,
+                summary=summary,
+            )
             summary["listingsTotal"] = summary.get("listingsTotal", 0) + len(gh_raw)
             publish()
 
@@ -438,14 +727,33 @@ def run_ingest(
                 publish=publish,
                 gate_gmail=False,
                 count_prefix="greenhouse",
+                run_id=run_id,
             )
 
+    # --- Manual URL queue ---
+    if run_manual and not was_cancelled():
+        try:
+            _drain_manual_queue(
+                summary,
+                analyze=analyze,
+                publish=publish,
+                limit=min(40, remaining if remaining > 0 else 0),
+                run_id=run_id,
+            )
+        except Exception as exc:
+            logger.exception("Manual queue drain failed")
+            summary["errors"].append(f"manual-queue: {exc}")
+
+    if was_cancelled() or summary.get("status") == "cancelled":
+        summary["status"] = "cancelled"
+        summary["currentTitle"] = ""
+        if not summary.get("finishedAt"):
+            summary["finishedAt"] = _now()
+        publish()
+        logger.info("Ingest cancelled: %s", summary)
+        return {"runId": run_id, **summary}
+
     summary["currentTitle"] = ""
-    # Fail only if nothing ran and we had a hard Gmail-only mode with creds failure
-    # and greenhouse also skipped — otherwise completed with partial results.
-    if summary.get("errors") and summary.get("listingsProcessed", 0) == 0:
-        # Soft: still mark completed unless both sides totally failed with zero progress
-        pass
     summary["status"] = "completed"
     summary["finishedAt"] = _now()
     publish()
@@ -479,11 +787,13 @@ def start_ingest_async(
                 "type": "ingest",
                 "status": "running",
                 "startedAt": _now(),
+                "cancelRequested": False,
                 "listingsTotal": 0,
                 "listingsProcessed": 0,
                 "jobsCreated": 0,
                 "analyzed": 0,
                 "outOfArea": 0,
+                "wrongRole": 0,
                 "currentTitle": "Starting…",
                 "errors": [],
                 "summary": {},

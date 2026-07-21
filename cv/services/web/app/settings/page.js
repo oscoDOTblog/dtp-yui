@@ -47,6 +47,7 @@ const ATS_PROVIDERS = [
 export default function SettingsPage() {
   const [gmailIngest, setGmailIngest] = useState(null);
   const [atsIngest, setAtsIngest] = useState(null);
+  const [githubEvidence, setGithubEvidence] = useState(null);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(true);
@@ -58,10 +59,14 @@ export default function SettingsPage() {
       const data = await apiGet("/settings");
       setGmailIngest(data.gmailIngest || {});
       setAtsIngest(data.atsIngest || { greenhouse: true });
+      setGithubEvidence(
+        data.githubEvidence || { enabled: true, defaultLookback: "7d" }
+      );
     } catch (err) {
       setError(err.message || "Failed to load settings");
       setGmailIngest(null);
       setAtsIngest(null);
+      setGithubEvidence(null);
     } finally {
       setLoading(false);
     }
@@ -85,6 +90,7 @@ export default function SettingsPage() {
       });
       setGmailIngest(data.gmailIngest || { ...previous, [key]: nextValue });
       if (data.atsIngest) setAtsIngest(data.atsIngest);
+      if (data.githubEvidence) setGithubEvidence(data.githubEvidence);
       setInfo("Saved. Next ingest run will use these toggles.");
     } catch (err) {
       setGmailIngest(previous);
@@ -108,9 +114,36 @@ export default function SettingsPage() {
       });
       setAtsIngest(data.atsIngest || { ...previous, [key]: nextValue });
       if (data.gmailIngest) setGmailIngest(data.gmailIngest);
+      if (data.githubEvidence) setGithubEvidence(data.githubEvidence);
       setInfo("Saved. Next ingest run will use these toggles.");
     } catch (err) {
       setAtsIngest(previous);
+      setError(err.message || "Failed to save settings");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  async function toggleGithub() {
+    if (!githubEvidence || savingKey) return;
+    const nextValue = !githubEvidence.enabled;
+    const previous = { ...githubEvidence };
+    setGithubEvidence({ ...githubEvidence, enabled: nextValue });
+    setSavingKey("github:enabled");
+    setError("");
+    setInfo("");
+    try {
+      const data = await apiPatch("/settings", {
+        githubEvidence: { enabled: nextValue },
+      });
+      setGithubEvidence(
+        data.githubEvidence || { ...previous, enabled: nextValue }
+      );
+      if (data.gmailIngest) setGmailIngest(data.gmailIngest);
+      if (data.atsIngest) setAtsIngest(data.atsIngest);
+      setInfo("Saved. Cron and manual Sync respect this toggle.");
+    } catch (err) {
+      setGithubEvidence(previous);
       setError(err.message || "Failed to save settings");
     } finally {
       setSavingKey("");
@@ -126,8 +159,9 @@ export default function SettingsPage() {
         Control which intake sources run. Gmail switches decide which alert
         senders are processed after mail is fetched. ATS switches master-gate
         board polling (companies still managed on{" "}
-        <a href="/sources">Sources</a>). Changes apply on the next Fetch /
-        hourly run — no restart.
+        <a href="/sources">Sources</a>). GitHub evidence is managed on{" "}
+        <a href="/repositories">Repositories</a>. Changes apply on the next
+        run — no restart.
       </p>
 
       {error ? (
@@ -199,6 +233,32 @@ export default function SettingsPage() {
                 </Card>
               );
             })}
+          </div>
+        </section>
+      ) : null}
+
+      {!loading && githubEvidence ? (
+        <section className="mt-10">
+          <h2 className="mb-3 text-lg font-semibold">GitHub evidence</h2>
+          <div className="grid gap-3">
+            <Card>
+              <CardPanel className="flex items-center justify-between gap-4 p-4">
+                <div className="min-w-0">
+                  <p className="m-0 font-semibold">Evidence engine</p>
+                  <p className="mt-1 m-0 text-sm text-muted-foreground">
+                    Poll configured repos at :30 UTC and on manual Sync.
+                    Individual repos are managed on the{" "}
+                    <a href="/repositories">Repositories</a> page.
+                  </p>
+                </div>
+                <Switch
+                  checked={Boolean(githubEvidence.enabled)}
+                  disabled={!!savingKey}
+                  onCheckedChange={toggleGithub}
+                  aria-label={`GitHub evidence ${githubEvidence.enabled ? "on" : "off"}`}
+                />
+              </CardPanel>
+            </Card>
           </div>
         </section>
       ) : null}

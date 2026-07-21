@@ -40,10 +40,11 @@ One document per normalized requirement. Upserted on each successful job analyze
 | `canonicalApplyUrl` | Prefer company ATS URL after redirect resolve |
 | `discoveredBy` | `{ source, alertName?, alertLocation?, messageId? }` |
 | `locationAssessment` | Classifier output (see below) |
+| `roleAssessment` | SWE title gate output (see below) |
 | `firstSeenAt` / `lastSeenAt` | Intake timestamps |
 | `fingerprints.exact` / `fingerprints.fuzzy` | Dedup keys |
 | `contentHash` | Hash of description text (legacy + still used) |
-| `status` | Includes `out_of_area` when Bay Area gate fails |
+| `status` | `new` \| `out_of_area` (Bay Area gate) \| `wrong_role` (SWE title gate) \| … |
 
 ### `locationAssessment`
 
@@ -58,13 +59,30 @@ One document per normalized requirement. Upserted on each successful job analyze
 }
 ```
 
+Policy (shared by Gmail + Greenhouse): hybrid/onsite need a `bayAreaCities` match from [`config/location.json`](../config/location.json); **remote is always eligible** unless the listing excludes California. After editing the config, restart API/worker or call `reload_location_config()`.
+
+### `roleAssessment`
+
+```json
+{
+  "roleEligible": true,
+  "matchedIncludes": ["software engineer"],
+  "matchedExcludes": [],
+  "confidence": 0.9,
+  "evidence": ["title matches software engineer"]
+}
+```
+
+Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.json`](../config/roleFilter.json). Blocklist wins; ambiguous titles like bare `Engineer` may use description patterns. Failures set `status: wrong_role` and skip auto-analyze. After editing, restart API/worker or call `reload_role_filter_config()`.
+
 ## Stage 2A / 2B (active)
 
 | Collection | Purpose |
 |---|---|
 | `cv_gmailMessages` | Processed Gmail message ids (idempotent ingest) |
-| `cv_settings` | App settings (UI source of truth). Doc `_id: "app"` with `gmailIngest` (alert senders) and `atsIngest` (e.g. `greenhouse`) master toggles |
+| `cv_settings` | App settings (UI source of truth). Doc `_id: "app"` with `gmailIngest`, `atsIngest`, and `githubEvidence` master toggles |
 | `cv_jobSources` | ATS company watchlist (Greenhouse boards) |
+| `cv_intakeQueue` | Manual job URLs queued from Analyze for intake digestion |
 
 ### `cv_settings`
 
@@ -80,6 +98,11 @@ One document per normalized requirement. Upserted on each successful job analyze
   },
   "atsIngest": {
     "greenhouse": true
+  },
+  "githubEvidence": {
+    "enabled": true,
+    "authorLogins": ["oscoDOTblog"],
+    "defaultLookback": "7d"
   },
   "updatedAt": "ISO-8601"
 }
@@ -104,9 +127,63 @@ One document per normalized requirement. Upserted on each successful job analyze
 
 Seeded from [`seed/jobSources.json`](../seed/jobSources.json). Identity fields upsert on seed without wiping poll state or re-enabling disabled sources.
 
-## Stage 2C+ / later stubs
+### `cv_intakeQueue`
 
-- `cv_repositories` — GitHub repo scan state
-- `cv_repositoryScans` — per-commit analysis records
+Manual URL intake queue (Analyze page). Drained by `run_ingest` when `sources` is `all` or `manual`.
+
+```json
+{
+  "_id": "iq_…",
+  "url": "https://…",
+  "descriptionRaw": null,
+  "status": "pending",
+  "error": null,
+  "jobId": null,
+  "fetchStatus": null,
+  "createdAt": "ISO-8601",
+  "updatedAt": "ISO-8601",
+  "processedAt": null
+}
+```
+
+Statuses: `pending` → `processing` → `done` | `failed` | `needsPaste`. Enqueue dedupes against existing `pending`/`processing` rows with the same URL.
+
+## Stage 4 — GitHub evidence
+
+| Collection | Purpose |
+|---|---|
+| `cv_repositories` | Configured GitHub repos + scan state |
+| `cv_repositoryScans` | Per-commit analysis records |
+
+### `cv_repositories`
+
+| Field | Purpose |
+|---|---|
+| `_id` | e.g. `repo_sway_f4` (matches `projects.repositoryIds`) |
+| `fullName` | `owner/repo` |
+| `defaultBranch` | Branch to scan (default `main`) |
+| `projectIds` | Linked projects |
+| `enabled` | Per-repo switch (also requires Settings `githubEvidence.enabled`) |
+| `lastSeenCommitSha` | HEAD SHA after last successful scan |
+| `lastScannedAt` / `lastSuccessAt` | Scan timestamps |
+| `lastError` | Last error string (cleared on success) |
+| `lastCommitCount` | Commits processed on last success |
+| `clonePath` | Relative path under `repository-cache/` when cloned |
+
+Seeded from [`seed/repositories.json`](../seed/repositories.json). Identity upsert preserves scan state.
+
+### `cv_repositoryScans`
+
+| Field | Purpose |
+|---|---|
+| `_id` | `{repositoryId}:{sha}` |
+| `repositoryId` | Parent repo |
+| `sha` / `committedAt` / `message` / `files` | Commit metadata |
+| `extracted` | Classifier output (skills / levels / claims) |
+| `createdAt` | When analyzed |
 
 Constants live in [`services/shared/cv_shared/collections.py`](../services/shared/cv_shared/collections.py).
+
+## Stage 2C+ / later stubs
+
+_(none currently — Stage 4 collections are active)_

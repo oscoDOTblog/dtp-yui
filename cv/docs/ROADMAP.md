@@ -3,11 +3,19 @@
 ## Stage 1 — Candidate profile + manual job URLs *(done)*
 
 - Seeded knowledge base (skills, projects, work history, evidence)
-- Paste job URL or description
+- Paste job URL or description (Analyze → intake queue; see below)
 - Ollama extraction + weighted match + meaningful gaps + gap insights
 - Generate application package (docx/pdf/md)
 - Local Next.js dashboard (Inbox, Analyze, Gaps, Applications, Profile)
 - Docker Compose on Legion
+
+### Manual URL intake queue *(Analyze)*
+
+- Multi-URL paste into `cv_intakeQueue`; process immediately if ingest idle, else next hourly/`sources=all` run
+- Shared normalize → Bay Area gate → upsert → auto-analyze path
+- Greenhouse single-job URLs use boards API (dedupe with watchlist polls)
+- Blocked pages → `needsPaste` until description attached
+- APIs: `POST/GET/PATCH/DELETE /ingest/queue`, `POST /ingest/queue/process`
 
 ## Stage 2A — Email intake + foundation *(done)*
 
@@ -19,7 +27,7 @@
 - Settings toggles for Gmail alert senders
 - Setup guide: [GMAIL_SETUP.md](GMAIL_SETUP.md)
 
-## Stage 2B — Bay Area company watchlist + Greenhouse *(current)*
+## Stage 2B — Bay Area company watchlist + Greenhouse *(done)*
 
 - Curated company list in `cv_jobSources` (board tokens, priority, locations)
 - Greenhouse Job Board API polling
@@ -39,12 +47,14 @@
 - Reweight match score with work-arrangement + commute
 - Digest notifications (Gmail / Telegram): urgent ≥85, digest 70–84
 
-## Stage 4 — GitHub evidence engine
+## Stage 4 — GitHub evidence engine *(current)*
 
 - Cron at `:30` — poll configured repos; skip unchanged commit SHA
+- Manual Sync with lookback presets (`1d` … `all`) on Repositories page
 - Evidence ladder: mentioned → installed → implemented → substantial → tested → deployed → maintained
 - Update skills/projects; rescore open jobs when profile version bumps
 - `repository-cache/` for shallow clones when needed
+- Setup guide: [GITHUB_SETUP.md](GITHUB_SETUP.md)
 
 ## Stage 5 — Application tracker
 

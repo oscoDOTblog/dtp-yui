@@ -23,6 +23,7 @@ const links = [
   { href: "/gaps", label: "Gaps" },
   { href: "/applications", label: "Applications" },
   { href: "/sources", label: "Sources" },
+  { href: "/repositories", label: "Repositories" },
   { href: "/settings", label: "Settings" },
   { href: "/profile", label: "Profile" },
 ];
@@ -60,7 +61,7 @@ export default function RootLayout({ children }) {
               {children}
             </main>
             <footer className="border-t border-border px-5 py-4 text-center text-sm text-muted-foreground">
-              Stage 2B · localhost only · evidence-grounded · human approval
+              Stage 4 · localhost only · evidence-grounded · human approval
               required
             </footer>
           </div>

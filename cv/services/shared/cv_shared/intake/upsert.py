@@ -44,6 +44,7 @@ def upsert_normalized_job(normalized: dict[str, Any]) -> dict[str, Any]:
         updates = {
             "lastSeenAt": now,
             "locationAssessment": normalized.get("locationAssessment"),
+            "roleAssessment": normalized.get("roleAssessment"),
             "discoveredBy": normalized.get("discoveredBy") or existing.get("discoveredBy"),
         }
         # Always refresh URLs when present; never clear existing URL fields
@@ -71,7 +72,7 @@ def upsert_normalized_job(normalized: dict[str, Any]) -> dict[str, Any]:
         ):
             updates["descriptionRaw"] = normalized["descriptionRaw"]
             updates["contentHash"] = content_hash
-        if existing.get("status") in (None, "new", "out_of_area"):
+        if existing.get("status") in (None, "new", "out_of_area", "wrong_role"):
             updates["status"] = normalized.get("status") or existing.get("status")
         db[C.JOBS].update_one({"_id": existing["_id"]}, {"$set": updates})
         job = db[C.JOBS].find_one({"_id": existing["_id"]})
@@ -106,6 +107,7 @@ def upsert_normalized_job(normalized: dict[str, Any]) -> dict[str, Any]:
         "fingerprints": fingerprints,
         "discoveredBy": normalized.get("discoveredBy"),
         "locationAssessment": normalized.get("locationAssessment"),
+        "roleAssessment": normalized.get("roleAssessment"),
         "fetchStatus": normalized.get("fetchStatus"),
     }
     if external_id:

@@ -42,6 +42,7 @@ def ensure_indexes(db: Database | None = None) -> None:
     db[C.JOBS].create_index("fingerprints.fuzzy")
     db[C.JOBS].create_index("source")
     db[C.JOBS].create_index("locationAssessment.bayAreaEligible")
+    db[C.JOBS].create_index("roleAssessment.roleEligible")
     db[C.GMAIL_MESSAGES].create_index("processedAt")
     db[C.JOB_SOURCES].create_index("enabled")
     db[C.JOB_SOURCES].create_index("ats")
@@ -50,3 +51,10 @@ def ensure_indexes(db: Database | None = None) -> None:
         unique=True,
         name="ats_boardToken_unique",
     )
+    db[C.INTAKE_QUEUE].create_index("status")
+    db[C.INTAKE_QUEUE].create_index("createdAt")
+    db[C.INTAKE_QUEUE].create_index("url")
+    db[C.REPOSITORIES].create_index("enabled")
+    db[C.REPOSITORIES].create_index("fullName", unique=True)
+    db[C.REPOSITORY_SCANS].create_index("repositoryId")
+    db[C.REPOSITORY_SCANS].create_index("sha")

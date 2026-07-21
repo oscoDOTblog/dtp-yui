@@ -8,6 +8,41 @@ Hourly ingest (and **Poll** on the Sources page) hits the public Greenhouse boar
 
 No Greenhouse API key is required. Board tokens are public slugs from career pages.
 
+## Location gate (cities + remote)
+
+Greenhouse uses the **shared** location classifier — not a Greenhouse-only filter. Config: [`config/location.json`](../config/location.json) (`bayAreaCities`).
+
+| Listing type | Eligible? |
+|---|---|
+| Remote (any geography) | Yes — unless the text excludes California |
+| Hybrid / onsite | Yes only if office city / Bay Area phrase matches `bayAreaCities` |
+| Outside the city list (onsite NYC, etc.) | No → `out_of_area`, not auto-analyzed |
+
+### Add or remove a city
+
+1. Edit `bayAreaCities` in `config/location.json` (lowercase strings; keep region aliases like `bay area`, `sf`, `east bay` if useful).
+2. Restart API + worker containers (config is cached at process start), **or** call `reload_location_config()` from a Python shell inside the API container after editing a mounted config volume.
+
+Default cities include: San Francisco, Oakland, Berkeley, Emeryville, South San Francisco, Daly City, San Mateo, Foster City, Redwood City, Menlo Park, Palo Alto, Mountain View, Sunnyvale, Santa Clara, San Jose, Milpitas, Fremont, Hayward, San Leandro, Alameda, Walnut Creek.
+
+## Role gate (SWE / SWE-adjacent titles)
+
+Same shared gate as Gmail. Config: [`config/roleFilter.json`](../config/roleFilter.json).
+
+| Title type | Eligible? |
+|---|---|
+| Matches include patterns (software engineer, platform, devops, …) | Yes |
+| Matches exclude patterns (recruiter, product manager, AE, …) | No → `wrong_role` |
+| Ambiguous (`Engineer` alone) + description SWE signal | Yes (lower confidence) |
+| No match | No → `wrong_role`, not auto-analyzed |
+
+Auto-analyze requires **both** Bay Area eligibility and role eligibility. Inbox default filter is **Apply-ready** (`GET /jobs?applyReady=true`).
+
+### Add or remove a title pattern
+
+1. Edit `includeTitlePatterns` / `excludeTitlePatterns` in `config/roleFilter.json`
+2. Restart API + worker, or call `reload_role_filter_config()`
+
 ## Settings master toggle
 
 1. Open **Settings** → **ATS board ingest**

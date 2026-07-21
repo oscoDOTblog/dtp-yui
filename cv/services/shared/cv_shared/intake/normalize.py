@@ -8,6 +8,7 @@ from typing import Any
 
 from .fingerprints import build_fingerprints
 from .location import assess_location
+from .role_filter import assess_role_fit
 
 
 def _content_hash(text: str) -> str:
@@ -38,13 +39,21 @@ def normalize_raw_job(raw: dict[str, Any]) -> dict[str, Any]:
         work_mode_hint=raw.get("workMode") or raw.get("remoteType"),
     )
 
+    role_assessment = raw.get("roleAssessment") or assess_role_fit(
+        title=title,
+        description=description,
+    )
+
     work_mode = raw.get("workMode") or location_assessment.get("workArrangement") or "unknown"
     fingerprints = build_fingerprints(company, title, location)
     digest = _content_hash(description or f"{company}|{title}|{source_url or ''}")
 
+    # Location gate wins, then role gate.
     status = "new"
     if not location_assessment.get("bayAreaEligible"):
         status = "out_of_area"
+    elif not role_assessment.get("roleEligible"):
+        status = "wrong_role"
 
     return {
         "externalId": external_id,
@@ -61,6 +70,7 @@ def normalize_raw_job(raw: dict[str, Any]) -> dict[str, Any]:
         "postedAt": raw.get("postedAt"),
         "discoveredBy": discovered_by,
         "locationAssessment": location_assessment,
+        "roleAssessment": role_assessment,
         "fingerprints": fingerprints,
         "contentHash": digest,
         "firstSeenAt": raw.get("firstSeenAt") or now,

@@ -28,11 +28,14 @@ services:
       SEED_DIR: /app/seed
       SECRETS_DIR: /app/secrets
       LOCATION_CONFIG: /app/config/location.json
+      ROLE_FILTER_CONFIG: /app/config/roleFilter.json
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       GMAIL_QUERY: ${GMAIL_QUERY:-label:JobAlerts newer_than:2d}
       GMAIL_PROCESSED_LABEL: ${GMAIL_PROCESSED_LABEL:-false}
+      INGEST_MAX_LISTINGS: ${INGEST_MAX_LISTINGS:-500}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      REPOSITORY_CACHE_DIR: /app/repository-cache
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -40,6 +43,7 @@ services:
       - ./seed:/app/seed:ro
       - ./secrets:/app/secrets:ro
       - ./config:/app/config:ro
+      - ./repository-cache:/app/repository-cache
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -61,12 +65,16 @@ services:
       SEED_DIR: /app/seed
       SECRETS_DIR: /app/secrets
       LOCATION_CONFIG: /app/config/location.json
+      ROLE_FILTER_CONFIG: /app/config/roleFilter.json
       AUTO_SEED: "true"
       INGEST_ON_START: ${INGEST_ON_START:-true}
+      GITHUB_SCAN_ON_START: ${GITHUB_SCAN_ON_START:-false}
       GMAIL_QUERY: ${GMAIL_QUERY:-label:JobAlerts newer_than:2d}
       GMAIL_PROCESSED_LABEL: ${GMAIL_PROCESSED_LABEL:-false}
+      INGEST_MAX_LISTINGS: ${INGEST_MAX_LISTINGS:-500}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      REPOSITORY_CACHE_DIR: /app/repository-cache
     volumes:
       - ./generated-applications:/app/generated-applications
       - ./seed:/app/seed:ro

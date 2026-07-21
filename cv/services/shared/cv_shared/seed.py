@@ -100,6 +100,56 @@ def seed_job_sources() -> int:
     return count
 
 
+def seed_repositories() -> int:
+    """Upsert GitHub repos from seed/repositories.json without wiping scan state."""
+    db = get_db()
+    path = _seed_dir() / "repositories.json"
+    if not path.exists():
+        logger.warning("Missing seed file: %s", path)
+        return 0
+
+    data = _load_json(path)
+    docs = data if isinstance(data, list) else [data]
+    now = _now()
+    count = 0
+
+    for doc in docs:
+        repo_id = doc.get("_id")
+        full_name = (doc.get("fullName") or "").strip()
+        if not repo_id or not full_name:
+            continue
+
+        existing = db[C.REPOSITORIES].find_one({"_id": repo_id})
+        identity = {
+            "fullName": full_name,
+            "defaultBranch": (doc.get("defaultBranch") or "main").strip() or "main",
+            "projectIds": list(doc.get("projectIds") or []),
+            "updatedAt": now,
+        }
+
+        if existing:
+            # Never re-enable an operator-disabled repo; never touch scan fields.
+            db[C.REPOSITORIES].update_one({"_id": repo_id}, {"$set": identity})
+        else:
+            insert_doc = {
+                "_id": repo_id,
+                **identity,
+                "enabled": bool(doc.get("enabled", True)),
+                "lastSeenCommitSha": None,
+                "lastScannedAt": None,
+                "lastSuccessAt": None,
+                "lastError": None,
+                "lastCommitCount": 0,
+                "clonePath": None,
+                "createdAt": now,
+            }
+            db[C.REPOSITORIES].insert_one(insert_doc)
+        count += 1
+
+    logger.info("Seeded %s: %s documents", C.REPOSITORIES, count)
+    return count
+
+
 def seed_all(force: bool = False) -> dict:
     db = get_db()
     ensure_indexes(db)
@@ -107,8 +157,9 @@ def seed_all(force: bool = False) -> dict:
     started = datetime.now(timezone.utc)
     results: dict[str, int] = {}
 
-    # Job sources always upsert (even when candidate seed is skipped).
+    # Job sources + repos always upsert (even when candidate seed is skipped).
     results[C.JOB_SOURCES] = seed_job_sources()
+    results[C.REPOSITORIES] = seed_repositories()
 
     if not force and db[C.CANDIDATES].find_one({"_id": "primary-candidate"}):
         logger.info("Candidate already seeded; skipping (use force=True to reseed)")

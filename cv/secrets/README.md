@@ -11,8 +11,8 @@ Place credential files here. Contents of this directory (except this README) are
 
 The worker mounts this directory **read-write** so OAuth tokens can refresh.
 
-## Later
+## Stage 4 — GitHub
 
-Stage 4 may use:
+- `github-token` — personal access token (Contents: Read on scanned repos)
 
-- `github-token` or a GitHub App private key
+**Full setup:** [docs/GITHUB_SETUP.md](../docs/GITHUB_SETUP.md)

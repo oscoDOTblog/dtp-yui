@@ -62,10 +62,21 @@ Short version:
 2. Enable **Greenhouse** under Settings → ATS board ingest
 3. **Poll** on Sources, or `curl -X POST 'http://localhost:8000/ingest/run?sources=greenhouse'`
 
+## GitHub evidence (Stage 4)
+
+Follow: **[docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md)**
+
+Short version:
+
+1. Put a GitHub PAT in `secrets/github-token`
+2. Seed loads `seed/repositories.json` (or add `owner/repo` on **Repositories**)
+3. Enable **GitHub evidence** under Settings
+4. Pick a lookback and **Sync** on Repositories (cron also runs at `:30` UTC)
+
 ## Workflow
 
-1. Open **Analyze** and paste a job description (URL fetch is best-effort; LinkedIn usually blocks), **or** let Gmail / Greenhouse ingest fill the Inbox.
-2. Review score, strong evidence, and meaningful gaps.
+1. Open **Analyze**, paste one or more job URLs (one per line) to queue them for intake. Processing starts immediately if ingest is idle; otherwise they wait for the next hourly run. If a page is blocked, attach a pasted description on the queue row.
+2. Review score, strong evidence, and meaningful gaps on the job page (Inbox also fills from Gmail / Greenhouse).
 3. Check **Gaps** for recurring missing requirements ranked by frequency (mark Learning / Resolved as you close them).
 4. Click **Generate documents** → files land in `generated-applications/{company}-{role}/`.
 5. Open the listing yourself and submit (Level 1 automation).
@@ -80,6 +91,7 @@ Short version:
 | `seed/projects.json` | SwayQuest / DTP project buckets |
 | `seed/evidence.json` | Grounded claims linked to skills/work/projects |
 | `seed/jobSources.json` | Greenhouse company watchlist (board tokens) |
+| `seed/repositories.json` | GitHub repos for evidence scanning |
 
 Force reseed (profile replace + watchlist identity upsert):
 
@@ -102,9 +114,10 @@ ssh -L 3000:localhost:3000 -L 8000:localhost:8000 user@legion-wireguard-ip
 - [ROADMAP.md](docs/ROADMAP.md)
 - [GMAIL_SETUP.md](docs/GMAIL_SETUP.md) — Gmail inbox + OAuth for job alerts
 - [GREENHOUSE_SETUP.md](docs/GREENHOUSE_SETUP.md) — company watchlist + board tokens
+- [GITHUB_SETUP.md](docs/GITHUB_SETUP.md) — repo evidence scan + lookback Sync
 
 ## Current scope
 
-In: profile seed, manual job paste, Gmail digest → per-listing ingest (background), Greenhouse board watchlist + Sources UI, Settings toggles for Gmail senders and ATS (`cv_settings`), Bay Area location gate, Ollama match, Telegram on apply (≥85), gap insights, document generation, dashboard, Docker Compose.
+In: profile seed, manual URL intake queue (Analyze → `cv_intakeQueue`), Gmail digest → per-listing ingest (background), Greenhouse board watchlist + Sources UI, GitHub evidence engine + Repositories UI, Settings toggles for Gmail / ATS / GitHub (`cv_settings`), Bay Area location gate, Ollama match, Telegram on apply (≥85), gap insights, document generation, dashboard, Docker Compose.
 
-Out: Lever/Ashby (2C), Telegram digests for consider-band, GitHub evidence polling, Playwright ATS (see roadmap).
+Out: Lever/Ashby (2C), Telegram digests for consider-band, logistics commute scoring (3), Playwright ATS (see roadmap).

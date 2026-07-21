@@ -20,8 +20,15 @@ GMAIL_INGEST_KEYS = (
 
 ATS_INGEST_KEYS = ("greenhouse",)
 
+LOOKBACK_PRESETS = ("1d", "7d", "30d", "90d", "365d", "all")
+
 DEFAULT_GMAIL_INGEST = {key: True for key in GMAIL_INGEST_KEYS}
 DEFAULT_ATS_INGEST = {key: True for key in ATS_INGEST_KEYS}
+DEFAULT_GITHUB_EVIDENCE = {
+    "enabled": True,
+    "authorLogins": ["oscoDOTblog"],
+    "defaultLookback": "7d",
+}
 
 ALERT_SOURCE_TO_KEY = {
     "linkedin-email": "linkedinEmail",
@@ -40,6 +47,7 @@ def default_app_settings() -> dict[str, Any]:
         "_id": APP_SETTINGS_ID,
         "gmailIngest": dict(DEFAULT_GMAIL_INGEST),
         "atsIngest": dict(DEFAULT_ATS_INGEST),
+        "githubEvidence": dict(DEFAULT_GITHUB_EVIDENCE),
         "updatedAt": _now(),
     }
 
@@ -64,6 +72,27 @@ def _normalize_ats_ingest(raw: dict[str, Any] | None) -> dict[str, bool]:
     return out
 
 
+def _normalize_github_evidence(raw: dict[str, Any] | None) -> dict[str, Any]:
+    out = dict(DEFAULT_GITHUB_EVIDENCE)
+    out["authorLogins"] = list(DEFAULT_GITHUB_EVIDENCE["authorLogins"])
+    if not isinstance(raw, dict):
+        return out
+    if "enabled" in raw:
+        out["enabled"] = bool(raw["enabled"])
+    if "authorLogins" in raw and isinstance(raw["authorLogins"], list):
+        logins = [
+            str(x).strip()
+            for x in raw["authorLogins"]
+            if str(x).strip()
+        ]
+        if logins:
+            out["authorLogins"] = logins
+    lookback = (raw.get("defaultLookback") or "").strip().lower()
+    if lookback in LOOKBACK_PRESETS:
+        out["defaultLookback"] = lookback
+    return out
+
+
 def get_app_settings() -> dict[str, Any]:
     """Return app settings, creating defaults if missing."""
     db = get_db()
@@ -75,24 +104,38 @@ def get_app_settings() -> dict[str, Any]:
 
     gmail = _normalize_gmail_ingest(doc.get("gmailIngest"))
     ats = _normalize_ats_ingest(doc.get("atsIngest"))
-    needs_fix = gmail != doc.get("gmailIngest") or ats != doc.get("atsIngest")
+    github = _normalize_github_evidence(doc.get("githubEvidence"))
+    needs_fix = (
+        gmail != doc.get("gmailIngest")
+        or ats != doc.get("atsIngest")
+        or github != doc.get("githubEvidence")
+    )
     if needs_fix:
         db[C.SETTINGS].update_one(
             {"_id": APP_SETTINGS_ID},
-            {"$set": {"gmailIngest": gmail, "atsIngest": ats, "updatedAt": _now()}},
+            {
+                "$set": {
+                    "gmailIngest": gmail,
+                    "atsIngest": ats,
+                    "githubEvidence": github,
+                    "updatedAt": _now(),
+                }
+            },
         )
         doc = db[C.SETTINGS].find_one({"_id": APP_SETTINGS_ID}) or doc
     doc["gmailIngest"] = gmail
     doc["atsIngest"] = ats
+    doc["githubEvidence"] = github
     return doc
 
 
 def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
-    """Merge allowed gmailIngest / atsIngest bools. Ignores unknown keys."""
+    """Merge allowed settings fields. Ignores unknown keys."""
     db = get_db()
     current = get_app_settings()
     gmail = dict(current.get("gmailIngest") or DEFAULT_GMAIL_INGEST)
     ats = dict(current.get("atsIngest") or DEFAULT_ATS_INGEST)
+    github = _normalize_github_evidence(current.get("githubEvidence"))
 
     incoming_gmail = partial.get("gmailIngest") if isinstance(partial, dict) else None
     if isinstance(incoming_gmail, dict):
@@ -106,16 +149,37 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
             if key in incoming_ats:
                 ats[key] = bool(incoming_ats[key])
 
+    incoming_gh = partial.get("githubEvidence") if isinstance(partial, dict) else None
+    if isinstance(incoming_gh, dict):
+        merged = dict(github)
+        if "enabled" in incoming_gh:
+            merged["enabled"] = bool(incoming_gh["enabled"])
+        if "authorLogins" in incoming_gh and isinstance(
+            incoming_gh["authorLogins"], list
+        ):
+            merged["authorLogins"] = incoming_gh["authorLogins"]
+        if "defaultLookback" in incoming_gh:
+            merged["defaultLookback"] = incoming_gh["defaultLookback"]
+        github = _normalize_github_evidence(merged)
+
     updated_at = _now()
     db[C.SETTINGS].update_one(
         {"_id": APP_SETTINGS_ID},
-        {"$set": {"gmailIngest": gmail, "atsIngest": ats, "updatedAt": updated_at}},
+        {
+            "$set": {
+                "gmailIngest": gmail,
+                "atsIngest": ats,
+                "githubEvidence": github,
+                "updatedAt": updated_at,
+            }
+        },
         upsert=True,
     )
     return {
         "_id": APP_SETTINGS_ID,
         "gmailIngest": gmail,
         "atsIngest": ats,
+        "githubEvidence": github,
         "updatedAt": updated_at,
     }
 
@@ -145,3 +209,10 @@ def is_ats_source_enabled(
     if key not in ATS_INGEST_KEYS:
         return False
     return bool(ats_map.get(key, True))
+
+
+def is_github_evidence_enabled(settings: dict[str, Any] | None = None) -> bool:
+    """Master Settings toggle for GitHub evidence scanning."""
+    doc = settings if settings is not None else get_app_settings()
+    github = _normalize_github_evidence(doc.get("githubEvidence"))
+    return bool(github.get("enabled", True))

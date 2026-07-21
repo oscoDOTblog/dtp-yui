@@ -45,20 +45,34 @@ function locationChip(job) {
   return null;
 }
 
+function roleChip(job) {
+  if (job.status === "wrong_role" || job.roleAssessment?.roleEligible === false) {
+    return { label: "Wrong role", variant: "error" };
+  }
+  return null;
+}
+
 function statusBannerText(status) {
   if (!status || status.status === "idle") return "";
   if (status.status === "running") {
     const processed = status.listingsProcessed || 0;
     const total = status.listingsTotal || 0;
     const current = status.currentTitle || "Working…";
+    if (status.cancelRequested) {
+      return `Stopping… ${processed}/${total || "?"} — ${current}`;
+    }
     if (total > 0) {
       return `Ingesting ${processed}/${total} — ${current}`;
     }
     return current || "Starting ingest…";
   }
+  if (status.status === "cancelled") {
+    const processed = status.listingsProcessed || 0;
+    return `Ingest cancelled after ${processed} listing${processed === 1 ? "" : "s"}`;
+  }
   if (status.status === "completed") {
     const s = status.summary || status;
-    return `Ingest complete: ${s.jobsCreated || 0} new · ${s.analyzed || 0} analyzed · ${s.outOfArea || 0} out of area`;
+    return `Ingest complete: ${s.jobsCreated || 0} new · ${s.analyzed || 0} analyzed · ${s.outOfArea || 0} out of area · ${s.wrongRole || 0} wrong role`;
   }
   if (status.status === "failed") {
     return "Ingest failed — check API logs";
@@ -67,7 +81,7 @@ function statusBannerText(status) {
 }
 
 export default function HomePage() {
-  const [eligibleFilter, setEligibleFilter] = useState("eligible");
+  const [eligibleFilter, setEligibleFilter] = useState("applyReady");
   const [jobs, setJobs] = useState([]);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
@@ -76,13 +90,18 @@ export default function HomePage() {
   const [runId, setRunId] = useState(null);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [deleting, setDeleting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelStartedAt, setCancelStartedAt] = useState(null);
+  const [showForceClear, setShowForceClear] = useState(false);
 
   const ingesting = ingestStatus?.status === "running";
 
   const loadJobs = useCallback(async () => {
     try {
       let path = "/jobs";
+      if (eligibleFilter === "applyReady") path = "/jobs?applyReady=true";
       if (eligibleFilter === "eligible") path = "/jobs?eligible=true";
+      if (eligibleFilter === "wrong") path = "/jobs?status=wrong_role";
       if (eligibleFilter === "out") path = "/jobs?eligible=false";
       const data = await apiGet(path);
       const list = Array.isArray(data) ? data : [];
@@ -132,16 +151,36 @@ export default function HomePage() {
   }, [loadJobs, refreshStatus]);
 
   useEffect(() => {
-    if (!ingesting) return undefined;
+    if (!ingesting) {
+      setCancelling(false);
+      setCancelStartedAt(null);
+      setShowForceClear(false);
+      return undefined;
+    }
     const id = setInterval(async () => {
       const status = await refreshStatus();
       await loadJobs();
       if (status && status.status !== "running") {
         setInfo(statusBannerText(status));
+        setCancelling(false);
+        setCancelStartedAt(null);
+        setShowForceClear(false);
+      } else if (
+        status?.cancelRequested &&
+        cancelStartedAt &&
+        Date.now() - cancelStartedAt > 10000
+      ) {
+        setShowForceClear(true);
       }
     }, 3000);
     return () => clearInterval(id);
-  }, [ingesting, refreshStatus, loadJobs]);
+  }, [ingesting, refreshStatus, loadJobs, cancelStartedAt]);
+
+  useEffect(() => {
+    if (!ingesting || !cancelStartedAt) return undefined;
+    const id = setTimeout(() => setShowForceClear(true), 10000);
+    return () => clearTimeout(id);
+  }, [ingesting, cancelStartedAt]);
 
   const allVisibleSelected = useMemo(
     () => jobs.length > 0 && jobs.every((j) => selectedIds.has(j._id)),
@@ -200,6 +239,9 @@ export default function HomePage() {
   async function runIngest(reprocess = false) {
     setInfo("");
     setError("");
+    setCancelling(false);
+    setCancelStartedAt(null);
+    setShowForceClear(false);
     try {
       const path = reprocess ? "/ingest/run?reprocess=true" : "/ingest/run";
       const result = await apiPost(path);
@@ -229,10 +271,56 @@ export default function HomePage() {
     }
   }
 
+  async function stopIngest(force = false) {
+    setError("");
+    setCancelling(true);
+    if (!force) {
+      setCancelStartedAt(Date.now());
+    }
+    try {
+      const path = force
+        ? `/ingest/cancel?force=true${runId ? `&runId=${encodeURIComponent(runId)}` : ""}`
+        : `/ingest/cancel${runId ? `?runId=${encodeURIComponent(runId)}` : ""}`;
+      const result = await apiPost(path);
+      if (result.runId) setRunId(result.runId);
+      if (force || result.status === "cancelled") {
+        setIngestStatus((prev) => ({
+          ...(prev || {}),
+          status: "cancelled",
+          cancelRequested: true,
+          currentTitle: force ? "Cancelled (force clear)" : "Cancelled",
+          finishedAt: new Date().toISOString(),
+        }));
+        setInfo(
+          force
+            ? "Ingest lock cleared. You can Fetch new alerts again."
+            : "Ingest cancelled.",
+        );
+        setCancelling(false);
+        setCancelStartedAt(null);
+        setShowForceClear(false);
+      } else {
+        setIngestStatus((prev) => ({
+          ...(prev || {}),
+          cancelRequested: true,
+          currentTitle: "Cancelling…",
+        }));
+        setInfo("Stop requested — finishing the current listing, then stopping.");
+      }
+      await refreshStatus();
+    } catch (err) {
+      setError(err.message || "Failed to cancel ingest");
+      setCancelling(false);
+      if (force) setShowForceClear(true);
+    }
+  }
+
   const filters = [
-    { id: "eligible", label: "Bay Area eligible" },
-    { id: "all", label: "All" },
+    { id: "applyReady", label: "Apply-ready" },
+    { id: "eligible", label: "Bay Area only" },
+    { id: "wrong", label: "Wrong role" },
     { id: "out", label: "Out of area" },
+    { id: "all", label: "All" },
   ];
 
   return (
@@ -312,6 +400,28 @@ export default function HomePage() {
               scoring one by one. You can Open finished jobs below while this
               runs.
             </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="destructive-outline"
+                size="sm"
+                onClick={() => stopIngest(false)}
+                disabled={cancelling && !showForceClear}
+              >
+                {cancelling ? "Stopping…" : "Stop ingest"}
+              </Button>
+              {showForceClear ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => stopIngest(true)}
+                  title="Clear a stuck running lock after API restart or hung worker"
+                >
+                  Force clear lock
+                </Button>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}
@@ -385,6 +495,7 @@ export default function HomePage() {
         {jobs.map((job) => {
           const match = job.match;
           const loc = locationChip(job);
+          const role = roleChip(job);
           const openHref = listingUrl(job);
           const selected = selectedIds.has(job._id);
           return (
@@ -422,7 +533,9 @@ export default function HomePage() {
                         <span className="text-sm text-muted-foreground">
                           {job.status === "out_of_area"
                             ? "Out of area"
-                            : "Not analyzed"}
+                            : job.status === "wrong_role"
+                              ? "Wrong role"
+                              : "Not analyzed"}
                         </span>
                       )}
                     </div>
@@ -434,6 +547,9 @@ export default function HomePage() {
                       <Badge variant="outline">{sourceLabel(job)}</Badge>
                       {loc ? (
                         <Badge variant={loc.variant}>{loc.label}</Badge>
+                      ) : null}
+                      {role ? (
+                        <Badge variant={role.variant}>{role.label}</Badge>
                       ) : null}
                       {match ? (
                         <Badge
