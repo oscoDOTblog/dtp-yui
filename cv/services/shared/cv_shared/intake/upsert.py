@@ -72,6 +72,9 @@ def upsert_normalized_job(normalized: dict[str, Any]) -> dict[str, Any]:
         ):
             updates["descriptionRaw"] = normalized["descriptionRaw"]
             updates["contentHash"] = content_hash
+        incoming_md = (normalized.get("descriptionMarkdown") or "").strip()
+        if incoming_md and len(incoming_md) > len(existing.get("descriptionMarkdown") or ""):
+            updates["descriptionMarkdown"] = incoming_md
         if existing.get("status") in (None, "new", "out_of_area", "wrong_role"):
             updates["status"] = normalized.get("status") or existing.get("status")
         db[C.JOBS].update_one({"_id": existing["_id"]}, {"$set": updates})
@@ -96,6 +99,7 @@ def upsert_normalized_job(normalized: dict[str, Any]) -> dict[str, Any]:
         "workMode": normalized.get("workMode") or "unknown",
         "salary": normalized.get("salary"),
         "descriptionRaw": normalized.get("descriptionRaw") or "",
+        "descriptionMarkdown": (normalized.get("descriptionMarkdown") or "").strip() or None,
         "requiredSkills": normalized.get("requiredSkills") or [],
         "preferredSkills": normalized.get("preferredSkills") or [],
         "postedAt": normalized.get("postedAt"),

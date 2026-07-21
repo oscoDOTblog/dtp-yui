@@ -192,6 +192,35 @@ def get_commit(full_name: str, sha: str) -> dict[str, Any]:
     return _request("GET", f"/repos/{owner}/{repo}/commits/{sha}")
 
 
+def list_viewer_repos(
+    *,
+    per_page: int = 100,
+    max_pages: int = 5,
+) -> list[dict[str, Any]]:
+    """Repos owned by the token user (includes private), newest push first."""
+    out: list[dict[str, Any]] = []
+    page = 1
+    while page <= max_pages:
+        batch = _request(
+            "GET",
+            "/user/repos",
+            query={
+                "per_page": min(per_page, 100),
+                "page": page,
+                "affiliation": "owner",
+                "sort": "pushed",
+                "direction": "desc",
+            },
+        )
+        if not isinstance(batch, list) or not batch:
+            break
+        out.extend(batch)
+        if len(batch) < per_page:
+            break
+        page += 1
+    return out
+
+
 def commit_files(commit: dict[str, Any]) -> list[str]:
     files = commit.get("files") or []
     paths: list[str] = []

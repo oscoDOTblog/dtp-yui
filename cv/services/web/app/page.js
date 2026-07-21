@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import LoadingGif from "./components/LoadingGif";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -8,7 +8,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardPanel } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+
+const PAGE_SIZE_OPTIONS = [
+  { label: "25 at a time", value: "25" },
+  { label: "50 at a time", value: "50" },
+  { label: "100 at a time", value: "100" },
+  { label: "250 at a time", value: "250" },
+];
 
 function recommendationVariant(recommendation) {
   if (recommendation === "apply") return "success";
@@ -89,6 +103,10 @@ export default function HomePage() {
   const [ingestStatus, setIngestStatus] = useState(null);
   const [runId, setRunId] = useState(null);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [pageSize, setPageSize] = useState(25);
+  const [visibleCount, setVisibleCount] = useState(25);
+  const lastToggledIndexRef = useRef(null);
+  const shiftHeldRef = useRef(false);
   const [deleting, setDeleting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelStartedAt, setCancelStartedAt] = useState(null);
@@ -101,8 +119,8 @@ export default function HomePage() {
       let path = "/jobs";
       if (eligibleFilter === "applyReady") path = "/jobs?applyReady=true";
       if (eligibleFilter === "eligible") path = "/jobs?eligible=true";
-      if (eligibleFilter === "wrong") path = "/jobs?status=wrong_role";
-      if (eligibleFilter === "out") path = "/jobs?eligible=false";
+      if (eligibleFilter === "remote") path = "/jobs?remote=true";
+      if (eligibleFilter === "invalid") path = "/jobs?invalid=true";
       const data = await apiGet(path);
       const list = Array.isArray(data) ? data : [];
       setJobs(list);
@@ -182,27 +200,48 @@ export default function HomePage() {
     return () => clearTimeout(id);
   }, [ingesting, cancelStartedAt]);
 
+  const visibleJobs = useMemo(
+    () => jobs.slice(0, visibleCount),
+    [jobs, visibleCount],
+  );
   const allVisibleSelected = useMemo(
-    () => jobs.length > 0 && jobs.every((j) => selectedIds.has(j._id)),
-    [jobs, selectedIds],
+    () =>
+      visibleJobs.length > 0 &&
+      visibleJobs.every((j) => selectedIds.has(j._id)),
+    [visibleJobs, selectedIds],
   );
   const selectedCount = selectedIds.size;
 
-  function toggleJob(jobId) {
+  function toggleJob(index, jobId, checked) {
+    const anchor = lastToggledIndexRef.current;
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(jobId)) next.delete(jobId);
-      else next.add(jobId);
+      if (shiftHeldRef.current && anchor !== null && anchor !== index) {
+        const start = Math.min(anchor, index);
+        const end = Math.max(anchor, index);
+        for (let i = start; i <= end; i += 1) {
+          const id = jobs[i]?._id;
+          if (!id) continue;
+          if (checked) next.add(id);
+          else next.delete(id);
+        }
+      } else if (checked) {
+        next.add(jobId);
+      } else {
+        next.delete(jobId);
+      }
       return next;
     });
+    lastToggledIndexRef.current = index;
   }
 
   function toggleSelectAll() {
+    lastToggledIndexRef.current = null;
     if (allVisibleSelected) {
       setSelectedIds(new Set());
       return;
     }
-    setSelectedIds(new Set(jobs.map((j) => j._id)));
+    setSelectedIds(new Set(visibleJobs.map((j) => j._id)));
   }
 
   async function deleteSelected() {
@@ -316,10 +355,10 @@ export default function HomePage() {
   }
 
   const filters = [
-    { id: "applyReady", label: "Apply-ready" },
-    { id: "eligible", label: "Bay Area only" },
-    { id: "wrong", label: "Wrong role" },
-    { id: "out", label: "Out of area" },
+    { id: "applyReady", label: "Apply-Ready" },
+    { id: "eligible", label: "Bay Area" },
+    { id: "remote", label: "Remote" },
+    { id: "invalid", label: "Invalid" },
     { id: "all", label: "All" },
   ];
 
@@ -438,6 +477,8 @@ export default function HomePage() {
               onClick={() => {
                 setEligibleFilter(f.id);
                 setSelectedIds(new Set());
+                setVisibleCount(pageSize);
+                lastToggledIndexRef.current = null;
               }}
             >
               {f.label}
@@ -446,7 +487,35 @@ export default function HomePage() {
         </div>
 
         {!loading && jobs.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span className="text-xs text-muted-foreground">
+              Showing {visibleJobs.length} of {jobs.length}
+            </span>
+            <Select
+              value={String(pageSize)}
+              onValueChange={(value) => {
+                const nextSize = Number(value);
+                setPageSize(nextSize);
+                setVisibleCount(nextSize);
+                setSelectedIds(new Set());
+                lastToggledIndexRef.current = null;
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-auto min-w-36"
+                aria-label="Jobs shown per batch"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup align="end">
+                {PAGE_SIZE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
             <Button
               type="button"
               variant="outline"
@@ -454,12 +523,15 @@ export default function HomePage() {
               onClick={toggleSelectAll}
               disabled={deleting}
             >
-              {allVisibleSelected ? "Clear selection" : "Select all"}
+              {allVisibleSelected ? "Clear selection" : "Select shown"}
             </Button>
             {selectedCount > 0 ? (
               <>
                 <span className="text-xs text-muted-foreground">
                   {selectedCount} selected
+                </span>
+                <span className="text-xs text-muted-foreground max-sm:hidden">
+                  · shift-click to select a range
                 </span>
                 <Button
                   type="button"
@@ -492,7 +564,7 @@ export default function HomePage() {
       ) : null}
 
       <div className="grid gap-3.5">
-        {jobs.map((job) => {
+        {visibleJobs.map((job, index) => {
           const match = job.match;
           const loc = locationChip(job);
           const role = roleChip(job);
@@ -510,7 +582,15 @@ export default function HomePage() {
                 <div className="flex items-start gap-3">
                   <Checkbox
                     checked={selected}
-                    onCheckedChange={() => toggleJob(job._id)}
+                    onClick={(e) => {
+                      shiftHeldRef.current = e.shiftKey;
+                    }}
+                    onMouseDown={(e) => {
+                      if (e.shiftKey) e.preventDefault();
+                    }}
+                    onCheckedChange={(checked) =>
+                      toggleJob(index, job._id, checked)
+                    }
                     disabled={deleting}
                     aria-label={`Select ${job.title} at ${job.company}`}
                     className="mt-1"
@@ -593,6 +673,19 @@ export default function HomePage() {
           );
         })}
       </div>
+      {!loading && visibleCount < jobs.length ? (
+        <div className="mt-5 flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() =>
+              setVisibleCount((count) => Math.min(count + pageSize, jobs.length))
+            }
+          >
+            Show {Math.min(pageSize, jobs.length - visibleCount)} more
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

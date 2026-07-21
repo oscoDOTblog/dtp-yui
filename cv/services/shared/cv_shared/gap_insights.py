@@ -193,7 +193,14 @@ def list_gap_insights(kind: str = "all", status: str = "all") -> list[dict]:
     elif kind == "warning":
         query["kindCounts.warning"] = {"$gt": 0}
 
-    return list(db[C.GAP_INSIGHTS].find(query).sort("totalSeen", -1))
+    insights = list(db[C.GAP_INSIGHTS].find(query))
+
+    def sort_key(insight: dict) -> tuple[int, int]:
+        counts = insight.get("kindCounts") or {}
+        category_order = 0 if (counts.get("gap") or 0) > 0 else 1
+        return category_order, -(insight.get("totalSeen") or 0)
+
+    return sorted(insights, key=sort_key)
 
 
 def update_gap_status(gap_id: str, status: str) -> dict | None:

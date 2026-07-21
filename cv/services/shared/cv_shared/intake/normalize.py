@@ -67,6 +67,7 @@ def normalize_raw_job(raw: dict[str, Any]) -> dict[str, Any]:
         "location": location,
         "workMode": work_mode,
         "descriptionRaw": description,
+        "descriptionMarkdown": (raw.get("descriptionMarkdown") or "").strip() or None,
         "postedAt": raw.get("postedAt"),
         "discoveredBy": discovered_by,
         "locationAssessment": location_assessment,

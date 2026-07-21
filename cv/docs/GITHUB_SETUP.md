@@ -44,6 +44,15 @@ The API and worker mount `cv/secrets/`. Rebuild containers after adding the toke
 
 Add repos as `owner/repo` (probes the GitHub API). Seed file: [`seed/repositories.json`](../seed/repositories.json).
 
+## Repo discovery
+
+With **Settings → GitHub evidence → Repo discovery** on, each sync (cron or manual) also lists the repos owned by the PAT user and compares against `cv_repositories`. New finds (forks and archived repos excluded) appear in a **Suggested** section on Repositories awaiting manual approval:
+
+- **Approve** — enables the repo for evidence scanning on the next sync
+- **Dismiss** — hides it permanently (never re-suggested)
+
+Nothing is scanned until approved. The **Discover** button runs the same check on demand without a full sync.
+
 ```bash
 curl -X POST 'http://localhost:8000/seed'
 ```
@@ -67,6 +76,7 @@ curl -X PATCH 'http://localhost:8000/settings' \
 | `GET /repositories` | List |
 | `POST /repositories` | Add (`fullName`) |
 | `PATCH /repositories/{id}` | Enable / branch / projectIds |
+| `POST /repositories/discover` | Find untracked repos → suggestions |
 | `POST /repositories/sync` | Manual sync (`lookback`, optional `force`, `repositoryIds`) |
 | `POST /repositories/{id}/sync` | Sync one repo |
 | `GET /repositories/sync/status?runId=` | Poll run progress |

@@ -44,6 +44,8 @@ One document per normalized requirement. Upserted on each successful job analyze
 | `firstSeenAt` / `lastSeenAt` | Intake timestamps |
 | `fingerprints.exact` / `fingerprints.fuzzy` | Dedup keys |
 | `contentHash` | Hash of description text (legacy + still used) |
+| `descriptionRaw` | Plain-text job description (matching, documents, hashing) |
+| `descriptionMarkdown` | Readable markdown for UI render (from structured HTML at intake); fall back to `descriptionRaw` when absent |
 | `status` | `new` \| `out_of_area` (Bay Area gate) \| `wrong_role` (SWE title gate) \| … |
 
 ### `locationAssessment`
@@ -102,7 +104,8 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
   "githubEvidence": {
     "enabled": true,
     "authorLogins": ["oscoDOTblog"],
-    "defaultLookback": "7d"
+    "defaultLookback": "7d",
+    "discoverRepos": true
   },
   "updatedAt": "ISO-8601"
 }
@@ -169,6 +172,9 @@ Statuses: `pending` → `processing` → `done` | `failed` | `needsPaste`. Enque
 | `lastError` | Last error string (cleared on success) |
 | `lastCommitCount` | Commits processed on last success |
 | `clonePath` | Relative path under `repository-cache/` when cloned |
+| `suggested` | Found by repo discovery; awaiting approval (excluded from scans) |
+| `dismissed` | Operator dismissed the suggestion (never re-suggested) |
+| `discoveredAt` | When discovery found the repo |
 
 Seeded from [`seed/repositories.json`](../seed/repositories.json). Identity upsert preserves scan state.
 

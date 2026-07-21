@@ -90,6 +90,8 @@ class RepositoryPatchBody(BaseModel):
     enabled: Optional[bool] = None
     defaultBranch: Optional[str] = None
     projectIds: Optional[list[str]] = None
+    suggested: Optional[bool] = None
+    dismissed: Optional[bool] = None
 
 
 class RepositorySyncBody(BaseModel):
@@ -332,6 +334,8 @@ def fetch_job_url(body: UrlFetchBody) -> dict:
 
 @app.post("/jobs")
 def create_job(body: JobCreate) -> dict:
+    from cv_shared.intake.html_markdown import description_fields_from_html_or_text
+
     description = (body.descriptionRaw or "").strip()
     fetch_meta = None
     if not description and body.url:
@@ -348,6 +352,10 @@ def create_job(body: JobCreate) -> dict:
         description = fetch_meta["text"]
     if not description:
         raise HTTPException(400, "Provide a job URL and/or descriptionRaw")
+
+    fields = description_fields_from_html_or_text(description)
+    description = fields["descriptionRaw"] or description
+    description_md = fields.get("descriptionMarkdown")
 
     digest = content_hash(description)
     db = get_db()
@@ -372,6 +380,7 @@ def create_job(body: JobCreate) -> dict:
         "workMode": body.workMode or "unknown",
         "salary": None,
         "descriptionRaw": description,
+        "descriptionMarkdown": description_md,
         "requiredSkills": [],
         "preferredSkills": [],
         "postedAt": None,
@@ -421,6 +430,8 @@ def list_jobs(
     eligible: str | None = None,
     roleEligible: str | None = None,
     applyReady: str | None = None,
+    remote: str | None = None,
+    invalid: str | None = None,
     status: str | None = None,
 ) -> list:
     """List jobs.
@@ -428,6 +439,8 @@ def list_jobs(
     - eligible: locationAssessment.bayAreaEligible
     - roleEligible: roleAssessment.roleEligible
     - applyReady: both gates true (and status not out_of_area/wrong_role)
+    - remote: remote work mode or location assessment
+    - invalid: union of out-of-area and wrong-role jobs
     - status: exact job status (e.g. wrong_role, out_of_area, new)
     """
     query: dict = {}
@@ -435,6 +448,16 @@ def list_jobs(
         query["locationAssessment.bayAreaEligible"] = True
         query["roleAssessment.roleEligible"] = True
         query["status"] = {"$nin": ["out_of_area", "wrong_role"]}
+    elif invalid is not None and invalid.lower() in ("true", "1", "yes"):
+        query["$or"] = [
+            {"status": {"$in": ["out_of_area", "wrong_role"]}},
+            {"locationAssessment.bayAreaEligible": False},
+        ]
+    elif remote is not None and remote.lower() in ("true", "1", "yes"):
+        query["$or"] = [
+            {"workMode": "remote"},
+            {"locationAssessment.workArrangement": "remote"},
+        ]
     else:
         if eligible is not None and eligible.lower() in ("true", "1", "yes"):
             query["locationAssessment.bayAreaEligible"] = True
@@ -459,6 +482,12 @@ def list_jobs(
         item = _serialize(job)
         item["match"] = _serialize(matches.get(job["_id"]))
         out.append(item)
+    if applyReady is not None and applyReady.lower() in ("true", "1", "yes"):
+        def match_score(item: dict) -> float:
+            score = (item.get("match") or {}).get("score")
+            return score if isinstance(score, (int, float)) else -1
+
+        out.sort(key=match_score, reverse=True)
     return out
 
 
@@ -1022,6 +1051,28 @@ def get_repositories_sync_status(runId: str | None = None) -> dict:
     return _serialize(doc)
 
 
+@app.post("/repositories/discover")
+def discover_repositories_endpoint() -> dict:
+    """Scan the token user's GitHub account for repos missing from the watchlist.
+
+    New finds are stored as suggestions (approve or dismiss on Repositories).
+    """
+    from cv_shared.github.pipeline import discover_repositories
+    from cv_shared.settings import is_github_evidence_enabled
+
+    if not is_github_evidence_enabled():
+        raise HTTPException(
+            400,
+            "GitHub evidence is disabled in Settings. Enable it under GitHub evidence.",
+        )
+    try:
+        result = discover_repositories()
+    except Exception as exc:
+        logger.exception("repo discovery failed")
+        raise HTTPException(500, str(exc)) from exc
+    return result
+
+
 @app.post("/repositories/sync")
 def sync_repositories(body: RepositorySyncBody | None = None) -> dict:
     """Manual GitHub evidence sync for all (or selected) enabled repos."""
@@ -1106,6 +1157,10 @@ def patch_repository(repo_id: str, body: RepositoryPatchBody) -> dict:
         fields["defaultBranch"] = branch
     if "projectIds" in payload:
         fields["projectIds"] = list(payload["projectIds"] or [])
+    if "suggested" in payload:
+        fields["suggested"] = bool(payload["suggested"])
+    if "dismissed" in payload:
+        fields["dismissed"] = bool(payload["dismissed"])
 
     db[C.REPOSITORIES].update_one({"_id": repo_id}, {"$set": fields})
     doc = db[C.REPOSITORIES].find_one({"_id": repo_id})

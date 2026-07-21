@@ -147,6 +147,68 @@ export default function RepositoriesPage() {
     }
   }
 
+  async function discover() {
+    if (busyId) return;
+    setBusyId("discover");
+    setError("");
+    setInfo("");
+    try {
+      const result = await apiPost("/repositories/discover");
+      const found = result?.suggested ?? 0;
+      setInfo(
+        found > 0
+          ? `Found ${found} new ${found === 1 ? "repo" : "repos"} — review suggestions below.`
+          : `No new repos found (checked ${result?.checked ?? 0}).`
+      );
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to discover repositories");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function approveSuggestion(repo) {
+    if (busyId) return;
+    setBusyId(`approve:${repo._id}`);
+    setError("");
+    setInfo("");
+    try {
+      const updated = await apiPatch(`/repositories/${repo._id}`, {
+        suggested: false,
+        enabled: true,
+      });
+      setRepos((cur) =>
+        cur.map((r) => (r._id === repo._id ? updated : r))
+      );
+      setInfo(`Approved ${repo.fullName}. It will be scanned on the next sync.`);
+    } catch (err) {
+      setError(err.message || "Failed to approve repository");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function dismissSuggestion(repo) {
+    if (busyId) return;
+    setBusyId(`dismiss:${repo._id}`);
+    setError("");
+    setInfo("");
+    try {
+      const updated = await apiPatch(`/repositories/${repo._id}`, {
+        dismissed: true,
+      });
+      setRepos((cur) =>
+        cur.map((r) => (r._id === repo._id ? updated : r))
+      );
+      setInfo(`Dismissed ${repo.fullName}. It won't be suggested again.`);
+    } catch (err) {
+      setError(err.message || "Failed to dismiss repository");
+    } finally {
+      setBusyId("");
+    }
+  }
+
   async function addRepo(e) {
     e.preventDefault();
     if (busyId) return;
@@ -170,6 +232,9 @@ export default function RepositoriesPage() {
       setBusyId("");
     }
   }
+
+  const suggestions = repos.filter((r) => r.suggested && !r.dismissed);
+  const activeRepos = repos.filter((r) => !r.suggested);
 
   return (
     <div>
@@ -207,6 +272,15 @@ export default function RepositoriesPage() {
             />
             <span className="text-muted-foreground">Force</span>
           </label>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-5"
+            onClick={discover}
+            disabled={!!busyId || !githubEnabled}
+          >
+            Discover
+          </Button>
           <Button
             type="button"
             className="mt-5"
@@ -270,14 +344,75 @@ export default function RepositoriesPage() {
         <p className="py-8 text-muted-foreground">Loading…</p>
       ) : null}
 
-      {!loading && repos.length === 0 ? (
+      {!loading && suggestions.length > 0 ? (
+        <section className="mb-8">
+          <h2 className="mb-3 text-lg font-semibold">
+            Suggested ({suggestions.length})
+          </h2>
+          <p className="mb-3 text-sm text-muted-foreground">
+            Repos found on your GitHub account that aren&apos;t tracked yet.
+            Approve to enable evidence scanning, or dismiss to hide forever.
+          </p>
+          <div className="grid gap-3">
+            {suggestions.map((repo) => (
+              <Card key={repo._id}>
+                <CardPanel className="flex flex-wrap items-start justify-between gap-4 p-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="m-0 text-base font-semibold">
+                        {repo.fullName}
+                      </h3>
+                      <Badge variant="outline">
+                        {repo.defaultBranch || "main"}
+                      </Badge>
+                      <Badge>suggested</Badge>
+                    </div>
+                    <p className="mt-1 m-0 text-sm text-muted-foreground">
+                      Discovered: {formatTs(repo.discoveredAt)}
+                      {" · "}
+                      <a
+                        href={`https://github.com/${repo.fullName}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        github
+                      </a>
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!!busyId}
+                      onClick={() => approveSuggestion(repo)}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!!busyId}
+                      onClick={() => dismissSuggestion(repo)}
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                </CardPanel>
+              </Card>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {!loading && activeRepos.length === 0 ? (
         <p className="py-8 text-muted-foreground">
-          No repositories yet. Run seed or add one above.
+          No repositories yet. Run seed, add one above, or Discover.
         </p>
       ) : null}
 
       <div className="grid gap-3">
-        {repos.map((repo) => (
+        {activeRepos.map((repo) => (
           <Card key={repo._id}>
             <CardPanel className="flex flex-wrap items-start justify-between gap-4 p-4">
               <div className="min-w-0 flex-1">

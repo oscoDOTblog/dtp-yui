@@ -72,6 +72,64 @@ def get_github_scan_status(run_id: str | None = None) -> dict[str, Any] | None:
     )
 
 
+def _repo_id_slug(full_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", full_name.lower()).strip("_")[:50]
+    return f"repo_{slug or uuid.uuid4().hex[:8]}"
+
+
+def discover_repositories() -> dict[str, Any]:
+    """Find repos on the token user's account missing from cv_repositories.
+
+    New finds are inserted as suggestions (suggested=True, enabled=False)
+    awaiting manual approval. Forks and archived repos are skipped. Repos
+    already present in any state (including dismissed) are never re-suggested.
+    """
+    db = get_db()
+    existing = {
+        (doc.get("fullName") or "").lower()
+        for doc in db[C.REPOSITORIES].find({}, {"fullName": 1})
+    }
+    remote = gh.list_viewer_repos()
+    now = _now()
+    suggested = 0
+
+    for repo in remote:
+        full_name = (repo.get("full_name") or "").strip()
+        if not full_name or full_name.lower() in existing:
+            continue
+        if repo.get("fork") or repo.get("archived"):
+            continue
+
+        repo_id = _repo_id_slug(full_name)
+        if db[C.REPOSITORIES].find_one({"_id": repo_id}):
+            repo_id = f"{repo_id}_{now[:10].replace('-', '')}"
+
+        db[C.REPOSITORIES].insert_one(
+            {
+                "_id": repo_id,
+                "fullName": full_name,
+                "defaultBranch": repo.get("default_branch") or "main",
+                "projectIds": [],
+                "enabled": False,
+                "suggested": True,
+                "dismissed": False,
+                "discoveredAt": now,
+                "lastSeenCommitSha": None,
+                "lastScannedAt": None,
+                "lastSuccessAt": None,
+                "lastError": None,
+                "lastCommitCount": 0,
+                "clonePath": None,
+                "createdAt": now,
+                "updatedAt": now,
+            }
+        )
+        existing.add(full_name.lower())
+        suggested += 1
+
+    return {"checked": len(remote), "suggested": suggested}
+
+
 def bump_profile_version() -> int:
     """Increment candidate.profileVersion; return new value."""
     db = get_db()
@@ -468,6 +526,7 @@ def run_github_scan(
         "errors": [],
         "clones": 0,
         "cloneErrors": 0,
+        "reposSuggested": 0,
     }
 
     def publish() -> None:
@@ -502,6 +561,15 @@ def run_github_scan(
         publish()
         return summary
 
+    if github_cfg.get("discoverRepos", True):
+        try:
+            discovery = discover_repositories()
+            summary["reposSuggested"] = discovery.get("suggested", 0)
+        except Exception as exc:
+            logger.warning("Repo discovery failed: %s", exc)
+            summary["errors"].append(f"discover: {exc}")
+        publish()
+
     if cron_mode and lookback is None:
         lookback_key = (github_cfg.get("defaultLookback") or "7d").strip().lower()
         if lookback_key not in LOOKBACK_PRESETS:
@@ -511,7 +579,7 @@ def run_github_scan(
         lookback_key, since = parse_lookback(lookback)
     summary["lookback"] = lookback_key
 
-    query: dict[str, Any] = {"enabled": True}
+    query: dict[str, Any] = {"enabled": True, "suggested": {"$ne": True}}
     if repository_ids:
         query["_id"] = {"$in": list(repository_ids)}
     repos = list(db[C.REPOSITORIES].find(query, sort=[("fullName", 1)]))

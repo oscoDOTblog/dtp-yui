@@ -28,6 +28,7 @@ DEFAULT_GITHUB_EVIDENCE = {
     "enabled": True,
     "authorLogins": ["oscoDOTblog"],
     "defaultLookback": "7d",
+    "discoverRepos": True,
 }
 
 ALERT_SOURCE_TO_KEY = {
@@ -79,6 +80,8 @@ def _normalize_github_evidence(raw: dict[str, Any] | None) -> dict[str, Any]:
         return out
     if "enabled" in raw:
         out["enabled"] = bool(raw["enabled"])
+    if "discoverRepos" in raw:
+        out["discoverRepos"] = bool(raw["discoverRepos"])
     if "authorLogins" in raw and isinstance(raw["authorLogins"], list):
         logins = [
             str(x).strip()
@@ -154,6 +157,8 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
         merged = dict(github)
         if "enabled" in incoming_gh:
             merged["enabled"] = bool(incoming_gh["enabled"])
+        if "discoverRepos" in incoming_gh:
+            merged["discoverRepos"] = bool(incoming_gh["discoverRepos"])
         if "authorLogins" in incoming_gh and isinstance(
             incoming_gh["authorLogins"], list
         ):

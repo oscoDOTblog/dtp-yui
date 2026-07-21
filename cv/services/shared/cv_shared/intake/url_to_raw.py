@@ -10,6 +10,7 @@ from typing import Any
 from urllib import error, parse, request as urlrequest
 
 from .greenhouse_source import GREENHOUSE_API, greenhouse_job_to_raw
+from .html_markdown import description_fields_from_html_or_text
 
 logger = logging.getLogger(__name__)
 
@@ -174,14 +175,17 @@ def queue_item_to_raw(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _raw_from_paste(url: str, paste: str, queue_id: Any) -> dict[str, Any]:
+    fields = description_fields_from_html_or_text(paste)
+    plain = fields["descriptionRaw"]
     return {
-        "externalId": _manual_external_id(url, paste),
+        "externalId": _manual_external_id(url, plain or paste),
         "source": "manual",
         "title": "Untitled",
         "company": "Unknown",
         "location": "",
-        "descriptionRaw": paste,
-        "descriptionText": paste,
+        "descriptionRaw": plain,
+        "descriptionText": plain,
+        "descriptionMarkdown": fields.get("descriptionMarkdown"),
         "sourceUrl": url or None,
         "canonicalApplyUrl": url or None,
         "url": url or None,

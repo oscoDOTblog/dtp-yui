@@ -124,20 +124,20 @@ export default function SettingsPage() {
     }
   }
 
-  async function toggleGithub() {
+  async function toggleGithub(key) {
     if (!githubEvidence || savingKey) return;
-    const nextValue = !githubEvidence.enabled;
+    const nextValue = !githubEvidence[key];
     const previous = { ...githubEvidence };
-    setGithubEvidence({ ...githubEvidence, enabled: nextValue });
-    setSavingKey("github:enabled");
+    setGithubEvidence({ ...githubEvidence, [key]: nextValue });
+    setSavingKey(`github:${key}`);
     setError("");
     setInfo("");
     try {
       const data = await apiPatch("/settings", {
-        githubEvidence: { enabled: nextValue },
+        githubEvidence: { [key]: nextValue },
       });
       setGithubEvidence(
-        data.githubEvidence || { ...previous, enabled: nextValue }
+        data.githubEvidence || { ...previous, [key]: nextValue }
       );
       if (data.gmailIngest) setGmailIngest(data.gmailIngest);
       if (data.atsIngest) setAtsIngest(data.atsIngest);
@@ -254,8 +254,27 @@ export default function SettingsPage() {
                 <Switch
                   checked={Boolean(githubEvidence.enabled)}
                   disabled={!!savingKey}
-                  onCheckedChange={toggleGithub}
+                  onCheckedChange={() => toggleGithub("enabled")}
                   aria-label={`GitHub evidence ${githubEvidence.enabled ? "on" : "off"}`}
+                />
+              </CardPanel>
+            </Card>
+            <Card>
+              <CardPanel className="flex items-center justify-between gap-4 p-4">
+                <div className="min-w-0">
+                  <p className="m-0 font-semibold">Repo discovery</p>
+                  <p className="mt-1 m-0 text-sm text-muted-foreground">
+                    Scan your GitHub account for new or missing repos on each
+                    sync. Finds are listed as suggestions on{" "}
+                    <a href="/repositories">Repositories</a> for manual
+                    approval — nothing is scanned until you approve it.
+                  </p>
+                </div>
+                <Switch
+                  checked={Boolean(githubEvidence.discoverRepos)}
+                  disabled={!!savingKey || !githubEvidence.enabled}
+                  onCheckedChange={() => toggleGithub("discoverRepos")}
+                  aria-label={`Repo discovery ${githubEvidence.discoverRepos ? "on" : "off"}`}
                 />
               </CardPanel>
             </Card>

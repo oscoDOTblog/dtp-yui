@@ -14,6 +14,7 @@ from urllib import error, parse, request as urlrequest
 
 from .. import collections as C
 from ..db import get_db
+from .html_markdown import html_to_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,7 @@ def greenhouse_job_to_raw(
     absolute_url = (job.get("absolute_url") or "").strip()
     content_html = job.get("content") or ""
     description = html_to_text(content_html)
+    description_md = html_to_markdown(content_html) or None
     location = _location_from_job(job)
     updated = job.get("updated_at") or job.get("created_at")
 
@@ -150,6 +152,7 @@ def greenhouse_job_to_raw(
         "location": location,
         "descriptionRaw": description,
         "descriptionText": description,
+        "descriptionMarkdown": description_md,
         "sourceUrl": absolute_url or None,
         "canonicalApplyUrl": absolute_url or None,
         "url": absolute_url or None,

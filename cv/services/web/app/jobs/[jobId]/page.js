@@ -8,6 +8,7 @@ import DocumentPackagePanel, {
   loadPackageFromBrowser,
   savePackageToBrowser,
 } from "../../components/DocumentPackagePanel";
+import MarkdownContent from "../../components/MarkdownContent";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -440,9 +441,9 @@ export default function JobDetailPage() {
         <h2 className="mb-3 text-lg font-semibold">Description</h2>
         <Card>
           <CardPanel className="p-4">
-            <pre className="m-0 font-sans text-sm whitespace-pre-wrap text-foreground">
-              {job.descriptionRaw}
-            </pre>
+            <MarkdownContent
+              content={job.descriptionMarkdown || job.descriptionRaw}
+            />
           </CardPanel>
         </Card>
       </section>
