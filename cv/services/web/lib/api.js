@@ -1,17 +1,19 @@
 /**
- * Browser talks to the API on the host (localhost:8000).
- * Next.js server components (inside the web container) must use the Docker
- * service name (api:8000) via API_BASE_INTERNAL.
+ * Browser: same-origin `/backend` proxy (works from localhost and LAN IP).
+ * Optional NEXT_PUBLIC_API_BASE overrides the proxy (direct API URL).
+ * Server components (Docker): API_BASE_INTERNAL → http://api:8000
  */
 export function getApiBase() {
   if (typeof window !== "undefined") {
-    return process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+    const override = (process.env.NEXT_PUBLIC_API_BASE || "").trim();
+    if (override) return override.replace(/\/$/, "");
+    return "/backend";
   }
   return (
     process.env.API_BASE_INTERNAL ||
     process.env.NEXT_PUBLIC_API_BASE ||
     "http://localhost:8000"
-  );
+  ).replace(/\/$/, "");
 }
 
 export async function apiGet(path) {

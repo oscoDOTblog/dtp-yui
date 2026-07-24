@@ -1,4 +1,5 @@
 import { apiGet } from "../../lib/api";
+import ProfileUpdateForm from "../components/ProfileUpdateForm";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardPanel } from "@/components/ui/card";
@@ -59,7 +60,12 @@ export default async function ProfilePage() {
         <a href={candidate.github} target="_blank" rel="noreferrer">
           GitHub
         </a>
+        {candidate.profileVersion ? (
+          <> · profile v{candidate.profileVersion}</>
+        ) : null}
       </p>
+
+      <ProfileUpdateForm />
 
       <section className="mt-7">
         <h2 className="mb-3 text-lg font-semibold">Education</h2>

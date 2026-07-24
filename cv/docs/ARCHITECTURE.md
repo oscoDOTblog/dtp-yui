@@ -13,13 +13,15 @@ Local job-search copilot: score jobs against a grounded candidate knowledge base
 | Local AI | Ollama on host |
 | Deploy | Docker Compose on Legion Slim 5 |
 
-## Ports (localhost only)
+## Ports
 
-| Service | Bind |
-|---|---|
-| Web | `127.0.0.1:3000` |
-| API | `127.0.0.1:8000` |
-| MongoDB | `127.0.0.1:27017` |
+| Service | Bind | Notes |
+|---|---|---|
+| Web | `0.0.0.0:3000` and `:80` | Laptop: `http://localhost:3000`. Phone on LAN: `http://<host-lan-ip>/` |
+| API | `127.0.0.1:8000` | Browser uses same-origin `/backend` proxy on web — no hardcoded LAN IP |
+| MongoDB | `127.0.0.1:27017` | Not exposed on LAN |
+
+Leave `NEXT_PUBLIC_API_BASE` empty in `.env` so the UI works from both localhost and other devices without rebuilds.
 
 ## Ollama
 

@@ -286,12 +286,42 @@ def patch_settings(body: SettingsPatchBody) -> dict:
     return _serialize(patch_app_settings(payload))
 
 
+class CandidateUpdateBody(BaseModel):
+    text: str = Field(..., description="Free-text profile updates to merge")
+
+
 @app.get("/candidate")
 def get_candidate() -> dict:
     doc = get_db()[C.CANDIDATES].find_one({"_id": "primary-candidate"})
     if not doc:
         raise HTTPException(404, "Candidate not seeded. POST /seed first.")
     return _serialize(doc)
+
+
+@app.post("/candidate/update")
+def post_candidate_update(body: CandidateUpdateBody) -> dict:
+    """Merge free-text notes into the candidate profile via Ollama."""
+    from cv_shared.profile_update import update_profile_from_text
+
+    try:
+        result = update_profile_from_text(body.text)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("candidate update failed")
+        raise HTTPException(500, str(exc)) from exc
+
+    return {
+        "candidate": _serialize(result["candidate"]),
+        "changedFields": result["changedFields"],
+        "skillsAdded": result["skillsAdded"],
+        "summaryOfChanges": result["summaryOfChanges"],
+        "profileVersion": result["profileVersion"],
+    }
 
 
 @app.get("/skills")
@@ -854,6 +884,14 @@ def patch_ingest_queue_item(item_id: str, body: IntakeQueuePatchBody) -> dict:
     }
 
 
+@app.delete("/ingest/queue")
+def clear_ingest_queue() -> dict:
+    """Remove all queue items except those currently processing."""
+    from cv_shared.intake.manual_queue import clear_queue
+
+    return clear_queue()
+
+
 @app.delete("/ingest/queue/{item_id}")
 def delete_ingest_queue_item(item_id: str) -> dict:
     from cv_shared.intake.manual_queue import delete_queue_item
@@ -1165,6 +1203,25 @@ def patch_repository(repo_id: str, body: RepositoryPatchBody) -> dict:
     db[C.REPOSITORIES].update_one({"_id": repo_id}, {"$set": fields})
     doc = db[C.REPOSITORIES].find_one({"_id": repo_id})
     return _serialize(doc)
+
+
+@app.delete("/repositories/{repo_id}")
+def delete_repository(repo_id: str) -> dict:
+    """Remove a repository and its per-commit scan records.
+
+    Evidence already applied to the profile is left intact — removing a repo
+    stops future scans without retroactively stripping the knowledge base.
+    """
+    db = get_db()
+    existing = db[C.REPOSITORIES].find_one({"_id": repo_id})
+    if not existing:
+        raise HTTPException(404, "Repository not found")
+
+    scans_deleted = db[C.REPOSITORY_SCANS].delete_many(
+        {"repositoryId": repo_id}
+    ).deleted_count
+    db[C.REPOSITORIES].delete_one({"_id": repo_id})
+    return {"deleted": True, "id": repo_id, "scansDeleted": scans_deleted}
 
 
 @app.post("/repositories/{repo_id}/sync")

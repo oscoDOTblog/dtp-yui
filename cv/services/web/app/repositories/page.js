@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, apiPatch, apiPost } from "../../lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../../lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -204,6 +204,30 @@ export default function RepositoriesPage() {
       setInfo(`Dismissed ${repo.fullName}. It won't be suggested again.`);
     } catch (err) {
       setError(err.message || "Failed to dismiss repository");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function removeRepo(repo) {
+    if (busyId) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Remove ${repo.fullName}? This stops future scans and deletes its commit scan records. Evidence already added to your profile is kept.`
+      )
+    ) {
+      return;
+    }
+    setBusyId(`remove:${repo._id}`);
+    setError("");
+    setInfo("");
+    try {
+      await apiDelete(`/repositories/${repo._id}`);
+      setRepos((cur) => cur.filter((r) => r._id !== repo._id));
+      setInfo(`Removed ${repo.fullName}.`);
+    } catch (err) {
+      setError(err.message || "Failed to remove repository");
     } finally {
       setBusyId("");
     }
@@ -461,6 +485,15 @@ export default function RepositoriesPage() {
                   onClick={() => syncOne(repo)}
                 >
                   Sync
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={!!busyId}
+                  onClick={() => removeRepo(repo)}
+                >
+                  Remove
                 </Button>
               </div>
             </CardPanel>

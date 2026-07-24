@@ -179,6 +179,17 @@ def delete_queue_item(item_id: str) -> bool:
     return result.deleted_count > 0
 
 
+def clear_queue() -> dict[str, int]:
+    """Delete all queue rows except those currently processing."""
+    db = get_db()
+    skipped = db[C.INTAKE_QUEUE].count_documents({"status": "processing"})
+    result = db[C.INTAKE_QUEUE].delete_many({"status": {"$ne": "processing"}})
+    return {
+        "deletedCount": int(result.deleted_count or 0),
+        "skippedProcessing": int(skipped or 0),
+    }
+
+
 def reclaim_stuck_processing() -> int:
     """Move abandoned processing rows back to pending (crash recovery)."""
     result = get_db()[C.INTAKE_QUEUE].update_many(

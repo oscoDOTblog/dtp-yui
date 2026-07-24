@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../../lib/api";
+import LoadingGif from "../components/LoadingGif";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 
 const STATUS_VARIANT = {
@@ -191,6 +191,37 @@ export default function AnalyzePage() {
     }
   }
 
+  async function clearQueue() {
+    if (busy || rowBusy) return;
+    const removable = queue.filter((item) => item.status !== "processing");
+    if (removable.length === 0) return;
+    const ok = window.confirm(
+      `Clear ${removable.length} queue item${removable.length === 1 ? "" : "s"}?\n\n` +
+        "Removes pending, failed, needs-paste, and done rows. " +
+        "Items currently processing are kept.",
+    );
+    if (!ok) return;
+
+    setError("");
+    setInfo("");
+    setRowBusy("clear");
+    try {
+      const result = await apiDelete("/ingest/queue");
+      const deleted = result.deletedCount || 0;
+      const skipped = result.skippedProcessing || 0;
+      await loadQueue();
+      let msg = `Cleared ${deleted} queue item${deleted === 1 ? "" : "s"}.`;
+      if (skipped) {
+        msg += ` Left ${skipped} processing.`;
+      }
+      setInfo(msg);
+    } catch (err) {
+      setError(err.message || "Failed to clear queue");
+    } finally {
+      setRowBusy("");
+    }
+  }
+
   async function submitPaste(item) {
     if (rowBusy) return;
     if (!pasteText.trim()) {
@@ -259,17 +290,26 @@ export default function AnalyzePage() {
 
       {busy && runId ? (
         <div
-          className="mb-5 flex max-w-xl items-start gap-4 rounded-xl border border-primary/35 bg-primary/8 p-4"
+          className="mb-5 flex max-w-3xl items-center gap-5 rounded-xl border border-primary/35 bg-primary/8 p-5 max-md:flex-col max-md:items-stretch"
           role="status"
           aria-live="polite"
         >
-          <Spinner className="mt-0.5 size-6 text-primary" />
-          <div>
-            <p className="m-0 mb-1 font-semibold">Processing queue</p>
+          <LoadingGif
+            message="Processing queue"
+            alt="Queue processing loading animation"
+          />
+          <div className="min-w-0 flex-1">
+            <p className="m-0 mb-1 font-semibold text-foreground">
+              Processing intake queue
+            </p>
             <p className="m-0 text-sm text-foreground/90">
               {ingestStatus?.currentTitle ||
                 ingestStatus?.summary?.currentTitle ||
                 "Working…"}
+            </p>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Fetching listings · Bay Area gate · scoring. Finished jobs appear
+              in Inbox when ready.
             </p>
           </div>
         </div>
@@ -352,15 +392,28 @@ export default function AnalyzePage() {
       </form>
 
       <section className="mt-10 max-w-3xl">
-        <div className="mb-3 flex items-baseline justify-between gap-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="m-0 text-xl font-semibold tracking-tight">Queue</h2>
-          {loadingQueue ? (
-            <span className="text-sm text-muted-foreground">Loading…</span>
-          ) : (
-            <span className="text-sm text-muted-foreground">
-              {queue.length} recent
-            </span>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {loadingQueue ? (
+              <span className="text-sm text-muted-foreground">Loading…</span>
+            ) : (
+              <span className="text-sm text-muted-foreground">
+                {queue.length} recent
+              </span>
+            )}
+            {!loadingQueue && queue.some((item) => item.status !== "processing") ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive-outline"
+                disabled={busy || Boolean(rowBusy)}
+                onClick={clearQueue}
+              >
+                {rowBusy === "clear" ? "Clearing…" : "Clear queue"}
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         {!loadingQueue && queue.length === 0 ? (

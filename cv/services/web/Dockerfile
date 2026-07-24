@@ -7,8 +7,12 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ARG NEXT_PUBLIC_API_BASE=http://localhost:8000
+# Empty = browser uses same-origin /backend proxy (LAN + localhost without rebuild)
+ARG NEXT_PUBLIC_API_BASE=
 ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
+# Rewrite target inside the compose network
+ARG API_REWRITE_TARGET=http://api:8000
+ENV API_REWRITE_TARGET=$API_REWRITE_TARGET
 RUN npm run build
 
 FROM node:20-alpine AS runner
