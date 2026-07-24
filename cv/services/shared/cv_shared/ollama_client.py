@@ -22,6 +22,12 @@ def ollama_model() -> str:
     return os.environ.get("OLLAMA_MODEL", "qwen3:8b")
 
 
+def ollama_think() -> bool:
+    """Thinking models (qwen3) default OFF for JSON/extract workloads."""
+    raw = (os.environ.get("OLLAMA_THINK") or "false").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def chat(prompt: str, system: str | None = None, temperature: float = 0.2) -> str:
     messages = []
     if system:
@@ -31,6 +37,7 @@ def chat(prompt: str, system: str | None = None, temperature: float = 0.2) -> st
         "model": ollama_model(),
         "messages": messages,
         "stream": False,
+        "think": ollama_think(),
         "options": {"temperature": temperature},
     }
     url = f"{ollama_base_url()}/api/chat"
@@ -50,6 +57,8 @@ def chat(prompt: str, system: str | None = None, temperature: float = 0.2) -> st
 def extract_json(text: str) -> Any:
     """Pull the first JSON object/array from model output."""
     text = text.strip()
+    # Drop thinking traces if a model still emits them in content
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.I).strip()
     # Strip common markdown fences
     fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if fence:

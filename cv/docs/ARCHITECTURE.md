@@ -1,4 +1,4 @@
-# CV Architecture (Stage 1)
+# DTP-CV Architecture (Stage 1)
 
 Local job-search copilot: score jobs against a grounded candidate knowledge base, draft application packages, and track decisions. Human approval required for applications.
 
