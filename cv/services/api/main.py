@@ -24,7 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="CV Job Copilot API", version="0.1.0")
+app = FastAPI(title="DTP-CV API", version="0.1.0")
 
 cors_origins = [
     o.strip()

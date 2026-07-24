@@ -21,7 +21,7 @@ If you must use a personal inbox:
 3. Enable **Gmail API** (APIs & Services → Library → Gmail API → Enable)
 4. Configure **OAuth consent screen**
    - User type: External (or Internal if Workspace)
-   - App name: `CV Job Copilot` (local)
+   - App name: `DTP-CV` (local)
    - Scopes later: Gmail readonly (+ modify if you want the Processed label)
 5. Create credentials → **OAuth client ID** → Application type **Desktop app**
 6. Download the JSON and save it as:

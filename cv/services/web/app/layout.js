@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "CV Job Copilot",
+  title: "DTP-CV",
   description: "Local job-search copilot with human approval",
 };
 
@@ -33,7 +33,7 @@ export default function RootLayout({ children }) {
                 href="/"
                 className="font-heading text-base font-bold tracking-wide text-foreground no-underline hover:no-underline"
               >
-                CV <span className="text-primary">Copilot</span>
+                DTP-<span className="text-primary">CV</span>
               </a>
               <HeaderNav />
             </header>

@@ -1,4 +1,4 @@
-# CV Job Copilot
+# DTP-CV
 
 Local AI job-search copilot with **human approval**. Score jobs against a grounded candidate knowledge base, generate tailored application packages, and track decisions.
 

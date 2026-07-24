@@ -73,7 +73,7 @@ def notify_apply_match(job: dict[str, Any], match: dict[str, Any]) -> bool:
         strong_line = strong[0].get("requirement") or strong[0].get("skill") or ""
 
     lines = [
-        "🎯 CV Copilot — APPLY recommendation",
+        "🎯 DTP-CV — APPLY recommendation",
         "",
         f"Score: {score}/100 (apply)",
         f"{title} — {company}",

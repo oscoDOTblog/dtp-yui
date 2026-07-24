@@ -22,7 +22,7 @@ Search lodging pages with the browser tool:
 npm run travel -- lodging Amsterdam
 ```
 
-## CV Job Copilot
+## DTP-CV
 
 Local job-search copilot under [`cv/`](cv/): Next.js + FastAPI + MongoDB + Ollama, Docker Compose on the Legion.
 
@@ -33,4 +33,4 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Then open http://localhost:3000 — see [cv/README.md](cv/README.md) and [cv/docs/ROADMAP.md](cv/docs/ROADMAP.md).
+Then open http://localhost:7545 — see [cv/README.md](cv/README.md) and [cv/docs/ROADMAP.md](cv/docs/ROADMAP.md).
