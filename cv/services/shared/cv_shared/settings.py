@@ -31,6 +31,20 @@ DEFAULT_GITHUB_EVIDENCE = {
     "discoverRepos": True,
 }
 
+# Ollama chat call sites that can enable thinking independently
+OLLAMA_THINK_PROCESSES = (
+    "jobExtract",
+    "profileUpdate",
+    "githubClassify",
+    "coverLetter",
+)
+
+DEFAULT_OLLAMA = {
+    # Legacy global flag — still accepted on patch; seeds processes when migrating
+    "think": False,
+    "thinkByProcess": {key: False for key in OLLAMA_THINK_PROCESSES},
+}
+
 ALERT_SOURCE_TO_KEY = {
     "linkedin-email": "linkedinEmail",
     "indeed-email": "indeedEmail",
@@ -49,6 +63,10 @@ def default_app_settings() -> dict[str, Any]:
         "gmailIngest": dict(DEFAULT_GMAIL_INGEST),
         "atsIngest": dict(DEFAULT_ATS_INGEST),
         "githubEvidence": dict(DEFAULT_GITHUB_EVIDENCE),
+        "ollama": {
+            "think": False,
+            "thinkByProcess": {key: False for key in OLLAMA_THINK_PROCESSES},
+        },
         "updatedAt": _now(),
     }
 
@@ -96,6 +114,32 @@ def _normalize_github_evidence(raw: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+def _normalize_ollama(raw: dict[str, Any] | None) -> dict[str, Any]:
+    by_process = {key: False for key in OLLAMA_THINK_PROCESSES}
+    if not isinstance(raw, dict):
+        return {"think": False, "thinkByProcess": by_process}
+
+    legacy_think = bool(raw["think"]) if "think" in raw else None
+    incoming = raw.get("thinkByProcess")
+    has_process_map = isinstance(incoming, dict)
+    for key in OLLAMA_THINK_PROCESSES:
+        if has_process_map and key in incoming:
+            by_process[key] = bool(incoming[key])
+        elif legacy_think is not None and not has_process_map:
+            # Migrate old single toggle → every process
+            by_process[key] = legacy_think
+        elif has_process_map and legacy_think is not None and key not in incoming:
+            by_process[key] = legacy_think
+        else:
+            by_process[key] = False
+
+    return {
+        # Convenience mirror: true if any process has thinking on
+        "think": any(by_process.values()),
+        "thinkByProcess": by_process,
+    }
+
+
 def get_app_settings() -> dict[str, Any]:
     """Return app settings, creating defaults if missing."""
     db = get_db()
@@ -108,10 +152,12 @@ def get_app_settings() -> dict[str, Any]:
     gmail = _normalize_gmail_ingest(doc.get("gmailIngest"))
     ats = _normalize_ats_ingest(doc.get("atsIngest"))
     github = _normalize_github_evidence(doc.get("githubEvidence"))
+    ollama = _normalize_ollama(doc.get("ollama"))
     needs_fix = (
         gmail != doc.get("gmailIngest")
         or ats != doc.get("atsIngest")
         or github != doc.get("githubEvidence")
+        or ollama != doc.get("ollama")
     )
     if needs_fix:
         db[C.SETTINGS].update_one(
@@ -121,6 +167,7 @@ def get_app_settings() -> dict[str, Any]:
                     "gmailIngest": gmail,
                     "atsIngest": ats,
                     "githubEvidence": github,
+                    "ollama": ollama,
                     "updatedAt": _now(),
                 }
             },
@@ -129,6 +176,7 @@ def get_app_settings() -> dict[str, Any]:
     doc["gmailIngest"] = gmail
     doc["atsIngest"] = ats
     doc["githubEvidence"] = github
+    doc["ollama"] = ollama
     return doc
 
 
@@ -139,6 +187,7 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
     gmail = dict(current.get("gmailIngest") or DEFAULT_GMAIL_INGEST)
     ats = dict(current.get("atsIngest") or DEFAULT_ATS_INGEST)
     github = _normalize_github_evidence(current.get("githubEvidence"))
+    ollama = _normalize_ollama(current.get("ollama"))
 
     incoming_gmail = partial.get("gmailIngest") if isinstance(partial, dict) else None
     if isinstance(incoming_gmail, dict):
@@ -167,6 +216,29 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
             merged["defaultLookback"] = incoming_gh["defaultLookback"]
         github = _normalize_github_evidence(merged)
 
+    incoming_ollama = partial.get("ollama") if isinstance(partial, dict) else None
+    if isinstance(incoming_ollama, dict):
+        merged_ollama = {
+            "think": ollama.get("think"),
+            "thinkByProcess": dict(
+                ollama.get("thinkByProcess") or DEFAULT_OLLAMA["thinkByProcess"]
+            ),
+        }
+        # Global think patch sets every process (UI "all on/off" helper)
+        if "think" in incoming_ollama and "thinkByProcess" not in incoming_ollama:
+            value = bool(incoming_ollama["think"])
+            merged_ollama["think"] = value
+            merged_ollama["thinkByProcess"] = {
+                key: value for key in OLLAMA_THINK_PROCESSES
+            }
+        if isinstance(incoming_ollama.get("thinkByProcess"), dict):
+            for key in OLLAMA_THINK_PROCESSES:
+                if key in incoming_ollama["thinkByProcess"]:
+                    merged_ollama["thinkByProcess"][key] = bool(
+                        incoming_ollama["thinkByProcess"][key]
+                    )
+        ollama = _normalize_ollama(merged_ollama)
+
     updated_at = _now()
     db[C.SETTINGS].update_one(
         {"_id": APP_SETTINGS_ID},
@@ -175,6 +247,7 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
                 "gmailIngest": gmail,
                 "atsIngest": ats,
                 "githubEvidence": github,
+                "ollama": ollama,
                 "updatedAt": updated_at,
             }
         },
@@ -185,6 +258,7 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
         "gmailIngest": gmail,
         "atsIngest": ats,
         "githubEvidence": github,
+        "ollama": ollama,
         "updatedAt": updated_at,
     }
 
@@ -221,3 +295,23 @@ def is_github_evidence_enabled(settings: dict[str, Any] | None = None) -> bool:
     doc = settings if settings is not None else get_app_settings()
     github = _normalize_github_evidence(doc.get("githubEvidence"))
     return bool(github.get("enabled", True))
+
+
+def is_ollama_think_enabled(
+    process: str | None = None,
+    settings: dict[str, Any] | None = None,
+) -> bool:
+    """Whether Ollama thinking is on for a process (default false).
+
+    process: jobExtract | profileUpdate | githubClassify | coverLetter
+    If process is omitted, returns True only when any process has thinking on.
+    """
+    doc = settings if settings is not None else get_app_settings()
+    ollama = _normalize_ollama(doc.get("ollama"))
+    by_process = ollama.get("thinkByProcess") or {}
+    if process:
+        key = str(process).strip()
+        if key not in OLLAMA_THINK_PROCESSES:
+            return False
+        return bool(by_process.get(key, False))
+    return any(bool(by_process.get(key)) for key in OLLAMA_THINK_PROCESSES)

@@ -44,10 +44,46 @@ const ATS_PROVIDERS = [
   },
 ];
 
+const OLLAMA_THINK_PROCESSES = [
+  {
+    key: "jobExtract",
+    label: "Job extract",
+    description:
+      "Structured JD extraction during analyze/ingest (JSON skills, seniority, role family).",
+  },
+  {
+    key: "profileUpdate",
+    label: "Profile update",
+    description: "Free-text → profile merge on the Profile page.",
+  },
+  {
+    key: "githubClassify",
+    label: "GitHub classify",
+    description: "Commit → skill evidence classification on repo sync.",
+  },
+  {
+    key: "coverLetter",
+    label: "Cover letter",
+    description:
+      "Application package cover-letter drafting — most likely place to want thinking on.",
+  },
+];
+
+const DEFAULT_OLLAMA = {
+  think: false,
+  thinkByProcess: {
+    jobExtract: false,
+    profileUpdate: false,
+    githubClassify: false,
+    coverLetter: false,
+  },
+};
+
 export default function SettingsPage() {
   const [gmailIngest, setGmailIngest] = useState(null);
   const [atsIngest, setAtsIngest] = useState(null);
   const [githubEvidence, setGithubEvidence] = useState(null);
+  const [ollama, setOllama] = useState(null);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(true);
@@ -62,11 +98,13 @@ export default function SettingsPage() {
       setGithubEvidence(
         data.githubEvidence || { enabled: true, defaultLookback: "7d" }
       );
+      setOllama(data.ollama || DEFAULT_OLLAMA);
     } catch (err) {
       setError(err.message || "Failed to load settings");
       setGmailIngest(null);
       setAtsIngest(null);
       setGithubEvidence(null);
+      setOllama(null);
     } finally {
       setLoading(false);
     }
@@ -75,6 +113,17 @@ export default function SettingsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  function syncFromResponse(data, previousSlices) {
+    if (data.gmailIngest) setGmailIngest(data.gmailIngest);
+    else if (previousSlices?.gmail) setGmailIngest(previousSlices.gmail);
+    if (data.atsIngest) setAtsIngest(data.atsIngest);
+    else if (previousSlices?.ats) setAtsIngest(previousSlices.ats);
+    if (data.githubEvidence) setGithubEvidence(data.githubEvidence);
+    else if (previousSlices?.github) setGithubEvidence(previousSlices.github);
+    if (data.ollama) setOllama(data.ollama);
+    else if (previousSlices?.ollama) setOllama(previousSlices.ollama);
+  }
 
   async function toggleGmail(key) {
     if (!gmailIngest || savingKey) return;
@@ -88,9 +137,7 @@ export default function SettingsPage() {
       const data = await apiPatch("/settings", {
         gmailIngest: { [key]: nextValue },
       });
-      setGmailIngest(data.gmailIngest || { ...previous, [key]: nextValue });
-      if (data.atsIngest) setAtsIngest(data.atsIngest);
-      if (data.githubEvidence) setGithubEvidence(data.githubEvidence);
+      syncFromResponse(data, { gmail: { ...previous, [key]: nextValue } });
       setInfo("Saved. Next ingest run will use these toggles.");
     } catch (err) {
       setGmailIngest(previous);
@@ -112,9 +159,7 @@ export default function SettingsPage() {
       const data = await apiPatch("/settings", {
         atsIngest: { [key]: nextValue },
       });
-      setAtsIngest(data.atsIngest || { ...previous, [key]: nextValue });
-      if (data.gmailIngest) setGmailIngest(data.gmailIngest);
-      if (data.githubEvidence) setGithubEvidence(data.githubEvidence);
+      syncFromResponse(data, { ats: { ...previous, [key]: nextValue } });
       setInfo("Saved. Next ingest run will use these toggles.");
     } catch (err) {
       setAtsIngest(previous);
@@ -136,14 +181,91 @@ export default function SettingsPage() {
       const data = await apiPatch("/settings", {
         githubEvidence: { [key]: nextValue },
       });
-      setGithubEvidence(
-        data.githubEvidence || { ...previous, [key]: nextValue }
-      );
-      if (data.gmailIngest) setGmailIngest(data.gmailIngest);
-      if (data.atsIngest) setAtsIngest(data.atsIngest);
+      syncFromResponse(data, {
+        github: { ...previous, [key]: nextValue },
+      });
       setInfo("Saved. Cron and manual Sync respect this toggle.");
     } catch (err) {
       setGithubEvidence(previous);
+      setError(err.message || "Failed to save settings");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  async function toggleOllamaThinkProcess(key) {
+    if (!ollama || savingKey) return;
+    const currentBy = ollama.thinkByProcess || {};
+    const nextValue = !currentBy[key];
+    const previous = {
+      ...ollama,
+      thinkByProcess: { ...(ollama.thinkByProcess || {}) },
+    };
+    const nextBy = { ...currentBy, [key]: nextValue };
+    setOllama({
+      ...ollama,
+      thinkByProcess: nextBy,
+      think: Object.values(nextBy).some(Boolean),
+    });
+    setSavingKey(`ollama:${key}`);
+    setError("");
+    setInfo("");
+    try {
+      const data = await apiPatch("/settings", {
+        ollama: { thinkByProcess: { [key]: nextValue } },
+      });
+      syncFromResponse(data, {
+        ollama: {
+          ...previous,
+          thinkByProcess: nextBy,
+          think: Object.values(nextBy).some(Boolean),
+        },
+      });
+      const label =
+        OLLAMA_THINK_PROCESSES.find((p) => p.key === key)?.label || key;
+      setInfo(
+        nextValue
+          ? `Saved. Thinking on for ${label}.`
+          : `Saved. Thinking off for ${label}.`,
+      );
+    } catch (err) {
+      setOllama(previous);
+      setError(err.message || "Failed to save settings");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  async function toggleOllamaThinkAll() {
+    if (!ollama || savingKey) return;
+    const by = ollama.thinkByProcess || {};
+    const anyOn = Object.values(by).some(Boolean);
+    const nextValue = !anyOn;
+    const previous = {
+      ...ollama,
+      thinkByProcess: { ...(ollama.thinkByProcess || {}) },
+    };
+    const nextBy = Object.fromEntries(
+      OLLAMA_THINK_PROCESSES.map((p) => [p.key, nextValue]),
+    );
+    setOllama({ think: nextValue, thinkByProcess: nextBy });
+    setSavingKey("ollama:think");
+    setError("");
+    setInfo("");
+    try {
+      const data = await apiPatch("/settings", {
+        ollama: { think: nextValue },
+      });
+      syncFromResponse(data, {
+        ollama: { think: nextValue, thinkByProcess: nextBy },
+      });
+      setInfo(
+        nextValue
+          ? "Saved. Thinking enabled for all Ollama processes."
+          : "Saved. Thinking disabled for all Ollama processes.",
+      );
+    } catch (err) {
+      setOllama(previous);
       setError(err.message || "Failed to save settings");
     } finally {
       setSavingKey("");
@@ -160,8 +282,9 @@ export default function SettingsPage() {
         senders are processed after mail is fetched. ATS switches master-gate
         board polling (companies still managed on{" "}
         <a href="/sources">Sources</a>). GitHub evidence is managed on{" "}
-        <a href="/repositories">Repositories</a>. Changes apply on the next
-        run — no restart.
+        <a href="/repositories">Repositories</a>. Ollama thinking can be set per
+        process (extract, profile, GitHub, cover letter). Changes apply on the
+        next call — no restart.
       </p>
 
       {error ? (
@@ -179,8 +302,62 @@ export default function SettingsPage() {
         <p className="py-8 text-muted-foreground">Loading…</p>
       ) : null}
 
-      {!loading && gmailIngest ? (
+      {!loading && ollama ? (
         <section className="mt-7">
+          <h2 className="mb-3 text-lg font-semibold">Ollama thinking</h2>
+          <p className="mb-3 m-0 text-sm text-muted-foreground">
+            When on for a process, models like qwen3 spend tokens on internal
+            reasoning before answering. Defaults are off for speed. Cover letter
+            is the usual one to turn on.
+          </p>
+          <div className="grid gap-3">
+            <Card>
+              <CardPanel className="flex items-center justify-between gap-4 p-4">
+                <div className="min-w-0">
+                  <p className="m-0 font-semibold">All processes</p>
+                  <p className="mt-1 m-0 text-sm text-muted-foreground">
+                    Convenience toggle — sets every process below to the same
+                    value.
+                  </p>
+                </div>
+                <Switch
+                  checked={Boolean(
+                    ollama.think ||
+                      Object.values(ollama.thinkByProcess || {}).some(Boolean),
+                  )}
+                  disabled={!!savingKey}
+                  onCheckedChange={toggleOllamaThinkAll}
+                  aria-label="Ollama thinking for all processes"
+                />
+              </CardPanel>
+            </Card>
+            {OLLAMA_THINK_PROCESSES.map((p) => {
+              const on = Boolean(ollama.thinkByProcess?.[p.key]);
+              return (
+                <Card key={p.key}>
+                  <CardPanel className="flex items-center justify-between gap-4 p-4">
+                    <div className="min-w-0">
+                      <p className="m-0 font-semibold">{p.label}</p>
+                      <p className="mt-1 m-0 text-sm text-muted-foreground">
+                        {p.description}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={on}
+                      disabled={!!savingKey}
+                      onCheckedChange={() => toggleOllamaThinkProcess(p.key)}
+                      aria-label={`${p.label} thinking ${on ? "on" : "off"}`}
+                    />
+                  </CardPanel>
+                </Card>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {!loading && gmailIngest ? (
+        <section className="mt-10">
           <h2 className="mb-3 text-lg font-semibold">Gmail alert ingest</h2>
           <div className="grid gap-3">
             {PROVIDERS.map((p) => {

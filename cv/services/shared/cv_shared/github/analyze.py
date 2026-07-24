@@ -115,7 +115,12 @@ def classify_commit(
         + "\n"
     )
     try:
-        raw = chat(prompt, system=SYSTEM_PROMPT, temperature=0.1)
+        raw = chat(
+            prompt,
+            system=SYSTEM_PROMPT,
+            temperature=0.1,
+            think_process="githubClassify",
+        )
         parsed = extract_json(raw)
         items = parsed.get("items") if isinstance(parsed, dict) else parsed
         if not isinstance(items, list):

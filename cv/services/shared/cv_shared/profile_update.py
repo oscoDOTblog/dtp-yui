@@ -217,7 +217,12 @@ def update_profile_from_text(text: str) -> dict[str, Any]:
         f"{note}\n\n"
         "Return JSON patch only."
     )
-    raw = chat(prompt, system=UPDATE_SYSTEM, temperature=0.1)
+    raw = chat(
+        prompt,
+        system=UPDATE_SYSTEM,
+        temperature=0.1,
+        think_process="profileUpdate",
+    )
     patch = _sanitize_patch(extract_json(raw))
 
     skills_to_add = patch.pop("skillsToAdd", [])

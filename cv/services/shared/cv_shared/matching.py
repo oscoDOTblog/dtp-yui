@@ -126,7 +126,12 @@ def extract_job_requirements(description: str, title: str = "", company: str = "
         f"Job description:\n{description[:12000]}"
     )
     try:
-        raw = chat(prompt, system=EXTRACT_SYSTEM, temperature=0.1)
+        raw = chat(
+            prompt,
+            system=EXTRACT_SYSTEM,
+            temperature=0.1,
+            think_process="jobExtract",
+        )
         data = extract_json(raw)
         if not isinstance(data, dict):
             raise ValueError("expected object")

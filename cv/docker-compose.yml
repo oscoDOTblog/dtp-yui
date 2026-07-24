@@ -24,7 +24,6 @@ services:
       MONGO_DB: ${MONGO_DB:-DTP}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
-      OLLAMA_THINK: ${OLLAMA_THINK:-false}
       GENERATED_APPLICATIONS_DIR: /app/generated-applications
       SEED_DIR: /app/seed
       SECRETS_DIR: /app/secrets
@@ -63,7 +62,6 @@ services:
       MONGO_DB: ${MONGO_DB:-DTP}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
-      OLLAMA_THINK: ${OLLAMA_THINK:-false}
       GENERATED_APPLICATIONS_DIR: /app/generated-applications
       SEED_DIR: /app/seed
       SECRETS_DIR: /app/secrets

@@ -7,6 +7,7 @@ import logging
 import os
 import re
 from typing import Any
+
 from urllib import error, request
 
 logger = logging.getLogger(__name__)
@@ -22,22 +23,42 @@ def ollama_model() -> str:
     return os.environ.get("OLLAMA_MODEL", "qwen3:8b")
 
 
-def ollama_think() -> bool:
-    """Thinking models (qwen3) default OFF for JSON/extract workloads."""
-    raw = (os.environ.get("OLLAMA_THINK") or "false").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+def ollama_think(process: str | None = None) -> bool:
+    """Read think flag from Settings for a process (default false)."""
+    try:
+        from .settings import is_ollama_think_enabled
+
+        return is_ollama_think_enabled(process=process)
+    except Exception as exc:
+        logger.warning(
+            "Could not read ollama think from settings; using false: %s", exc
+        )
+        return False
 
 
-def chat(prompt: str, system: str | None = None, temperature: float = 0.2) -> str:
+def chat(
+    prompt: str,
+    system: str | None = None,
+    temperature: float = 0.2,
+    *,
+    think_process: str | None = None,
+    think: bool | None = None,
+) -> str:
+    """Chat with Ollama.
+
+    think_process: settings key (jobExtract, profileUpdate, githubClassify, coverLetter)
+    think: explicit override; wins over settings when not None
+    """
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
+    use_think = ollama_think(think_process) if think is None else bool(think)
     payload = {
         "model": ollama_model(),
         "messages": messages,
         "stream": False,
-        "think": ollama_think(),
+        "think": use_think,
         "options": {"temperature": temperature},
     }
     url = f"{ollama_base_url()}/api/chat"

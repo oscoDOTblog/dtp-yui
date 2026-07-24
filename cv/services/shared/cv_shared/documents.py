@@ -266,7 +266,12 @@ Today's date: {datetime.now(timezone.utc).strftime('%B %d, %Y')}
 Sign as {candidate.get('name')}.
 """
     try:
-        return chat(prompt, system=COVER_SYSTEM, temperature=0.3).strip()
+        return chat(
+            prompt,
+            system=COVER_SYSTEM,
+            temperature=0.3,
+            think_process="coverLetter",
+        ).strip()
     except Exception as exc:
         logger.warning("Cover letter LLM failed, using template: %s", exc)
         return _fallback_cover(candidate, job, match, evidence_used)

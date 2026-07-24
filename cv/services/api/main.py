@@ -61,6 +61,7 @@ class SettingsPatchBody(BaseModel):
     gmailIngest: Optional[dict[str, bool]] = None
     atsIngest: Optional[dict[str, bool]] = None
     githubEvidence: Optional[dict[str, Any]] = None
+    ollama: Optional[dict[str, Any]] = None
 
 
 class SourceCreateBody(BaseModel):
