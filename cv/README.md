@@ -35,7 +35,7 @@ You can omit the local `mongodb` Compose service when using Atlas. Data is store
 
 Open:
 
-- Web: http://localhost:3000
+- Web: http://localhost:7545
 - API: http://localhost:8000/health
 - API docs: http://localhost:8000/docs
 
@@ -104,7 +104,7 @@ Job sources also upsert on a normal `POST /seed` even when the candidate is alre
 ## Remote access (WireGuard + SSH)
 
 ```bash
-ssh -L 3000:localhost:3000 -L 8000:localhost:8000 user@legion-wireguard-ip
+ssh -L 7545:localhost:7545 -L 8000:localhost:8000 user@legion-wireguard-ip
 ```
 
 ## Docs

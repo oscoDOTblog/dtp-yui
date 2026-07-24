@@ -29,7 +29,7 @@ services:
       SECRETS_DIR: /app/secrets
       LOCATION_CONFIG: /app/config/location.json
       ROLE_FILTER_CONFIG: /app/config/roleFilter.json
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:7545,http://127.0.0.1:7545}
       GMAIL_QUERY: ${GMAIL_QUERY:-label:JobAlerts newer_than:2d}
       GMAIL_PROCESSED_LABEL: ${GMAIL_PROCESSED_LABEL:-false}
       INGEST_MAX_LISTINGS: ${INGEST_MAX_LISTINGS:-500}
@@ -100,9 +100,8 @@ services:
       NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-}
       API_BASE_INTERNAL: ${API_BASE_INTERNAL:-http://api:8000}
     ports:
-      # Dev machine: localhost:3000 · phone/tablet: http://<this-host-lan-ip>/
-      - "3000:3000"
-      - "80:3000"
+      # Dedicated host port so other apps can share this machine (default 7545)
+      - "${WEB_HOST_PORT:-7545}:3000"
 
 volumes:
   mongodb_data:

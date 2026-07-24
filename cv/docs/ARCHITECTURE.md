@@ -17,11 +17,11 @@ Local job-search copilot: score jobs against a grounded candidate knowledge base
 
 | Service | Bind | Notes |
 |---|---|---|
-| Web | `0.0.0.0:3000` and `:80` | Laptop: `http://localhost:3000`. Phone on LAN: `http://<host-lan-ip>/` |
+| Web | `0.0.0.0:${WEB_HOST_PORT:-7545}` → container `:3000` | Dev: `http://localhost:7545`. LAN/production host: `http://<host-ip>:7545` |
 | API | `127.0.0.1:8000` | Browser uses same-origin `/backend` proxy on web — no hardcoded LAN IP |
 | MongoDB | `127.0.0.1:27017` | Not exposed on LAN |
 
-Leave `NEXT_PUBLIC_API_BASE` empty in `.env` so the UI works from both localhost and other devices without rebuilds.
+`WEB_HOST_PORT=7545` keeps this UI off `:80` / `:3000` so other apps can share the same production host. Leave `NEXT_PUBLIC_API_BASE` empty so one build works from localhost and LAN.
 
 ## Ollama
 
@@ -39,10 +39,10 @@ Containers reach it via `host.docker.internal:11434`.
 No public inbound. Use WireGuard + SSH port forward:
 
 ```bash
-ssh -L 3000:localhost:3000 -L 8000:localhost:8000 user@legion-wireguard-ip
+ssh -L 7545:localhost:7545 -L 8000:localhost:8000 user@legion-wireguard-ip
 ```
 
-Then open `http://localhost:3000`.
+Then open `http://localhost:7545`.
 
 ## Evidence grounding
 
