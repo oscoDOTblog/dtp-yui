@@ -1,77 +1,27 @@
-"""Greenhouse Job Board API adapter for curated company watchlist."""
+"""Ashby public Job Postings API adapter for curated company watchlist."""
 
 from __future__ import annotations
 
-import html
 import json
 import logging
-import re
 import time
 from datetime import datetime, timezone
-from html.parser import HTMLParser
 from typing import Any
 from urllib import error, parse, request as urlrequest
 
 from .. import collections as C
 from ..db import get_db
 from ..settings import get_app_settings, ingest_drop_reason
-from .html_markdown import html_to_markdown
+from .html_markdown import description_fields_from_html_or_text, html_to_markdown
 from .location import assess_location
 from .role_filter import _title_is_ambiguous, assess_role_fit, load_role_filter_config
 
 logger = logging.getLogger(__name__)
 
-GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards"
-USER_AGENT = "CV-Job-Copilot/2B (+local; greenhouse board poll)"
+ASHBY_API = "https://api.ashbyhq.com/posting-api/job-board"
+USER_AGENT = "CV-Job-Copilot/2C (+local; ashby board poll)"
 POLL_DELAY_SEC = 0.25
-DETAIL_DELAY_SEC = 0.15
 REQUEST_TIMEOUT_SEC = 30
-# Cap detail fetches per board per poll (after prefilter)
-MAX_DETAIL_FETCHES_PER_BOARD = 120
-
-
-class _HTMLToText(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self._chunks: list[str] = []
-        self._skip = False
-
-    def handle_starttag(self, tag: str, attrs) -> None:
-        if tag in ("script", "style"):
-            self._skip = True
-        elif tag in ("br", "p", "div", "li", "tr", "h1", "h2", "h3", "h4"):
-            self._chunks.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("script", "style"):
-            self._skip = False
-        elif tag in ("p", "div", "li", "tr"):
-            self._chunks.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        if not self._skip and data:
-            self._chunks.append(data)
-
-    def text(self) -> str:
-        joined = "".join(self._chunks)
-        joined = html.unescape(joined)
-        joined = re.sub(r"[ \t]+\n", "\n", joined)
-        joined = re.sub(r"\n{3,}", "\n\n", joined)
-        joined = re.sub(r"[ \t]{2,}", " ", joined)
-        return joined.strip()
-
-
-def html_to_text(raw_html: str | None) -> str:
-    if not raw_html:
-        return ""
-    parser = _HTMLToText()
-    try:
-        parser.feed(raw_html)
-        parser.close()
-    except Exception:
-        text = re.sub(r"<[^>]+>", " ", raw_html)
-        return re.sub(r"\s+", " ", html.unescape(text)).strip()
-    return parser.text()
 
 
 def _now() -> str:
@@ -101,13 +51,15 @@ def _http_get_json(url: str) -> Any:
     return json.loads(raw)
 
 
-def fetch_board_jobs(board_token: str, *, content: bool = True) -> list[dict[str, Any]]:
-    """GET public Greenhouse board jobs. Raises on HTTP/network errors."""
+def fetch_board_jobs(
+    board_token: str, *, include_compensation: bool = True
+) -> list[dict[str, Any]]:
+    """GET public Ashby board jobs (full descriptions in one response)."""
     token = parse.quote((board_token or "").strip(), safe="")
     if not token:
         raise ValueError("boardToken is required")
-    qs = "?content=true" if content else ""
-    url = f"{GREENHOUSE_API}/{token}/jobs{qs}"
+    qs = "?includeCompensation=true" if include_compensation else ""
+    url = f"{ASHBY_API}/{token}{qs}"
     payload = _http_get_json(url)
     jobs = payload.get("jobs") if isinstance(payload, dict) else None
     if not isinstance(jobs, list):
@@ -115,23 +67,10 @@ def fetch_board_jobs(board_token: str, *, content: bool = True) -> list[dict[str
     return jobs
 
 
-def fetch_board_job(board_token: str, job_id: str | int) -> dict[str, Any]:
-    """GET a single Greenhouse job post (includes content)."""
-    token = parse.quote((board_token or "").strip(), safe="")
-    jid = parse.quote(str(job_id).strip(), safe="")
-    if not token or not jid:
-        raise ValueError("boardToken and job_id are required")
-    url = f"{GREENHOUSE_API}/{token}/jobs/{jid}"
-    payload = _http_get_json(url)
-    if not isinstance(payload, dict) or not payload.get("id"):
-        raise ValueError(f"Greenhouse job {jid} missing id")
-    return payload
-
-
 def probe_board_token(board_token: str) -> dict[str, Any]:
-    """Validate a board token with a lightweight list fetch (no content)."""
+    """Validate a board slug with a board list fetch."""
     try:
-        jobs = fetch_board_jobs(board_token, content=False)
+        jobs = fetch_board_jobs(board_token, include_compensation=False)
         return {"ok": True, "jobCount": len(jobs), "error": None}
     except error.HTTPError as exc:
         return {"ok": False, "jobCount": 0, "error": f"HTTP {exc.code}"}
@@ -139,16 +78,58 @@ def probe_board_token(board_token: str) -> dict[str, Any]:
         return {"ok": False, "jobCount": 0, "error": str(exc)}
 
 
+def _secondary_location_names(job: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    secondary = job.get("secondaryLocations") or []
+    if not isinstance(secondary, list):
+        return names
+    for item in secondary:
+        if isinstance(item, dict) and item.get("location"):
+            names.append(str(item["location"]).strip())
+        elif isinstance(item, str) and item.strip():
+            names.append(item.strip())
+    return names
+
+
 def _location_from_job(job: dict[str, Any]) -> str:
-    loc = job.get("location") or {}
-    if isinstance(loc, dict) and loc.get("name"):
-        return str(loc["name"]).strip()
-    offices = job.get("offices") or []
-    names = []
-    for office in offices:
-        if isinstance(office, dict) and office.get("name"):
-            names.append(str(office["name"]).strip())
-    return ", ".join(names)
+    parts: list[str] = []
+    primary = (job.get("location") or "").strip()
+    if primary:
+        parts.append(primary)
+    for name in _secondary_location_names(job):
+        if name and name not in parts:
+            parts.append(name)
+    if job.get("isRemote") and "remote" not in " ".join(parts).lower():
+        parts.append("Remote")
+    return ", ".join(parts)
+
+
+def _work_mode_hint(job: dict[str, Any]) -> str | None:
+    workplace = (job.get("workplaceType") or "").strip().lower()
+    if workplace == "remote" or job.get("isRemote"):
+        return "remote"
+    if workplace == "hybrid":
+        return "hybrid"
+    if workplace in ("onsite", "on-site", "on_site"):
+        return "onsite"
+    return None
+
+
+def _job_id(job: dict[str, Any]) -> str:
+    raw_id = job.get("id")
+    if raw_id is not None and str(raw_id).strip():
+        return str(raw_id).strip()
+    job_url = (job.get("jobUrl") or job.get("applyUrl") or "").strip()
+    if job_url:
+        path = parse.urlparse(job_url).path.strip("/")
+        segments = [s for s in path.split("/") if s]
+        # jobs.ashbyhq.com/{org}/{id} or …/{id}/application
+        for seg in reversed(segments):
+            if seg.lower() in ("application", "apply"):
+                continue
+            if len(seg) >= 8:
+                return seg
+    return ""
 
 
 def _source_location_prefs(source: dict[str, Any]) -> list[str]:
@@ -177,16 +158,16 @@ def _title_is_ambiguous_for_early(title: str) -> bool:
     return _title_is_ambiguous((title or "").lower().strip(), ambiguous_tokens)
 
 
-def early_keep_greenhouse_listing(
+def early_keep_ashby_listing(
     job: dict[str, Any],
     *,
     source: dict[str, Any],
     app_settings: dict[str, Any] | None = None,
 ) -> tuple[bool, str | None]:
-    """Cheap prefilter using title + location only (no JD).
+    """Prefilter using title + location (+ secondary / remote hints)."""
+    if job.get("isListed") is False:
+        return False, "unlisted"
 
-    Returns (keep, skip_reason) where skip_reason is for stats.
-    """
     title = (job.get("title") or "").strip()
     location = _location_from_job(job)
     prefs = _source_location_prefs(source)
@@ -194,12 +175,11 @@ def early_keep_greenhouse_listing(
     if prefs and not _matches_source_locations(location, prefs):
         return False, "sourceLocation"
 
-    # Build a stub normalized shape so ingest_drop_reason can apply
     location_assessment = assess_location(
         location=location,
         title=title,
         description="",
-        work_mode_hint=None,
+        work_mode_hint=_work_mode_hint(job),
     )
     role_assessment = assess_role_fit(title=title, description="")
 
@@ -213,7 +193,7 @@ def early_keep_greenhouse_listing(
             **role_assessment,
             "roleEligible": True,
             "evidence": list(role_assessment.get("evidence") or [])
-            + ["early-filter: ambiguous title deferred to detail fetch"],
+            + ["early-filter: ambiguous title deferred to full JD"],
         }
 
     stub = {
@@ -228,47 +208,59 @@ def early_keep_greenhouse_listing(
     elif not role_assessment.get("roleEligible"):
         stub["status"] = "wrong_role"
 
-    # Normalize path also sets status; mirror for ingest_drop_reason
     drop = ingest_drop_reason(stub, app_settings)
     if drop == "outOfArea":
         return False, "outOfArea"
     if drop == "wrongRole":
         return False, "wrongRole"
 
-    # Even when drop toggles are off, still apply source location prefs above
     return True, None
 
 
-def greenhouse_job_to_raw(
+def ashby_job_to_raw(
     job: dict[str, Any],
     *,
     company: str,
     board_token: str,
     source_id: str,
 ) -> dict[str, Any]:
-    job_id = job.get("id")
-    absolute_url = (job.get("absolute_url") or "").strip()
-    content_html = job.get("content") or ""
-    description = html_to_text(content_html)
-    description_md = html_to_markdown(content_html) or None
+    job_id = _job_id(job) or "unknown"
+    job_url = (job.get("jobUrl") or "").strip()
+    apply_url = (job.get("applyUrl") or job_url).strip()
+    description_html = job.get("descriptionHtml") or ""
+    description_plain = (job.get("descriptionPlain") or "").strip()
+    fields = description_fields_from_html_or_text(
+        description_html or description_plain
+    )
+    description = (
+        description_plain
+        or fields.get("descriptionText")
+        or fields.get("descriptionRaw")
+        or ""
+    )
+    description_md = fields.get("descriptionMarkdown") or html_to_markdown(
+        description_html
+    ) or None
     location = _location_from_job(job)
-    updated = job.get("updated_at") or job.get("created_at")
+    published = job.get("publishedAt")
+    work_mode = _work_mode_hint(job)
 
     return {
-        "externalId": f"greenhouse:{board_token}:{job_id}",
-        "source": "greenhouse",
+        "externalId": f"ashby:{board_token}:{job_id}",
+        "source": "ashby",
         "title": (job.get("title") or "Untitled").strip(),
         "company": company,
         "location": location,
         "descriptionRaw": description,
         "descriptionText": description,
         "descriptionMarkdown": description_md,
-        "sourceUrl": absolute_url or None,
-        "canonicalApplyUrl": absolute_url or None,
-        "url": absolute_url or None,
-        "postedAt": updated,
+        "sourceUrl": job_url or apply_url or None,
+        "canonicalApplyUrl": apply_url or job_url or None,
+        "url": job_url or apply_url or None,
+        "postedAt": published,
+        "workMode": work_mode,
         "discoveredBy": {
-            "source": "greenhouse",
+            "source": "ashby",
             "boardToken": board_token,
             "sourceId": source_id,
         },
@@ -303,42 +295,30 @@ def _update_source_poll(
     get_db()[C.JOB_SOURCES].update_one({"_id": source_id}, {"$set": fields})
 
 
-def list_enabled_greenhouse_sources() -> list[dict[str, Any]]:
+def list_enabled_ashby_sources() -> list[dict[str, Any]]:
     db = get_db()
     return list(
         db[C.JOB_SOURCES].find(
-            {"ats": "greenhouse", "enabled": True},
+            {"ats": "ashby", "enabled": True},
             sort=[("priority", -1), ("name", 1)],
         )
     )
 
 
-def _two_phase_enabled(app_settings: dict[str, Any] | None) -> bool:
-    doc = app_settings if app_settings is not None else get_app_settings()
-    filters = doc.get("ingestFilters") or {}
-    if isinstance(filters, dict) and "greenhouseTwoPhase" in filters:
-        return bool(filters["greenhouseTwoPhase"])
-    return True
-
-
-def fetch_greenhouse_raw_jobs(
+def fetch_ashby_raw_jobs(
     *,
     since: datetime | None = None,
     source_ids: list[str] | None = None,
     app_settings: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Poll enabled Greenhouse boards. Returns (raw_jobs, stats).
+    """Poll enabled Ashby boards. Returns (raw_jobs, stats).
 
-    Default two-phase flow:
-      1) List jobs without content (cheap)
-      2) Prefilter on title + location (+ source.locations)
-      3) Fetch full JD only for keepers
+    Single-shot: board JSON includes descriptions; prefilter then map keepers.
     """
     db = get_db()
     settings = app_settings if app_settings is not None else get_app_settings()
-    two_phase = _two_phase_enabled(settings)
 
-    query: dict[str, Any] = {"ats": "greenhouse", "enabled": True}
+    query: dict[str, Any] = {"ats": "ashby", "enabled": True}
     if source_ids:
         query["_id"] = {"$in": source_ids}
 
@@ -355,9 +335,8 @@ def fetch_greenhouse_raw_jobs(
         "skippedOutOfArea": 0,
         "skippedWrongRole": 0,
         "skippedSourceLocation": 0,
+        "skippedUnlisted": 0,
         "skippedStale": 0,
-        "detailFetchErrors": 0,
-        "twoPhase": two_phase,
     }
     raw_jobs: list[dict[str, Any]] = []
 
@@ -376,53 +355,19 @@ def fetch_greenhouse_raw_jobs(
             time.sleep(POLL_DELAY_SEC)
 
         try:
-            if not two_phase:
-                board_jobs = fetch_board_jobs(token, content=True)
-                mapped: list[dict[str, Any]] = []
-                for job in board_jobs:
-                    if since:
-                        updated = _parse_iso(
-                            job.get("updated_at") or job.get("created_at")
-                        )
-                        if updated and updated.tzinfo is None:
-                            updated = updated.replace(tzinfo=timezone.utc)
-                        if updated and updated < since:
-                            stats["skippedStale"] += 1
-                            continue
-                    mapped.append(
-                        greenhouse_job_to_raw(
-                            job,
-                            company=company,
-                            board_token=token,
-                            source_id=source_id,
-                        )
-                    )
-                raw_jobs.extend(mapped)
-                stats["sourcesPolled"] += 1
-                stats["jobsListed"] += len(board_jobs)
-                stats["jobsFetched"] += len(mapped)
-                _update_source_poll(
-                    source_id,
-                    success=True,
-                    job_count=len(mapped),
-                    listed_count=len(board_jobs),
-                    prefiltered_count=len(mapped),
-                )
-                continue
-
-            # --- Two-phase ---
-            listed = fetch_board_jobs(token, content=False)
+            listed = fetch_board_jobs(token, include_compensation=True)
             stats["jobsListed"] += len(listed)
-            candidates: list[dict[str, Any]] = []
+            mapped: list[dict[str, Any]] = []
+            kept = 0
             for job in listed:
                 if since:
-                    updated = _parse_iso(job.get("updated_at") or job.get("created_at"))
+                    updated = _parse_iso(job.get("publishedAt"))
                     if updated and updated.tzinfo is None:
                         updated = updated.replace(tzinfo=timezone.utc)
                     if updated and updated < since:
                         stats["skippedStale"] += 1
                         continue
-                keep, reason = early_keep_greenhouse_listing(
+                keep, reason = early_keep_ashby_listing(
                     job, source=source, app_settings=settings
                 )
                 if not keep:
@@ -433,40 +378,13 @@ def fetch_greenhouse_raw_jobs(
                         stats["skippedWrongRole"] += 1
                     elif reason == "sourceLocation":
                         stats["skippedSourceLocation"] += 1
+                    elif reason == "unlisted":
+                        stats["skippedUnlisted"] += 1
                     continue
-                candidates.append(job)
-
-            if len(candidates) > MAX_DETAIL_FETCHES_PER_BOARD:
-                logger.info(
-                    "Greenhouse %s: capping detail fetches %s → %s",
-                    token,
-                    len(candidates),
-                    MAX_DETAIL_FETCHES_PER_BOARD,
-                )
-                candidates = candidates[:MAX_DETAIL_FETCHES_PER_BOARD]
-
-            mapped = []
-            for detail_idx, stub in enumerate(candidates):
-                job_id = stub.get("id")
-                if job_id is None:
-                    continue
-                if detail_idx > 0:
-                    time.sleep(DETAIL_DELAY_SEC)
-                try:
-                    full = fetch_board_job(token, job_id)
-                except Exception as exc:
-                    stats["detailFetchErrors"] += 1
-                    logger.warning(
-                        "Greenhouse detail fetch failed %s/%s: %s",
-                        token,
-                        job_id,
-                        exc,
-                    )
-                    # Fall back to stub without JD so normalize can still run gates
-                    full = stub
+                kept += 1
                 mapped.append(
-                    greenhouse_job_to_raw(
-                        full,
+                    ashby_job_to_raw(
+                        job,
                         company=company,
                         board_token=token,
                         source_id=source_id,
@@ -481,31 +399,29 @@ def fetch_greenhouse_raw_jobs(
                 success=True,
                 job_count=len(mapped),
                 listed_count=len(listed),
-                prefiltered_count=len(candidates),
+                prefiltered_count=kept,
             )
         except error.HTTPError as exc:
             stats["sourcesFailed"] += 1
             msg = f"HTTP {exc.code}"
-            logger.warning("Greenhouse poll failed for %s: %s", token, msg)
+            logger.warning("Ashby poll failed for %s: %s", token, msg)
             _update_source_poll(source_id, success=False, error_message=msg)
         except Exception as exc:
             stats["sourcesFailed"] += 1
-            logger.exception("Greenhouse poll failed for %s", token)
+            logger.exception("Ashby poll failed for %s", token)
             _update_source_poll(source_id, success=False, error_message=str(exc))
 
     return raw_jobs, stats
 
 
-class GreenhouseBoardSource:
-    """JobSource-compatible Greenhouse watchlist poller."""
+class AshbyBoardSource:
+    """JobSource-compatible Ashby watchlist poller."""
 
-    name = "greenhouse"
+    name = "ashby"
 
     def __init__(self, source_ids: list[str] | None = None) -> None:
         self.source_ids = source_ids
 
     def fetch_jobs(self, since: datetime | None = None) -> list[dict[str, Any]]:
-        raw, _stats = fetch_greenhouse_raw_jobs(
-            since=since, source_ids=self.source_ids
-        )
+        raw, _stats = fetch_ashby_raw_jobs(since=since, source_ids=self.source_ids)
         return raw

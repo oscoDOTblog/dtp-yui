@@ -58,5 +58,6 @@
   {"_id": "src_greenhouse_twitch", "name": "Twitch", "ats": "greenhouse", "boardToken": "twitch", "priority": 75, "locations": ["San Francisco", "Bay Area"], "enabled": true, "careersUrl": "https://boards.greenhouse.io/twitch"},
   {"_id": "src_greenhouse_roblox", "name": "Roblox", "ats": "greenhouse", "boardToken": "roblox", "priority": 80, "locations": ["San Mateo", "Bay Area"], "enabled": true, "careersUrl": "https://boards.greenhouse.io/roblox"},
   {"_id": "src_greenhouse_unity", "name": "Unity", "ats": "greenhouse", "boardToken": "unity3d", "priority": 75, "locations": ["San Francisco", "Bay Area"], "enabled": true, "careersUrl": "https://boards.greenhouse.io/unity3d"},
-  {"_id": "src_greenhouse_sentry", "name": "Sentry", "ats": "greenhouse", "boardToken": "sentry", "priority": 78, "locations": ["San Francisco", "Bay Area", "Remote"], "enabled": true, "careersUrl": "https://boards.greenhouse.io/sentry"}
+  {"_id": "src_greenhouse_sentry", "name": "Sentry", "ats": "greenhouse", "boardToken": "sentry", "priority": 78, "locations": ["San Francisco", "Bay Area", "Remote"], "enabled": true, "careersUrl": "https://boards.greenhouse.io/sentry"},
+  {"_id": "src_ashby_ashby", "name": "Ashby", "ats": "ashby", "boardToken": "ashby", "priority": 80, "locations": ["San Francisco", "Bay Area", "Remote"], "enabled": true, "careersUrl": "https://jobs.ashbyhq.com/ashby"}
 ]

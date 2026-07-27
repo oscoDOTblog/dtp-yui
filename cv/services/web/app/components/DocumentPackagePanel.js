@@ -20,6 +20,9 @@ export function savePackageToBrowser(jobId, pkg) {
       previews: pkg.previews || {},
       downloads: pkg.downloads || [],
       files: pkg.files || [],
+      renderer: pkg.renderer,
+      selectionSummary: pkg.selectionSummary || null,
+      tailorPayload: pkg.tailorPayload || null,
     };
     localStorage.setItem(packageStorageKey(jobId), JSON.stringify(slim));
   } catch {
@@ -151,6 +154,7 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
 
   const previewEntries = Object.values(pkg.previews);
   const downloads = pkg.downloads || [];
+  const selection = pkg.selectionSummary || pkg.tailorPayload || null;
 
   return (
     <section className="mt-7">
@@ -160,6 +164,60 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
         {pkg.generatedAt ? ` · ${pkg.generatedAt}` : ""} · also saved in this
         browser
       </p>
+
+      {selection ? (
+        <Card className="mt-3.5">
+          <CardPanel className="p-4">
+            <p className="m-0 font-semibold">Resume selection</p>
+            <p className="mt-1.5 m-0 text-sm text-muted-foreground">
+              {selection.bulletCount ?? selection.selectedAchievementIds?.length ?? 0}{" "}
+              bullets
+              {selection.renderer || pkg.renderer
+                ? ` · renderer ${selection.renderer || pkg.renderer}`
+                : ""}
+              {selection.usedLlm === false
+                ? " · deterministic fallback"
+                : selection.usedLlm
+                  ? " · Ollama tailor"
+                  : ""}
+            </p>
+            {Array.isArray(selection.omittedRequirements) &&
+            selection.omittedRequirements.length > 0 ? (
+              <ul className="mt-2 mb-0 pl-5 text-sm text-muted-foreground">
+                {selection.omittedRequirements.slice(0, 6).map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 mb-0 text-sm text-muted-foreground">
+                No omitted JD requirements listed.
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {pkg.files?.includes("selection-report.json") ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    downloadFromApi(jobId, "selection-report.json")
+                  }
+                >
+                  Download selection report
+                </Button>
+              ) : null}
+              {pkg.files?.includes("resume.yaml") ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => downloadFromApi(jobId, "resume.yaml")}
+                >
+                  Download resume.yaml
+                </Button>
+              ) : null}
+            </div>
+          </CardPanel>
+        </Card>
+      ) : null}
 
       <div className="mt-3.5 grid gap-2.5">
         {previewEntries.map((item, idx) => (

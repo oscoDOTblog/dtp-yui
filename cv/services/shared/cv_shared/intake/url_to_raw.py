@@ -9,6 +9,7 @@ import re
 from typing import Any
 from urllib import error, parse, request as urlrequest
 
+from .ashby_source import ashby_job_to_raw, fetch_board_jobs as fetch_ashby_board_jobs
 from .greenhouse_source import GREENHOUSE_API, greenhouse_job_to_raw
 from .html_markdown import description_fields_from_html_or_text
 
@@ -27,6 +28,12 @@ _GH_JOB_RE = re.compile(
 # Some embeds use greenhouse.io/embed/job_app?token=…&for=board
 _GH_EMBED_RE = re.compile(
     r"^https?://(?:www\.)?greenhouse\.io/embed/job_app",
+    flags=re.I,
+)
+# jobs.ashbyhq.com/{org}/{jobId}[/application]
+_ASHBY_JOB_RE = re.compile(
+    r"^https?://(?:www\.)?jobs\.ashbyhq\.com/"
+    r"(?P<token>[^/?#]+)/(?P<job_id>[^/?#]+)(?:/application)?/?(?:[?#].*)?$",
     flags=re.I,
 )
 
@@ -52,6 +59,21 @@ def parse_greenhouse_job_url(url: str) -> dict[str, str] | None:
     return None
 
 
+def parse_ashby_job_url(url: str) -> dict[str, str] | None:
+    """Return {boardToken, jobId} if URL is an Ashby single-job page."""
+    url = (url or "").strip()
+    if not url:
+        return None
+    match = _ASHBY_JOB_RE.match(url)
+    if not match:
+        return None
+    token = match.group("token").strip()
+    job_id = match.group("job_id").strip()
+    if not token or not job_id or job_id.lower() in ("application", "apply"):
+        return None
+    return {"boardToken": token.lower(), "jobId": job_id}
+
+
 def fetch_greenhouse_job(board_token: str, job_id: str) -> dict[str, Any]:
     """GET public Greenhouse single job with content HTML."""
     token = parse.quote((board_token or "").strip(), safe="")
@@ -72,7 +94,22 @@ def fetch_greenhouse_job(board_token: str, job_id: str) -> dict[str, Any]:
     return payload
 
 
-def _company_from_board_token(board_token: str) -> str:
+def fetch_ashby_job(board_token: str, job_id: str) -> dict[str, Any]:
+    """Find one Ashby posting on the public board feed."""
+    jobs = fetch_ashby_board_jobs(board_token, include_compensation=True)
+    wanted = str(job_id).strip().lower()
+    for job in jobs:
+        jid = str(job.get("id") or "").strip().lower()
+        if jid and jid == wanted:
+            return job
+        job_url = (job.get("jobUrl") or "").strip().lower()
+        apply_url = (job.get("applyUrl") or "").strip().lower()
+        if wanted and (wanted in job_url or wanted in apply_url):
+            return job
+    raise ValueError(f"Ashby job {job_id} not found on board {board_token}")
+
+
+def _company_from_board_token(board_token: str, *, ats: str = "greenhouse") -> str:
     token = (board_token or "").strip()
     if not token:
         return "Unknown"
@@ -82,7 +119,7 @@ def _company_from_board_token(board_token: str) -> str:
         from ..db import get_db
 
         source = get_db()[C.JOB_SOURCES].find_one(
-            {"ats": "greenhouse", "boardToken": token.lower()}
+            {"ats": ats, "boardToken": token.lower()}
         )
         if source and source.get("name"):
             return str(source["name"]).strip()
@@ -113,7 +150,7 @@ def queue_item_to_raw(item: dict[str, Any]) -> dict[str, Any]:
     if gh:
         try:
             job = fetch_greenhouse_job(gh["boardToken"], gh["jobId"])
-            company = _company_from_board_token(gh["boardToken"])
+            company = _company_from_board_token(gh["boardToken"], ats="greenhouse")
             source_id = f"manual_queue:{queue_id or 'unknown'}"
             raw = greenhouse_job_to_raw(
                 job,
@@ -147,6 +184,43 @@ def queue_item_to_raw(item: dict[str, Any]) -> dict[str, Any]:
             # Fall through to stub — enrich may still work on the HTML page
         except Exception as exc:
             logger.warning("Greenhouse single-job fetch failed for %s: %s", url, exc)
+            if paste:
+                return _raw_from_paste(url, paste, queue_id)
+
+    ashby = parse_ashby_job_url(url)
+    if ashby:
+        try:
+            job = fetch_ashby_job(ashby["boardToken"], ashby["jobId"])
+            company = _company_from_board_token(ashby["boardToken"], ats="ashby")
+            source_id = f"manual_queue:{queue_id or 'unknown'}"
+            raw = ashby_job_to_raw(
+                job,
+                company=company,
+                board_token=ashby["boardToken"],
+                source_id=source_id,
+            )
+            raw["discoveredBy"] = {
+                **(raw.get("discoveredBy") or {}),
+                "source": "manual-queue",
+                "queueId": queue_id,
+                "boardToken": ashby["boardToken"],
+            }
+            if not raw.get("sourceUrl"):
+                raw["sourceUrl"] = url
+                raw["canonicalApplyUrl"] = url
+                raw["url"] = url
+            raw["_queueMeta"] = {
+                "queueId": queue_id,
+                "skipEnrich": True,
+                "needsPasteIfBlocked": False,
+            }
+            return raw
+        except error.HTTPError as exc:
+            logger.warning("Ashby single-job fetch HTTP %s for %s", exc.code, url)
+            if paste:
+                return _raw_from_paste(url, paste, queue_id)
+        except Exception as exc:
+            logger.warning("Ashby single-job fetch failed for %s: %s", url, exc)
             if paste:
                 return _raw_from_paste(url, paste, queue_id)
 

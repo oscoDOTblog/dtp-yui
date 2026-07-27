@@ -48,6 +48,8 @@ Then open `http://localhost:7545`.
 
 Every resume claim must cite an `evidence` document linked to `workHistory` and/or `projects`. The matcher and document generator must not invent experience.
 
+Resume packages go through an explicit **tailor** step: achievements are addressed as `work:{id}:b{i}` / `project:{id}:b{i}`, Ollama may only select and lightly rewrite with a `sourceId`, and the app verifies every claim against the approved catalog before RenderCV or legacy PDF rendering. See [RESUME_PIPELINE.md](RESUME_PIPELINE.md).
+
 ## Stage 2A intake
 
 Hourly worker (and `POST /ingest/run`) pulls Gmail job alerts → normalize/dedupe → Bay Area location gate → SWE title gate → `analyze_job` for listings that pass **both**. Config: [`config/location.json`](../config/location.json) and [`config/roleFilter.json`](../config/roleFilter.json). Setup: [GMAIL_SETUP.md](GMAIL_SETUP.md). Settings toggles in `cv_settings.gmailIngest` gate which alert senders are processed. After editing either config, restart API/worker or call `reload_location_config()` / `reload_role_filter_config()`.
@@ -56,13 +58,17 @@ Hourly worker (and `POST /ingest/run`) pulls Gmail job alerts → normalize/dedu
 
 Same ingest run also polls enabled Greenhouse boards from `cv_jobSources` when `cv_settings.atsIngest.greenhouse` is true. Public boards API (`boards-api.greenhouse.io`) — no API key. Same location + role gates as Gmail. Setup: [GREENHOUSE_SETUP.md](GREENHOUSE_SETUP.md). Sources UI lists last poll / errors; Settings holds the master ATS toggle.
 
+## Stage 2C Ashby watchlist
+
+Same ingest also polls enabled Ashby boards (`ats: "ashby"`) when `cv_settings.atsIngest.ashby` is true. Public posting API (`api.ashbyhq.com/posting-api/job-board/{slug}`) — no API key; descriptions included in the list response. Setup: [ASHBY_SETUP.md](ASHBY_SETUP.md).
+
 ## Stage 4 GitHub evidence
 
 Worker cron at `:30` UTC (and manual Sync on Repositories) polls enabled repos in `cv_repositories` when `cv_settings.githubEvidence.enabled` is true. PAT in `secrets/github-token`. Commits by configured author logins are classified (Ollama + heuristics) into `cv_evidence` / skill ladder upgrades; `profileVersion` bumps trigger rescore of stale matches. Setup: [GITHUB_SETUP.md](GITHUB_SETUP.md).
 
 ## Manual URL intake queue
 
-Analyze queues one or more job URLs into `cv_intakeQueue`. `POST /ingest/queue` enqueues and kicks `sources=manual` ingest when idle; otherwise items wait for the next hourly/`sources=all` run. Drain path: claim pending → Greenhouse single-job API when the URL matches → else enrich/paste → normalize → upsert → auto-analyze. Blocked pages become `needsPaste` until a description is attached. Sync `POST /jobs` create+analyze remains for API compat; Analyze uses the queue.
+Analyze queues one or more job URLs into `cv_intakeQueue`. `POST /ingest/queue` enqueues and kicks `sources=manual` ingest when idle; otherwise items wait for the next hourly/`sources=all` run. Drain path: claim pending → Greenhouse/Ashby single-job API when the URL matches → else enrich/paste → normalize → upsert → auto-analyze. Blocked pages become `needsPaste` until a description is attached. Sync `POST /jobs` create+analyze remains for API compat; Analyze uses the queue.
 
 ## Role families
 

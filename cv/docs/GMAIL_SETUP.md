@@ -180,7 +180,7 @@ The **Settings** tab (`/settings`) is the source of truth for Gmail alert provid
 - Settings toggles control **which senders are processed** after fetch
 - API: `GET /settings`, `PATCH /settings` with `{ "gmailIngest": { "glassdoorEmail": false } }`
 - Worker and manual ingest both read the same doc — no redeploy when toggling
-- **ATS boards** (Greenhouse) have a separate master toggle under Settings → ATS board ingest (`atsIngest.greenhouse`). See [GREENHOUSE_SETUP.md](GREENHOUSE_SETUP.md).
+- **ATS boards** (Greenhouse, Ashby) have separate master toggles under Settings → ATS board ingest (`atsIngest.greenhouse`, `atsIngest.ashby`). See [GREENHOUSE_SETUP.md](GREENHOUSE_SETUP.md) and [ASHBY_SETUP.md](ASHBY_SETUP.md).
 
 ## 10. Telegram apply alerts
 
@@ -194,6 +194,16 @@ TELEGRAM_CHAT_ID=
 - Soft-fail if unset (ingest continues)
 - Deduped via `telegramNotifiedAt` on the match (reprocess does not spam)
 - Does **not** fire for `consider` / `skip` / `reject`
+
+## 10b. Laptop vs remote (shared Mongo)
+
+If the laptop UI and a remote processor share Atlas/Mongo, set on the **laptop**:
+
+```bash
+AUTO_PROCESSING_ENABLED=false
+```
+
+The worker then idles (no hourly ingest / GitHub cron / on-start ingest). Keep `AUTO_PROCESSING_ENABLED=true` (default) on the remote. Analyze and Generate documents still work on the laptop. See [README.md](../README.md#laptop-vs-remote-processor-shared-mongo).
 
 ## 11. Verification checklist
 

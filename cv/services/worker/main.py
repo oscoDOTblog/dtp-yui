@@ -9,6 +9,7 @@ import time
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from cv_shared.db import ensure_indexes
+from cv_shared.runtime import auto_processing_enabled
 from cv_shared.seed import seed_all
 
 logging.basicConfig(
@@ -50,6 +51,14 @@ def scan_github() -> None:
         logger.exception("scan-github failed")
 
 
+def _idle_forever() -> None:
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        return
+
+
 def main() -> None:
     ensure_indexes()
     if os.environ.get("AUTO_SEED", "true").lower() in ("1", "true", "yes"):
@@ -58,6 +67,14 @@ def main() -> None:
             logger.info("Seed result: %s", result)
         except Exception as exc:
             logger.exception("Seed failed: %s", exc)
+
+    if not auto_processing_enabled():
+        logger.info(
+            "Background processing disabled (AUTO_PROCESSING_ENABLED=false); idling. "
+            "Hourly ingest/GitHub cron will not run on this host."
+        )
+        _idle_forever()
+        return
 
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(ingest_jobs, "cron", minute=0, id="ingest-jobs")

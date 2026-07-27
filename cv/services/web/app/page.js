@@ -17,6 +17,10 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { jobHeadline, jobMetaLine } from "../lib/jobDisplay";
+import {
+  applicationStatusLabel,
+  resolveApplicationStatus,
+} from "../lib/applicationStatus";
 
 const PAGE_SIZE_OPTIONS = [
   { label: "25 at a time", value: "25" },
@@ -37,6 +41,7 @@ function sourceLabel(job) {
   const discovered = job.discoveredBy?.source;
   if (src === "gmail" && discovered) return discovered.replace(/-email$/, "");
   if (src === "greenhouse") return "greenhouse";
+  if (src === "ashby") return "ashby";
   return src;
 }
 
@@ -67,6 +72,18 @@ function roleChip(job) {
   return null;
 }
 
+function applicationStatusChip(job) {
+  const id = resolveApplicationStatus(job);
+  if (!id) return null;
+  if (id === "rejected") return { label: "Rejected", variant: "error" };
+  if (id === "apply") return { label: "Apply", variant: "outline" };
+  if (id === "pending") return { label: "Pending", variant: "warning" };
+  return {
+    label: applicationStatusLabel(id),
+    variant: "success",
+  };
+}
+
 function statusBannerText(status) {
   if (!status || status.status === "idle") return "";
   if (status.status === "running") {
@@ -95,6 +112,19 @@ function statusBannerText(status) {
   return "";
 }
 
+function ingestErrorHint(status) {
+  const errors = status?.errors || status?.summary?.errors || [];
+  if (!Array.isArray(errors) || errors.length === 0) return "";
+  const first = String(errors[0] || "");
+  if (
+    /invalid_grant/i.test(first) ||
+    /token has been expired or revoked/i.test(first)
+  ) {
+    return "Gmail OAuth expired or was revoked — re-auth Google (refresh token in secrets). Greenhouse watchlist and Analyze queue still work without Gmail.";
+  }
+  return first.length > 280 ? `${first.slice(0, 280)}…` : first;
+}
+
 export default function HomePage() {
   const [eligibleFilter, setEligibleFilter] = useState("applyReady");
   const [jobs, setJobs] = useState([]);
@@ -112,6 +142,7 @@ export default function HomePage() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelStartedAt, setCancelStartedAt] = useState(null);
   const [showForceClear, setShowForceClear] = useState(false);
+  const [autoProcessingEnabled, setAutoProcessingEnabled] = useState(true);
 
   const ingesting = ingestStatus?.status === "running";
 
@@ -119,6 +150,7 @@ export default function HomePage() {
     try {
       let path = "/jobs";
       if (eligibleFilter === "applyReady") path = "/jobs?applyReady=true";
+      if (eligibleFilter === "recent") path = "/jobs?recent=true";
       if (eligibleFilter === "eligible") path = "/jobs?eligible=true";
       if (eligibleFilter === "remote") path = "/jobs?remote=true";
       if (eligibleFilter === "invalid") path = "/jobs?invalid=true";
@@ -157,9 +189,37 @@ export default function HomePage() {
       setError("");
       await loadJobs();
       if (!cancelled) {
+        try {
+          const runtime = await apiGet("/runtime");
+          if (!cancelled && runtime) {
+            const enabled =
+              typeof runtime.autoProcessingEnabled === "boolean"
+                ? runtime.autoProcessingEnabled
+                : typeof runtime.processingEnabled === "boolean"
+                  ? runtime.processingEnabled
+                  : true;
+            setAutoProcessingEnabled(enabled);
+          }
+        } catch {
+          // Older API without /runtime — assume processing on
+        }
         const status = await refreshStatus();
         if (status?.status === "running" && status._id) {
           setRunId(status._id);
+          if (status.cancelRequested) {
+            setCancelling(true);
+            setCancelStartedAt(Date.now() - 15000);
+            setShowForceClear(true);
+            const hint = ingestErrorHint(status);
+            setInfo(
+              hint ||
+                "Ingest is stuck cancelling (often after an API restart). Use Force clear lock.",
+            );
+          }
+        }
+        const hint = ingestErrorHint(status);
+        if (hint && status?.status !== "running") {
+          setError(hint);
         }
         setLoading(false);
       }
@@ -179,17 +239,23 @@ export default function HomePage() {
     const id = setInterval(async () => {
       const status = await refreshStatus();
       await loadJobs();
+      const hint = ingestErrorHint(status);
+      if (hint) setError(hint);
       if (status && status.status !== "running") {
         setInfo(statusBannerText(status));
         setCancelling(false);
         setCancelStartedAt(null);
         setShowForceClear(false);
-      } else if (
-        status?.cancelRequested &&
-        cancelStartedAt &&
-        Date.now() - cancelStartedAt > 10000
-      ) {
-        setShowForceClear(true);
+      } else if (status?.cancelRequested) {
+        setCancelling(true);
+        // Stuck cancel with no worker progress → offer force clear quickly
+        const stalled =
+          !status.listingsProcessed &&
+          !status.listingsTotal &&
+          status.currentTitle === "Cancelling…";
+        if (stalled || (cancelStartedAt && Date.now() - cancelStartedAt > 8000)) {
+          setShowForceClear(true);
+        }
       }
     }, 3000);
     return () => clearInterval(id);
@@ -357,6 +423,7 @@ export default function HomePage() {
 
   const filters = [
     { id: "applyReady", label: "Apply-Ready" },
+    { id: "recent", label: "Recent" },
     { id: "eligible", label: "Bay Area" },
     { id: "remote", label: "Remote" },
     { id: "invalid", label: "Invalid" },
@@ -412,6 +479,16 @@ export default function HomePage() {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
+      {!autoProcessingEnabled ? (
+        <Alert variant="warning" className="mb-4">
+          <AlertDescription>
+            Background processing is off on this host (
+            <code>AUTO_PROCESSING_ENABLED=false</code>). Hourly ingest and GitHub
+            cron run on the processor. Analyze, Generate documents, and manual
+            Fetch still work here.
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {info && !ingesting ? (
         <Alert variant="warning" className="mb-4">
           <AlertDescription>{info}</AlertDescription>
@@ -430,16 +507,29 @@ export default function HomePage() {
           />
           <div className="min-w-0 flex-1">
             <p className="m-0 mb-1 font-semibold text-foreground">
-              Ingesting JobAlerts
+              {ingestStatus?.cancelRequested
+                ? "Stopping ingest"
+                : "Ingesting JobAlerts"}
             </p>
             <p className="m-0 text-sm text-foreground/90">
               {statusBannerText(ingestStatus)}
             </p>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Splitting digests · fetching listing pages · Bay Area gate ·
-              scoring one by one. You can Open finished jobs below while this
-              runs.
-            </p>
+            {ingestErrorHint(ingestStatus) ? (
+              <p className="mt-1.5 mb-0 text-sm text-destructive">
+                {ingestErrorHint(ingestStatus)}
+              </p>
+            ) : (
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                Splitting digests · fetching listing pages · Bay Area gate ·
+                scoring one by one. You can Open finished jobs below while this
+                runs.
+              </p>
+            )}
+            {ingestStatus?.cancelRequested ? (
+              <p className="mt-1.5 mb-0 text-sm text-muted-foreground">
+                If this hangs after an API/worker restart, use Force clear lock.
+              </p>
+            ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 type="button"
@@ -569,6 +659,7 @@ export default function HomePage() {
           const match = job.match;
           const loc = locationChip(job);
           const role = roleChip(job);
+          const appStatus = applicationStatusChip(job);
           const openHref = listingUrl(job);
           const selected = selectedIds.has(job._id);
           return (
@@ -630,6 +721,9 @@ export default function HomePage() {
                       ) : null}
                       {role ? (
                         <Badge variant={role.variant}>{role.label}</Badge>
+                      ) : null}
+                      {appStatus ? (
+                        <Badge variant={appStatus.variant}>{appStatus.label}</Badge>
                       ) : null}
                       {match ? (
                         <Badge

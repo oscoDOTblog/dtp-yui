@@ -41,6 +41,17 @@ Open:
 
 The worker auto-seeds MongoDB from `seed/` on first start (profile + Greenhouse watchlist).
 
+### Laptop vs remote processor (shared Mongo)
+
+If a **laptop** (debug UI) and a **remote host** share the same MongoDB/Atlas:
+
+| Host | `.env` |
+|---|---|
+| Remote (real processing) | `AUTO_PROCESSING_ENABLED=true` (default) — hourly ingest + GitHub cron |
+| Laptop (debug) | `AUTO_PROCESSING_ENABLED=false` — worker idles; no automatic background jobs |
+
+One-offs still work on the laptop: Analyze, Re-analyze, Generate documents, and manual Inbox **Fetch new alerts**. Prefer `docker compose up -d api web` on the laptop (omit `worker`) when you do not need the idle worker container at all.
+
 ## Gmail job-alert intake (Stage 2A)
 
 Follow the full guide: **[docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md)**
@@ -120,4 +131,4 @@ ssh -L 7545:localhost:7545 -L 8000:localhost:8000 user@legion-wireguard-ip
 
 In: profile seed, manual URL intake queue (Analyze → `cv_intakeQueue`), Gmail digest → per-listing ingest (background), Greenhouse board watchlist + Sources UI, GitHub evidence engine + Repositories UI, Settings toggles for Gmail / ATS / GitHub (`cv_settings`), Bay Area location gate, Ollama match, Telegram on apply (≥85), gap insights, document generation, dashboard, Docker Compose.
 
-Out: Lever/Ashby (2C), Telegram digests for consider-band, logistics commute scoring (3), Playwright ATS (see roadmap).
+Out: Lever (2C), Telegram digests for consider-band, logistics commute scoring (3), Playwright ATS (see roadmap). Ashby watchlist is done — see [docs/ASHBY_SETUP.md](docs/ASHBY_SETUP.md).

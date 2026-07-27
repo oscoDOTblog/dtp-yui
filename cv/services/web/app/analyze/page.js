@@ -419,7 +419,7 @@ export default function AnalyzePage() {
                   value={urlsText}
                   onChange={(e) => setUrlsText(e.target.value)}
                   placeholder={
-                    "https://boards.greenhouse.io/…/jobs/…\nhttps://…"
+                    "https://boards.greenhouse.io/…/jobs/…\nhttps://jobs.ashbyhq.com/…/…\nhttps://…"
                   }
                   disabled={busy}
                   autoFocus
@@ -434,7 +434,7 @@ export default function AnalyzePage() {
                   className="min-h-[72px] border-primary/20 bg-black/25 font-mono text-sm [&_textarea]:break-all"
                   value={urlsText}
                   onChange={(e) => setUrlsText(e.target.value)}
-                  placeholder="https://boards.greenhouse.io/…/jobs/…"
+                  placeholder="https://boards.greenhouse.io/…/jobs/… or jobs.ashbyhq.com/…"
                   disabled={busy}
                 />
               </Field>

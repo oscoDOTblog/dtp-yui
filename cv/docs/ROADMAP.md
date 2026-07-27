@@ -36,10 +36,13 @@
 - Sources UI (last poll / errors / per-company enable)
 - Setup guide: [GREENHOUSE_SETUP.md](GREENHOUSE_SETUP.md)
 
-## Stage 2C — Lever (+ Ashby if watchlist needs it)
+## Stage 2C — Ashby *(done)* + Lever
 
-- Lever Postings API adapter (same interface as Greenhouse)
-- Add Ashby only if enough priority companies use it
+- Ashby public Job Postings API adapter (same watchlist + gates as Greenhouse)
+- Settings master toggle (`atsIngest.ashby`)
+- Sources UI ATS selector + Poll all Ashby
+- Setup guide: [ASHBY_SETUP.md](ASHBY_SETUP.md)
+- Lever Postings API adapter still pending
 
 ## Stage 3 — Logistics scoring + notify
 
@@ -55,6 +58,15 @@
 - Update skills/projects; rescore open jobs when profile version bumps
 - `repository-cache/` for shallow clones when needed
 - Setup guide: [GITHUB_SETUP.md](GITHUB_SETUP.md)
+
+## Stage 4.5 — Resume tailor + RenderCV
+
+- Achievement catalog from work/project bullets (`work:` / `project:` sourceIds)
+- Ollama select+rewrite with Pydantic verification (no invented claims)
+- `selection-report.json` + `gaps.md` beside each package
+- PDF via RenderCV behind `cv_settings.resume.renderEngine` (default `legacy`)
+- Structured DOCX from the same tailor payload
+- Guide: [RESUME_PIPELINE.md](RESUME_PIPELINE.md)
 
 ## Stage 5 — Application tracker
 

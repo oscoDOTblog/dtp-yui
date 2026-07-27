@@ -20,7 +20,7 @@ Field names use **camelCase**.
 | `cv_applicationPackages` | Paths under `generated-applications/` |
 | `cv_applications` | Pipeline status (`discovered` → `drafted`, …) |
 | `cv_documents` | Metadata for generated resume/cover letter files |
-| `cv_userDecisions` | apply / save / reject / draft |
+| `cv_userDecisions` | Application track updates (`apply` → `round4`, `rejected`) |
 | `cv_systemRuns` | Seed, analyze, and ingest run logs |
 | `cv_gapInsights` | Aggregated recurring gaps/warnings across analyses (ranked by `totalSeen`) |
 
@@ -34,8 +34,8 @@ One document per normalized requirement. Upserted on each successful job analyze
 
 | Field | Purpose |
 |---|---|
-| `externalId` | Stable id from source, e.g. `gmail:msgId:linkHash` or `greenhouse:token:123` |
-| `source` | `manual` \| `gmail` \| `greenhouse` \| `lever` \| … |
+| `externalId` | Stable id from source, e.g. `gmail:msgId:linkHash`, `greenhouse:token:123`, or `ashby:slug:uuid` |
+| `source` | `manual` \| `gmail` \| `greenhouse` \| `ashby` \| `lever` \| … |
 | `sourceUrl` | URL as discovered |
 | `canonicalApplyUrl` | Prefer company ATS URL after redirect resolve |
 | `discoveredBy` | `{ source, alertName?, alertLocation?, messageId? }` |
@@ -46,7 +46,9 @@ One document per normalized requirement. Upserted on each successful job analyze
 | `contentHash` | Hash of description text (legacy + still used) |
 | `descriptionRaw` | Plain-text job description (matching, documents, hashing) |
 | `descriptionMarkdown` | Readable markdown for UI render (from structured HTML at intake); fall back to `descriptionRaw` when absent |
-| `status` | `new` \| `out_of_area` (Bay Area gate) \| `wrong_role` (SWE title gate) \| … |
+| `status` | Intake: `new` \| `out_of_area` \| `wrong_role`; soft pipeline mirrors (`interested`, `saved`, `interview`, `rejected`) |
+| `applicationStatus` | Human track: `apply` \| `pending` \| `round1`–`round4` \| `rejected` |
+| `applicationStatusAt` | When `applicationStatus` was last set |
 
 ### `locationAssessment`
 
@@ -99,7 +101,8 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
     "otherEmail": true
   },
   "atsIngest": {
-    "greenhouse": true
+    "greenhouse": true,
+    "ashby": true
   },
   "githubEvidence": {
     "enabled": true,
@@ -107,21 +110,37 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
     "defaultLookback": "7d",
     "discoverRepos": true
   },
+  "ollama": {
+    "think": false,
+    "thinkByProcess": {
+      "jobExtract": false,
+      "profileUpdate": false,
+      "githubClassify": false,
+      "coverLetter": false,
+      "resumeTailor": false
+    }
+  },
+  "resume": {
+    "renderEngine": "legacy",
+    "templateId": "classic",
+    "pages": 2
+  },
   "updatedAt": "ISO-8601"
 }
 ```
 
+`resume.renderEngine`: `legacy` (ReportLab) or `rendercv`. See [RESUME_PIPELINE.md](RESUME_PIPELINE.md).
 ### `cv_jobSources`
 
 | Field | Purpose |
 |---|---|
-| `_id` | e.g. `src_greenhouse_stripe` |
+| `_id` | e.g. `src_greenhouse_stripe` or `src_ashby_ashby` |
 | `name` | Display company name |
-| `ats` | `greenhouse` (Lever later) |
-| `boardToken` | Public Greenhouse board slug |
+| `ats` | `greenhouse` \| `ashby` (Lever later) |
+| `boardToken` | Public board slug (Greenhouse token or Ashby jobs page name) |
 | `priority` | Poll order (higher first) |
 | `locations` | Preferred / hint locations |
-| `enabled` | Per-company poll switch (also requires Settings `atsIngest.greenhouse`) |
+| `enabled` | Per-company poll switch (also requires Settings `atsIngest.{ats}`) |
 | `careersUrl` | Board careers URL |
 | `lastPolledAt` / `lastSuccessAt` | Poll timestamps |
 | `lastError` | Last poll error string (cleared on success) |

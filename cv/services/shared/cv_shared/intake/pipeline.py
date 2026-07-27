@@ -11,8 +11,13 @@ from typing import Any, Callable
 
 from .. import collections as C
 from ..db import get_db
-from ..matching import analyze_job
-from ..settings import get_app_settings, is_ats_source_enabled, is_gmail_source_enabled
+from ..matching import analyze_job, seed_placeholders_from_description
+from ..settings import (
+    get_app_settings,
+    ingest_drop_reason,
+    is_ats_source_enabled,
+    is_gmail_source_enabled,
+)
 from ..telegram import notify_apply_match
 from .fetch_listing import enrich_raw_job
 from .gmail_client import (
@@ -22,7 +27,9 @@ from .gmail_client import (
     processed_label_enabled,
 )
 from .gmail_source import message_to_raw_jobs
+from .ashby_source import fetch_ashby_raw_jobs
 from .greenhouse_source import fetch_greenhouse_raw_jobs
+from .location import assess_location
 from .manual_queue import (
     claim_pending,
     count_by_status,
@@ -31,6 +38,7 @@ from .manual_queue import (
     mark_needs_paste,
 )
 from .normalize import normalize_raw_job
+from .role_filter import assess_role_fit
 from .upsert import upsert_normalized_job
 from .url_to_raw import is_enrich_blocked_or_empty, queue_item_to_raw
 
@@ -301,8 +309,9 @@ def _ingest_raw_jobs(
                 continue
 
         try:
-            # Greenhouse boards / pre-fetched content — skip URL enrich.
-            if (raw.get("source") or "") == "greenhouse" or (
+            # ATS boards / pre-fetched content — skip URL enrich.
+            src = (raw.get("source") or "").strip().lower()
+            if src in ("greenhouse", "ashby") or (
                 raw.get("_queueMeta") or {}
             ).get("skipEnrich"):
                 enriched = {k: v for k, v in raw.items() if k != "_queueMeta"}
@@ -310,9 +319,30 @@ def _ingest_raw_jobs(
                 enriched = enrich_raw_job(
                     {k: v for k, v in raw.items() if k != "_queueMeta"}
                 )
+            enriched = seed_placeholders_from_description(enriched)
             normalized = normalize_raw_job(enriched)
             if enriched.get("fetchStatus"):
                 normalized["fetchStatus"] = enriched["fetchStatus"]
+
+            drop = ingest_drop_reason(normalized, app_settings)
+            if drop:
+                if drop == "outOfArea":
+                    summary["outOfArea"] = summary.get("outOfArea", 0) + 1
+                    summary["skippedOutOfArea"] = (
+                        summary.get("skippedOutOfArea", 0) + 1
+                    )
+                else:
+                    summary["wrongRole"] = summary.get("wrongRole", 0) + 1
+                    summary["skippedWrongRole"] = (
+                        summary.get("skippedWrongRole", 0) + 1
+                    )
+                if mid:
+                    succeeded_messages.add(mid)
+                    skipped_only_messages.discard(mid)
+                summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
+                publish()
+                continue
+
             result = upsert_normalized_job(normalized)
             job = result["job"]
             if mid:
@@ -347,23 +377,83 @@ def _ingest_raw_jobs(
     }
 
 
+def _refresh_job_assessments(job_id: str) -> dict[str, Any] | None:
+    """Recompute location/role assessments after extract fills title/location/workMode.
+
+    Does not change ``status`` — matches job-page Re-analyze, which leaves
+    status as ``analyzed`` while assessments drive inbox chips/filters.
+    """
+    db = get_db()
+    job = db[C.JOBS].find_one({"_id": job_id})
+    if not job:
+        return None
+    description = job.get("descriptionRaw") or ""
+    location_assessment = assess_location(
+        location=job.get("location") or "",
+        title=job.get("title") or "",
+        description=description,
+        work_mode_hint=job.get("workMode"),
+    )
+    role_assessment = assess_role_fit(
+        title=job.get("title") or "",
+        description=description,
+    )
+    updates: dict[str, Any] = {
+        "locationAssessment": location_assessment,
+        "roleAssessment": role_assessment,
+    }
+    arrangement = location_assessment.get("workArrangement")
+    if arrangement and arrangement != "unknown":
+        updates["workMode"] = arrangement
+    db[C.JOBS].update_one({"_id": job_id}, {"$set": updates})
+    return db[C.JOBS].find_one({"_id": job_id})
+
+
 def _analyze_after_upsert(
     job: dict[str, Any],
     *,
     created: bool,
     analyze: bool,
     summary: dict[str, Any],
+    force: bool = False,
 ) -> None:
-    """Shared auto-analyze gate used by Gmail/Greenhouse/manual queue paths."""
-    if job.get("status") == "out_of_area":
-        summary["outOfArea"] = summary.get("outOfArea", 0) + 1
-        return
-    if job.get("status") == "wrong_role":
-        summary["wrongRole"] = summary.get("wrongRole", 0) + 1
-        return
+    """Shared auto-analyze gate used by Gmail/Greenhouse/manual queue paths.
+
+    ``force=True`` (manual URL queue): always run the same ``analyze_job`` path as
+    the job-page Re-analyze button. Early Bay Area / role gates often fire while
+    title/location are still placeholders, and existing matches skip re-analyze.
+    """
+    if not force:
+        if job.get("status") == "out_of_area":
+            summary["outOfArea"] = summary.get("outOfArea", 0) + 1
+            return
+        if job.get("status") == "wrong_role":
+            summary["wrongRole"] = summary.get("wrongRole", 0) + 1
+            return
     if not analyze:
         return
     db = get_db()
+
+    if force:
+        try:
+            match = analyze_job(job["_id"])
+            summary["analyzed"] = summary.get("analyzed", 0) + 1
+            refreshed = _refresh_job_assessments(job["_id"]) or job
+            loc_ok = bool(
+                refreshed.get("locationAssessment", {}).get("bayAreaEligible")
+            )
+            role_ok = bool(refreshed.get("roleAssessment", {}).get("roleEligible"))
+            if not loc_ok:
+                summary["outOfArea"] = summary.get("outOfArea", 0) + 1
+            elif not role_ok:
+                summary["wrongRole"] = summary.get("wrongRole", 0) + 1
+            elif notify_apply_match(refreshed, match):
+                summary["telegramSent"] = summary.get("telegramSent", 0) + 1
+        except Exception as exc:
+            logger.exception("analyze failed for %s", job["_id"])
+            summary["errors"].append(f"analyze {job['_id']}: {exc}")
+        return
+
     eligible = bool(
         job.get("locationAssessment", {}).get("bayAreaEligible")
         and job.get("roleAssessment", {}).get("roleEligible")
@@ -438,7 +528,8 @@ def _drain_manual_queue(
                 title_label = f"{raw_title} @ {raw_company or '?'}"
                 summary["currentTitle"] = f"Queue: {title_label}"
                 publish()
-            if queue_meta.get("skipEnrich") or (raw.get("source") or "") == "greenhouse":
+            src = (raw.get("source") or "").strip().lower()
+            if queue_meta.get("skipEnrich") or src in ("greenhouse", "ashby"):
                 enriched = raw
             else:
                 enriched = enrich_raw_job(raw)
@@ -456,9 +547,36 @@ def _drain_manual_queue(
                 publish()
                 continue
 
+            # Fill placeholders from description before Bay Area / role gates
+            enriched = seed_placeholders_from_description(enriched)
+
             normalized = normalize_raw_job(enriched)
             if enriched.get("fetchStatus"):
                 normalized["fetchStatus"] = enriched["fetchStatus"]
+
+            drop = ingest_drop_reason(normalized, get_app_settings())
+            if drop:
+                if drop == "outOfArea":
+                    summary["outOfArea"] = summary.get("outOfArea", 0) + 1
+                    summary["skippedOutOfArea"] = (
+                        summary.get("skippedOutOfArea", 0) + 1
+                    )
+                    drop_msg = "Dropped before analyze: out of area"
+                else:
+                    summary["wrongRole"] = summary.get("wrongRole", 0) + 1
+                    summary["skippedWrongRole"] = (
+                        summary.get("skippedWrongRole", 0) + 1
+                    )
+                    drop_msg = "Dropped before analyze: wrong role"
+                mark_failed(
+                    queue_id,
+                    error=drop_msg,
+                    fetch_status=enriched.get("fetchStatus"),
+                )
+                summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
+                publish()
+                continue
+
             result = upsert_normalized_job(normalized)
             job = result["job"]
             if result["created"]:
@@ -471,13 +589,19 @@ def _drain_manual_queue(
             progress_title = (job.get("title") or "").strip()
             progress_company = (job.get("company") or "").strip()
             if progress_title and progress_title not in ("Untitled", "Untitled role"):
-                summary["currentTitle"] = f"Analyzing: {progress_title} @ {progress_company or '?'}"
+                summary["currentTitle"] = (
+                    f"Analyzing: {progress_title} @ {progress_company or '?'}"
+                )
                 publish()
 
+            # Same path as job-page Re-analyze — do not skip on early gates / existing match
             _analyze_after_upsert(
-                job, created=result["created"], analyze=analyze, summary=summary
+                job,
+                created=result["created"],
+                analyze=analyze,
+                summary=summary,
+                force=True,
             )
-            # Refresh after analyze so queue rows get extracted title/company
             job = get_db()[C.JOBS].find_one({"_id": job["_id"]}) or job
             mark_done(
                 queue_id,
@@ -506,13 +630,14 @@ def run_ingest(
     progress_cb: Callable[[dict[str, Any]], None] | None = None,
     sources: str = "all",
     greenhouse_source_ids: list[str] | None = None,
+    ashby_source_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Run one ingest cycle. sources: all | gmail | greenhouse | manual."""
+    """Run one ingest cycle. sources: all | gmail | greenhouse | ashby | manual."""
     started = _now()
     db = get_db()
     run_id = run_id or f"ingest_{uuid.uuid4().hex[:16]}"
     sources_mode = (sources or "all").strip().lower()
-    if sources_mode not in ("all", "gmail", "greenhouse", "manual"):
+    if sources_mode not in ("all", "gmail", "greenhouse", "ashby", "manual"):
         sources_mode = "all"
 
     summary: dict[str, Any] = {
@@ -524,6 +649,8 @@ def run_ingest(
         "analyzed": 0,
         "outOfArea": 0,
         "wrongRole": 0,
+        "skippedOutOfArea": 0,
+        "skippedWrongRole": 0,
         "listingsTotal": 0,
         "listingsProcessed": 0,
         "telegramSent": 0,
@@ -535,6 +662,8 @@ def run_ingest(
         "gmailJobsUpdated": 0,
         "greenhouseJobsCreated": 0,
         "greenhouseJobsUpdated": 0,
+        "ashbyJobsCreated": 0,
+        "ashbyJobsUpdated": 0,
         "manualJobsCreated": 0,
         "manualJobsUpdated": 0,
         "queueClaimed": 0,
@@ -606,6 +735,7 @@ def run_ingest(
     app_settings = get_app_settings()
     run_gmail = sources_mode in ("all", "gmail")
     run_greenhouse = sources_mode in ("all", "greenhouse")
+    run_ashby = sources_mode in ("all", "ashby")
     run_manual = sources_mode in ("all", "manual")
     max_listings = ingest_max_listings()
     remaining = max_listings
@@ -712,7 +842,8 @@ def run_ingest(
         else:
             try:
                 gh_raw, gh_stats = fetch_greenhouse_raw_jobs(
-                    source_ids=greenhouse_source_ids
+                    source_ids=greenhouse_source_ids,
+                    app_settings=app_settings,
                 )
             except Exception as exc:
                 logger.exception("Greenhouse fetch failed")
@@ -725,6 +856,20 @@ def run_ingest(
 
             summary["sourcesPolled"] = gh_stats.get("sourcesPolled", 0)
             summary["sourcesFailed"] = gh_stats.get("sourcesFailed", 0)
+            summary["greenhouseJobsListed"] = gh_stats.get("jobsListed", 0)
+            summary["greenhouseJobsPrefiltered"] = gh_stats.get(
+                "jobsPrefiltered", 0
+            )
+            summary["greenhouseTwoPhase"] = bool(gh_stats.get("twoPhase"))
+            summary["skippedOutOfArea"] = summary.get("skippedOutOfArea", 0) + int(
+                gh_stats.get("skippedOutOfArea") or 0
+            )
+            summary["skippedWrongRole"] = summary.get("skippedWrongRole", 0) + int(
+                gh_stats.get("skippedWrongRole") or 0
+            )
+            summary["skippedSourceLocation"] = int(
+                gh_stats.get("skippedSourceLocation") or 0
+            )
             gh_raw, remaining = _truncate_listings(
                 gh_raw,
                 remaining=remaining,
@@ -743,6 +888,67 @@ def run_ingest(
                 publish=publish,
                 gate_gmail=False,
                 count_prefix="greenhouse",
+                run_id=run_id,
+            )
+
+    # --- Ashby ---
+    if run_ashby and not was_cancelled():
+        if not is_ats_source_enabled("ashby", app_settings):
+            summary["skippedDisabledAts"] = {
+                **(summary.get("skippedDisabledAts") or {}),
+                "ashby": True,
+            }
+            publish()
+        else:
+            try:
+                ashby_raw, ashby_stats = fetch_ashby_raw_jobs(
+                    source_ids=ashby_source_ids,
+                    app_settings=app_settings,
+                )
+            except Exception as exc:
+                logger.exception("Ashby fetch failed")
+                summary["errors"].append(f"ashby: {exc}")
+                ashby_raw, ashby_stats = [], {
+                    "sourcesPolled": 0,
+                    "sourcesFailed": 0,
+                    "jobsFetched": 0,
+                }
+
+            summary["sourcesPolled"] = summary.get("sourcesPolled", 0) + int(
+                ashby_stats.get("sourcesPolled") or 0
+            )
+            summary["sourcesFailed"] = summary.get("sourcesFailed", 0) + int(
+                ashby_stats.get("sourcesFailed") or 0
+            )
+            summary["ashbyJobsListed"] = ashby_stats.get("jobsListed", 0)
+            summary["ashbyJobsPrefiltered"] = ashby_stats.get("jobsPrefiltered", 0)
+            summary["skippedOutOfArea"] = summary.get("skippedOutOfArea", 0) + int(
+                ashby_stats.get("skippedOutOfArea") or 0
+            )
+            summary["skippedWrongRole"] = summary.get("skippedWrongRole", 0) + int(
+                ashby_stats.get("skippedWrongRole") or 0
+            )
+            summary["skippedSourceLocation"] = summary.get(
+                "skippedSourceLocation", 0
+            ) + int(ashby_stats.get("skippedSourceLocation") or 0)
+            ashby_raw, remaining = _truncate_listings(
+                ashby_raw,
+                remaining=remaining,
+                label="Ashby",
+                max_listings=max_listings,
+                summary=summary,
+            )
+            summary["listingsTotal"] = summary.get("listingsTotal", 0) + len(ashby_raw)
+            publish()
+
+            _ingest_raw_jobs(
+                ashby_raw,
+                summary,
+                analyze=analyze,
+                app_settings=app_settings,
+                publish=publish,
+                gate_gmail=False,
+                count_prefix="ashby",
                 run_id=run_id,
             )
 
@@ -783,6 +989,7 @@ def start_ingest_async(
     reprocess: bool = False,
     sources: str = "all",
     greenhouse_source_ids: list[str] | None = None,
+    ashby_source_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Single-flight background ingest for the API. Returns immediately."""
     with _ingest_lock:
@@ -824,6 +1031,7 @@ def start_ingest_async(
                     run_id=run_id,
                     sources=sources,
                     greenhouse_source_ids=greenhouse_source_ids,
+                    ashby_source_ids=ashby_source_ids,
                 )
             except Exception:
                 logger.exception("background ingest failed")

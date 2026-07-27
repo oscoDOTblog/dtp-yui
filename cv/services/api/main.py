@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib import error, request as urlrequest
 
@@ -61,7 +61,9 @@ class SettingsPatchBody(BaseModel):
     gmailIngest: Optional[dict[str, bool]] = None
     atsIngest: Optional[dict[str, bool]] = None
     githubEvidence: Optional[dict[str, Any]] = None
+    ingestFilters: Optional[dict[str, bool]] = None
     ollama: Optional[dict[str, Any]] = None
+    resume: Optional[dict[str, Any]] = None
 
 
 class SourceCreateBody(BaseModel):
@@ -102,7 +104,21 @@ class RepositorySyncBody(BaseModel):
 
 
 class DecisionBody(BaseModel):
-    decision: str = Field(..., description="apply | save | reject | draft")
+    decision: str = Field(
+        ...,
+        description=(
+            "apply | pending | round1 | round2 | round3 | round4 | rejected "
+            "(legacy: save→pending, draft→apply)"
+        ),
+    )
+    note: Optional[str] = None
+
+
+class ApplicationStatusBody(BaseModel):
+    applicationStatus: str = Field(
+        ...,
+        description="apply | pending | round1 | round2 | round3 | round4 | rejected",
+    )
     note: Optional[str] = None
 
 
@@ -265,6 +281,18 @@ def health() -> dict:
     except Exception:
         mongo_ok = False
     return {"ok": True, "mongo": mongo_ok}
+
+
+@app.get("/runtime")
+def get_runtime() -> dict:
+    """Host role flags for this API process (not stored in Mongo)."""
+    from cv_shared.runtime import auto_processing_enabled
+
+    enabled = auto_processing_enabled()
+    return {
+        "autoProcessingEnabled": enabled,
+        "processingEnabled": enabled,
+    }
 
 
 @app.post("/seed")
@@ -463,6 +491,7 @@ def list_jobs(
     applyReady: str | None = None,
     remote: str | None = None,
     invalid: str | None = None,
+    recent: str | None = None,
     status: str | None = None,
 ) -> list:
     """List jobs.
@@ -472,6 +501,7 @@ def list_jobs(
     - applyReady: both gates true (and status not out_of_area/wrong_role)
     - remote: remote work mode or location assessment
     - invalid: union of out-of-area and wrong-role jobs
+    - recent: discovered or last seen within the last 7 days
     - status: exact job status (e.g. wrong_role, out_of_area, new)
     """
     query: dict = {}
@@ -488,6 +518,12 @@ def list_jobs(
         query["$or"] = [
             {"workMode": "remote"},
             {"locationAssessment.workArrangement": "remote"},
+        ]
+    elif recent is not None and recent.lower() in ("true", "1", "yes"):
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        query["$or"] = [
+            {"discoveredAt": {"$gte": cutoff}},
+            {"lastSeenAt": {"$gte": cutoff}},
         ]
     else:
         if eligible is not None and eligible.lower() in ("true", "1", "yes"):
@@ -519,6 +555,11 @@ def list_jobs(
             return score if isinstance(score, (int, float)) else -1
 
         out.sort(key=match_score, reverse=True)
+    elif recent is not None and recent.lower() in ("true", "1", "yes"):
+        def recent_key(item: dict) -> str:
+            return item.get("lastSeenAt") or item.get("discoveredAt") or ""
+
+        out.sort(key=recent_key, reverse=True)
     return out
 
 
@@ -541,12 +582,17 @@ def bulk_delete_jobs(body: BulkDeleteBody) -> dict:
 
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str) -> dict:
+    from cv_shared.application_status import resolve_application_status
+
     job = get_db()[C.JOBS].find_one({"_id": job_id})
     if not job:
         raise HTTPException(404, "Job not found")
     match = get_db()[C.JOB_MATCHES].find_one({"jobId": job_id})
     item = _serialize(job)
     item["match"] = _serialize(match)
+    resolved = resolve_application_status(job)
+    if resolved:
+        item["applicationStatus"] = resolved
     return item
 
 
@@ -595,30 +641,97 @@ def post_analyze(job_id: str) -> dict:
 
 @app.post("/jobs/{job_id}/decision")
 def post_decision(job_id: str, body: DecisionBody) -> dict:
-    decision = body.decision.lower().strip()
-    if decision not in ("apply", "save", "reject", "draft"):
-        raise HTTPException(400, "decision must be apply|save|reject|draft")
+    """Record a human application-status decision (pipeline track)."""
+    from cv_shared.application_status import normalize_application_status
+
+    status = normalize_application_status(body.decision)
+    if not status:
+        raise HTTPException(
+            400,
+            "decision must be apply|pending|round1|round2|round3|round4|rejected",
+        )
+    return _set_application_status(job_id, status, note=body.note)
+
+
+@app.patch("/jobs/{job_id}/application-status")
+def patch_application_status(job_id: str, body: ApplicationStatusBody) -> dict:
+    """Set application pipeline status (preferred tracker endpoint)."""
+    from cv_shared.application_status import normalize_application_status
+
+    status = normalize_application_status(body.applicationStatus)
+    if not status:
+        raise HTTPException(
+            400,
+            "applicationStatus must be apply|pending|round1|round2|round3|round4|rejected",
+        )
+    return _set_application_status(job_id, status, note=body.note)
+
+
+def _set_application_status(
+    job_id: str, status: str, *, note: str | None = None
+) -> dict:
+    from cv_shared.application_status import APPLICATION_STATUS_LABELS
+
     db = get_db()
     job = db[C.JOBS].find_one({"_id": job_id})
     if not job:
         raise HTTPException(404, "Job not found")
     now = datetime.now(timezone.utc).isoformat()
-    status_map = {
-        "apply": "interested",
-        "save": "saved",
-        "reject": "rejected",
-        "draft": "drafted",
+
+    # Keep intake gate statuses intact; only overlay pipeline field + soft status
+    # when not out_of_area / wrong_role.
+    fields: dict[str, Any] = {
+        "applicationStatus": status,
+        "applicationStatusAt": now,
+        "updatedAt": now,
     }
-    db[C.JOBS].update_one({"_id": job_id}, {"$set": {"status": status_map[decision]}})
+    intake_status = (job.get("status") or "").strip()
+    if intake_status not in ("out_of_area", "wrong_role"):
+        # Soft mirror for older clients / filters
+        soft = {
+            "apply": "interested",
+            "pending": "saved",
+            "round1": "interview",
+            "round2": "interview",
+            "round3": "interview",
+            "round4": "interview",
+            "rejected": "rejected",
+        }
+        fields["status"] = soft.get(status, status)
+
+    db[C.JOBS].update_one({"_id": job_id}, {"$set": fields})
+
+    db[C.APPLICATIONS].update_one(
+        {"_id": f"app_{job_id}"},
+        {
+            "$set": {
+                "jobId": job_id,
+                "status": status,
+                "updatedAt": now,
+            },
+            "$setOnInsert": {"_id": f"app_{job_id}"},
+        },
+        upsert=True,
+    )
+
     doc = {
         "_id": f"decision_{job_id}_{int(datetime.now(timezone.utc).timestamp())}",
         "jobId": job_id,
-        "decision": decision,
-        "note": body.note,
+        "decision": status,
+        "applicationStatus": status,
+        "label": APPLICATION_STATUS_LABELS.get(status, status),
+        "note": note,
         "createdAt": now,
     }
     db[C.USER_DECISIONS].insert_one(doc)
-    return _serialize(doc)
+    return _serialize(
+        {
+            **doc,
+            "jobId": job_id,
+            "applicationStatus": status,
+            "applicationStatusAt": now,
+        }
+    )
 
 
 @app.post("/jobs/{job_id}/generate")
@@ -755,7 +868,7 @@ def post_ingest_run(
 ) -> dict:
     """Start ingest in the background. Returns immediately.
 
-    sources: all | gmail | greenhouse | manual (default all).
+    sources: all | gmail | greenhouse | ashby | manual (default all).
     Pass reprocess=true to clear processed-message markers first.
     Returns 409 payload (accepted=false) if an ingest is already running.
     """
@@ -916,21 +1029,30 @@ def list_sources() -> list:
 
 @app.post("/sources")
 def create_source(body: SourceCreateBody) -> dict:
-    from cv_shared.intake.greenhouse_source import probe_board_token
+    from cv_shared.intake.ashby_source import probe_board_token as probe_ashby
+    from cv_shared.intake.greenhouse_source import probe_board_token as probe_greenhouse
 
     name = (body.name or "").strip()
     token = (body.boardToken or "").strip().lower()
     ats = (body.ats or "greenhouse").strip().lower()
     if not name or not token:
         raise HTTPException(400, "name and boardToken are required")
-    if ats != "greenhouse":
-        raise HTTPException(400, "Only ats=greenhouse is supported in Stage 2B")
+    if ats not in ("greenhouse", "ashby"):
+        raise HTTPException(400, "ats must be greenhouse or ashby")
 
-    probe = probe_board_token(token)
+    if ats == "ashby":
+        probe = probe_ashby(token)
+        careers_url = f"https://jobs.ashbyhq.com/{token}"
+        label = "Ashby"
+    else:
+        probe = probe_greenhouse(token)
+        careers_url = f"https://boards.greenhouse.io/{token}"
+        label = "Greenhouse"
+
     if not probe.get("ok"):
         raise HTTPException(
             400,
-            f"Invalid Greenhouse boardToken '{token}': {probe.get('error') or 'probe failed'}",
+            f"Invalid {label} boardToken '{token}': {probe.get('error') or 'probe failed'}",
         )
 
     db = get_db()
@@ -952,7 +1074,7 @@ def create_source(body: SourceCreateBody) -> dict:
         "priority": int(body.priority if body.priority is not None else 50),
         "locations": list(body.locations or []),
         "enabled": bool(body.enabled if body.enabled is not None else True),
-        "careersUrl": f"https://boards.greenhouse.io/{token}",
+        "careersUrl": careers_url,
         "lastPolledAt": None,
         "lastSuccessAt": None,
         "lastError": None,
@@ -992,7 +1114,7 @@ def patch_source(source_id: str, body: SourcePatchBody) -> dict:
 
 @app.post("/sources/{source_id}/poll")
 def poll_source(source_id: str, analyze: bool = True) -> dict:
-    """Poll one Greenhouse board immediately (respects Settings master toggle)."""
+    """Poll one ATS board immediately (respects Settings master toggle)."""
     from cv_shared.intake.pipeline import start_ingest_async
     from cv_shared.settings import is_ats_source_enabled
 
@@ -1000,22 +1122,31 @@ def poll_source(source_id: str, analyze: bool = True) -> dict:
     existing = db[C.JOB_SOURCES].find_one({"_id": source_id})
     if not existing:
         raise HTTPException(404, "Source not found")
-    if existing.get("ats") != "greenhouse":
-        raise HTTPException(400, "Only greenhouse sources can be polled in Stage 2B")
-    if not is_ats_source_enabled("greenhouse"):
+    ats = (existing.get("ats") or "").strip().lower()
+    if ats not in ("greenhouse", "ashby"):
+        raise HTTPException(400, "Only greenhouse and ashby sources can be polled")
+    if not is_ats_source_enabled(ats):
+        label = "Ashby" if ats == "ashby" else "Greenhouse"
         raise HTTPException(
             400,
-            "Greenhouse ingest is disabled in Settings. Enable it under ATS board ingest.",
+            f"{label} ingest is disabled in Settings. Enable it under ATS board ingest.",
         )
     if not existing.get("enabled", True):
         raise HTTPException(400, "Source is disabled. Enable it before polling.")
 
     try:
-        result = start_ingest_async(
-            analyze=analyze,
-            sources="greenhouse",
-            greenhouse_source_ids=[source_id],
-        )
+        if ats == "ashby":
+            result = start_ingest_async(
+                analyze=analyze,
+                sources="ashby",
+                ashby_source_ids=[source_id],
+            )
+        else:
+            result = start_ingest_async(
+                analyze=analyze,
+                sources="greenhouse",
+                greenhouse_source_ids=[source_id],
+            )
     except Exception as exc:
         logger.exception("source poll start failed")
         raise HTTPException(500, str(exc)) from exc

@@ -43,24 +43,31 @@ def chat(
     *,
     think_process: str | None = None,
     think: bool | None = None,
+    response_format: dict[str, Any] | str | None = None,
 ) -> str:
     """Chat with Ollama.
 
-    think_process: settings key (jobExtract, profileUpdate, githubClassify, coverLetter)
+    think_process: settings key (jobExtract, profileUpdate, githubClassify,
+        coverLetter, resumeTailor)
     think: explicit override; wins over settings when not None
+    response_format: optional JSON schema dict (Ollama structured outputs) or
+        \"json\" — ignored by older servers that reject unknown fields (caller
+        should still parse with extract_json)
     """
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     use_think = ollama_think(think_process) if think is None else bool(think)
-    payload = {
+    payload: dict[str, Any] = {
         "model": ollama_model(),
         "messages": messages,
         "stream": False,
         "think": use_think,
         "options": {"temperature": temperature},
     }
+    if response_format is not None:
+        payload["format"] = response_format
     url = f"{ollama_base_url()}/api/chat"
     data = json.dumps(payload).encode("utf-8")
     req = request.Request(
@@ -70,6 +77,32 @@ def chat(
         with request.urlopen(req, timeout=180) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         return (body.get("message") or {}).get("content") or ""
+    except error.HTTPError as exc:
+        # Older Ollama may reject schema `format` — retry without it
+        if response_format is not None and exc.code in (400, 422):
+            logger.warning(
+                "Ollama rejected structured format (%s); retrying without schema",
+                exc.code,
+            )
+            payload.pop("format", None)
+            data = json.dumps(payload).encode("utf-8")
+            req = request.Request(
+                url,
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with request.urlopen(req, timeout=180) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                return (body.get("message") or {}).get("content") or ""
+            except error.URLError as retry_exc:
+                logger.warning("Ollama unavailable on retry: %s", retry_exc)
+                raise RuntimeError(
+                    f"Ollama unavailable at {url}: {retry_exc}"
+                ) from retry_exc
+        logger.warning("Ollama HTTP error: %s", exc)
+        raise RuntimeError(f"Ollama error at {url}: {exc}") from exc
     except error.URLError as exc:
         logger.warning("Ollama unavailable: %s", exc)
         raise RuntimeError(f"Ollama unavailable at {url}: {exc}") from exc

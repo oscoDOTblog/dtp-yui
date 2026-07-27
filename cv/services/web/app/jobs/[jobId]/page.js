@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { apiDelete, apiGet, apiPost } from "../../../lib/api";
 import DocumentPackagePanel, {
   clearPackageFromBrowser,
   loadPackageFromBrowser,
   savePackageToBrowser,
 } from "../../components/DocumentPackagePanel";
+import ApplicationStatusTracker from "../../components/ApplicationStatusTracker";
 import MarkdownContent from "../../components/MarkdownContent";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,11 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { jobHeadline, jobMetaLine } from "../../../lib/jobDisplay";
+import {
+  applicationStatusLabel,
+  resolveApplicationStatus,
+} from "../../../lib/applicationStatus";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../../../lib/api";
 
 function recommendationVariant(recommendation) {
   if (recommendation === "apply") return "success";
@@ -135,13 +140,52 @@ export default function JobDetailPage() {
         setMessage(
           `Package ready: ${generated.folderName} (saved in this browser)`,
         );
-      } else {
-        await apiPost(`/jobs/${jobId}/decision`, { decision: action });
-        setMessage(`Decision recorded: ${action}`);
       }
       await load();
     } catch (err) {
       setError(err.message || "Action failed");
+    } finally {
+      setBusy("");
+      setStatusText("");
+    }
+  }
+
+  async function setApplicationStatus(nextStatus) {
+    if (!nextStatus || busy) return;
+    const previous = resolveApplicationStatus(job);
+    if (previous === nextStatus) return;
+
+    setBusy("status");
+    setMessage("");
+    setError("");
+    // Optimistic UI
+    setJob((cur) =>
+      cur
+        ? {
+            ...cur,
+            applicationStatus: nextStatus,
+            applicationStatusAt: new Date().toISOString(),
+          }
+        : cur,
+    );
+    try {
+      const result = await apiPatch(`/jobs/${jobId}/application-status`, {
+        applicationStatus: nextStatus,
+      });
+      setMessage(
+        `Status set to ${applicationStatusLabel(result.applicationStatus || nextStatus)}`,
+      );
+      await load();
+    } catch (err) {
+      setJob((cur) =>
+        cur
+          ? {
+              ...cur,
+              applicationStatus: previous,
+            }
+          : cur,
+      );
+      setError(err.message || "Failed to update status");
     } finally {
       setBusy("");
       setStatusText("");
@@ -313,27 +357,6 @@ export default function JobDetailPage() {
           {busy === "generate" ? "Generating…" : "Generate documents"}
         </Button>
         <Button
-          variant="outline"
-          onClick={() => run("apply")}
-          disabled={!!busy}
-        >
-          Apply
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => run("save")}
-          disabled={!!busy}
-        >
-          Save
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => run("reject")}
-          disabled={!!busy}
-        >
-          Reject
-        </Button>
-        <Button
           variant="destructive-outline"
           onClick={deleteJob}
           disabled={!!busy}
@@ -341,6 +364,14 @@ export default function JobDetailPage() {
           {busy === "delete" ? "Deleting…" : "Delete job"}
         </Button>
       </div>
+
+      <ApplicationStatusTracker
+        className="mb-6"
+        value={resolveApplicationStatus(job)}
+        updatedAt={job.applicationStatusAt}
+        disabled={!!busy}
+        onChange={setApplicationStatus}
+      />
 
       {match ? (
         <>

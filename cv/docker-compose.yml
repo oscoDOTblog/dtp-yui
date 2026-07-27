@@ -36,6 +36,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       REPOSITORY_CACHE_DIR: /app/repository-cache
+      AUTO_PROCESSING_ENABLED: ${AUTO_PROCESSING_ENABLED:-true}
     ports:
       # Localhost for curl/docs; UI traffic from LAN goes through web /backend proxy
       - "127.0.0.1:8000:8000"
@@ -76,6 +77,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       REPOSITORY_CACHE_DIR: /app/repository-cache
+      AUTO_PROCESSING_ENABLED: ${AUTO_PROCESSING_ENABLED:-true}
     volumes:
       - ./generated-applications:/app/generated-applications
       - ./seed:/app/seed:ro

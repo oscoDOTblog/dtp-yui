@@ -145,6 +145,32 @@ def clean_company_hint(value: str | None) -> str:
     return "" if is_placeholder_company(text) else text
 
 
+def seed_placeholders_from_description(raw: dict[str, Any]) -> dict[str, Any]:
+    """Fill Untitled/Unknown/empty location/workMode from description text before gates."""
+    out = dict(raw or {})
+    desc = (out.get("descriptionText") or out.get("descriptionRaw") or "").strip()
+    if not desc:
+        return out
+    if is_placeholder_title(out.get("title")):
+        guessed = _guess_title_from_description(desc)
+        if guessed:
+            out["title"] = guessed
+    if is_placeholder_company(out.get("company")):
+        guessed = _guess_company_from_description(desc)
+        if guessed:
+            out["company"] = guessed
+    if not (out.get("location") or "").strip():
+        guessed = _guess_location(desc)
+        if guessed:
+            out["location"] = guessed
+    mode = (out.get("workMode") or "").strip().lower()
+    if mode in ("", "unknown"):
+        guessed = _guess_work_mode(desc)
+        if guessed != "unknown":
+            out["workMode"] = guessed
+    return out
+
+
 def _guess_title_from_description(description: str) -> str:
     """Best-effort role title from pasted/fetched listing text."""
     for raw in (description or "").splitlines():

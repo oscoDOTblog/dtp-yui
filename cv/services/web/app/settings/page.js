@@ -42,6 +42,12 @@ const ATS_PROVIDERS = [
     description:
       "Poll curated company boards from the Sources watchlist. Individual companies are managed on the Sources page.",
   },
+  {
+    key: "ashby",
+    label: "Ashby",
+    description:
+      "Poll curated Ashby job boards from the Sources watchlist. Board slug is the last path segment of jobs.ashbyhq.com/{slug}.",
+  },
 ];
 
 const OLLAMA_THINK_PROCESSES = [
@@ -67,6 +73,12 @@ const OLLAMA_THINK_PROCESSES = [
     description:
       "Application package cover-letter drafting — most likely place to want thinking on.",
   },
+  {
+    key: "resumeTailor",
+    label: "Resume tailor",
+    description:
+      "Select and lightly rewrite approved achievements for each job package.",
+  },
 ];
 
 const DEFAULT_OLLAMA = {
@@ -76,14 +88,29 @@ const DEFAULT_OLLAMA = {
     profileUpdate: false,
     githubClassify: false,
     coverLetter: false,
+    resumeTailor: false,
   },
+};
+
+const DEFAULT_RESUME = {
+  renderEngine: "legacy",
+  templateId: "classic",
+  pages: 2,
+};
+
+const DEFAULT_INGEST_FILTERS = {
+  dropOutOfArea: true,
+  dropWrongRole: true,
+  greenhouseTwoPhase: true,
 };
 
 export default function SettingsPage() {
   const [gmailIngest, setGmailIngest] = useState(null);
   const [atsIngest, setAtsIngest] = useState(null);
   const [githubEvidence, setGithubEvidence] = useState(null);
+  const [ingestFilters, setIngestFilters] = useState(null);
   const [ollama, setOllama] = useState(null);
+  const [resume, setResume] = useState(null);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(true);
@@ -94,17 +121,21 @@ export default function SettingsPage() {
     try {
       const data = await apiGet("/settings");
       setGmailIngest(data.gmailIngest || {});
-      setAtsIngest(data.atsIngest || { greenhouse: true });
+      setAtsIngest(data.atsIngest || { greenhouse: true, ashby: true });
       setGithubEvidence(
         data.githubEvidence || { enabled: true, defaultLookback: "7d" }
       );
+      setIngestFilters(data.ingestFilters || DEFAULT_INGEST_FILTERS);
       setOllama(data.ollama || DEFAULT_OLLAMA);
+      setResume(data.resume || DEFAULT_RESUME);
     } catch (err) {
       setError(err.message || "Failed to load settings");
       setGmailIngest(null);
       setAtsIngest(null);
       setGithubEvidence(null);
+      setIngestFilters(null);
       setOllama(null);
+      setResume(null);
     } finally {
       setLoading(false);
     }
@@ -121,8 +152,13 @@ export default function SettingsPage() {
     else if (previousSlices?.ats) setAtsIngest(previousSlices.ats);
     if (data.githubEvidence) setGithubEvidence(data.githubEvidence);
     else if (previousSlices?.github) setGithubEvidence(previousSlices.github);
+    if (data.ingestFilters) setIngestFilters(data.ingestFilters);
+    else if (previousSlices?.ingestFilters)
+      setIngestFilters(previousSlices.ingestFilters);
     if (data.ollama) setOllama(data.ollama);
     else if (previousSlices?.ollama) setOllama(previousSlices.ollama);
+    if (data.resume) setResume(data.resume);
+    else if (previousSlices?.resume) setResume(previousSlices.resume);
   }
 
   async function toggleGmail(key) {
@@ -163,6 +199,32 @@ export default function SettingsPage() {
       setInfo("Saved. Next ingest run will use these toggles.");
     } catch (err) {
       setAtsIngest(previous);
+      setError(err.message || "Failed to save settings");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  async function toggleIngestFilter(key) {
+    if (!ingestFilters || savingKey) return;
+    const nextValue = !ingestFilters[key];
+    const previous = { ...ingestFilters };
+    setIngestFilters({ ...ingestFilters, [key]: nextValue });
+    setSavingKey(`filter:${key}`);
+    setError("");
+    setInfo("");
+    try {
+      const data = await apiPatch("/settings", {
+        ingestFilters: { [key]: nextValue },
+      });
+      syncFromResponse(data, {
+        ingestFilters: { ...previous, [key]: nextValue },
+      });
+      setInfo(
+        "Saved. Next ingest drops gated listings before they reach Inbox.",
+      );
+    } catch (err) {
+      setIngestFilters(previous);
       setError(err.message || "Failed to save settings");
     } finally {
       setSavingKey("");
@@ -272,6 +334,34 @@ export default function SettingsPage() {
     }
   }
 
+  async function setResumeEngine(engine) {
+    if (!resume || savingKey) return;
+    if (engine !== "legacy" && engine !== "rendercv") return;
+    if (resume.renderEngine === engine) return;
+    const previous = { ...resume };
+    const next = { ...resume, renderEngine: engine };
+    setResume(next);
+    setSavingKey("resume:renderEngine");
+    setError("");
+    setInfo("");
+    try {
+      const data = await apiPatch("/settings", {
+        resume: { renderEngine: engine },
+      });
+      syncFromResponse(data, { resume: next });
+      setInfo(
+        engine === "rendercv"
+          ? "Saved. New packages use RenderCV for resume PDF (falls back to legacy on failure)."
+          : "Saved. New packages use the legacy ReportLab resume PDF.",
+      );
+    } catch (err) {
+      setResume(previous);
+      setError(err.message || "Failed to save settings");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
   return (
     <div>
       <h1 className="m-0 mb-1.5 text-3xl font-semibold tracking-tight max-sm:text-2xl">
@@ -281,10 +371,11 @@ export default function SettingsPage() {
         Control which intake sources run. Gmail switches decide which alert
         senders are processed after mail is fetched. ATS switches master-gate
         board polling (companies still managed on{" "}
-        <a href="/sources">Sources</a>). GitHub evidence is managed on{" "}
-        <a href="/repositories">Repositories</a>. Ollama thinking can be set per
-        process (extract, profile, GitHub, cover letter). Changes apply on the
-        next call — no restart.
+        <a href="/sources">Sources</a>). Ingest filters drop out-of-area and
+        wrong-role listings before they are saved or analyzed. GitHub evidence
+        is managed on <a href="/repositories">Repositories</a>. Ollama thinking
+        can be set per process. Resume render engine chooses PDF typography.
+        Changes apply on the next call — no restart.
       </p>
 
       {error ? (
@@ -312,15 +403,9 @@ export default function SettingsPage() {
           </p>
           <div className="grid gap-3">
             <Card>
-              <CardPanel className="flex items-center justify-between gap-4 p-4">
-                <div className="min-w-0">
-                  <p className="m-0 font-semibold">All processes</p>
-                  <p className="mt-1 m-0 text-sm text-muted-foreground">
-                    Convenience toggle — sets every process below to the same
-                    value.
-                  </p>
-                </div>
+              <CardPanel className="flex items-start gap-4 p-4">
                 <Switch
+                  className="mt-0.5 shrink-0"
                   checked={Boolean(
                     ollama.think ||
                       Object.values(ollama.thinkByProcess || {}).some(Boolean),
@@ -329,29 +414,147 @@ export default function SettingsPage() {
                   onCheckedChange={toggleOllamaThinkAll}
                   aria-label="Ollama thinking for all processes"
                 />
+                <div className="min-w-0 flex-1">
+                  <p className="m-0 font-semibold">All processes</p>
+                  <p className="mt-1 m-0 text-sm text-muted-foreground">
+                    Convenience toggle — sets every process below to the same
+                    value.
+                  </p>
+                </div>
               </CardPanel>
             </Card>
             {OLLAMA_THINK_PROCESSES.map((p) => {
               const on = Boolean(ollama.thinkByProcess?.[p.key]);
               return (
                 <Card key={p.key}>
-                  <CardPanel className="flex items-center justify-between gap-4 p-4">
-                    <div className="min-w-0">
-                      <p className="m-0 font-semibold">{p.label}</p>
-                      <p className="mt-1 m-0 text-sm text-muted-foreground">
-                        {p.description}
-                      </p>
-                    </div>
+                  <CardPanel className="flex items-start gap-4 p-4">
                     <Switch
+                      className="mt-0.5 shrink-0"
                       checked={on}
                       disabled={!!savingKey}
                       onCheckedChange={() => toggleOllamaThinkProcess(p.key)}
                       aria-label={`${p.label} thinking ${on ? "on" : "off"}`}
                     />
+                    <div className="min-w-0 flex-1">
+                      <p className="m-0 font-semibold">{p.label}</p>
+                      <p className="mt-1 m-0 text-sm text-muted-foreground">
+                        {p.description}
+                      </p>
+                    </div>
                   </CardPanel>
                 </Card>
               );
             })}
+          </div>
+        </section>
+      ) : null}
+
+      {!loading && resume ? (
+        <section className="mt-10">
+          <h2 className="mb-3 text-lg font-semibold">Resume render</h2>
+          <p className="mb-3 m-0 text-sm text-muted-foreground">
+            Packages always tailor achievements with grounded{" "}
+            <code>sourceId</code> selection. Choose how the PDF is typeset.
+            Default is legacy until RenderCV is validated in your Docker image.
+          </p>
+          <div className="grid gap-3">
+            <Card>
+              <CardPanel className="flex items-start gap-4 p-4">
+                <Switch
+                  className="mt-0.5 shrink-0"
+                  checked={resume.renderEngine === "rendercv"}
+                  disabled={!!savingKey}
+                  onCheckedChange={(on) =>
+                    setResumeEngine(on ? "rendercv" : "legacy")
+                  }
+                  aria-label={`RenderCV engine ${
+                    resume.renderEngine === "rendercv" ? "on" : "off"
+                  }`}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="m-0 font-semibold">Use RenderCV for PDF</p>
+                  <p className="mt-1 m-0 text-sm text-muted-foreground">
+                    When on, resume PDF is built via RenderCV (
+                    {resume.templateId || "classic"} theme). On failure the
+                    package falls back to ReportLab. DOCX always uses the
+                    structured tailor payload.
+                  </p>
+                </div>
+              </CardPanel>
+            </Card>
+          </div>
+        </section>
+      ) : null}
+
+      {!loading && ingestFilters ? (
+        <section className="mt-10">
+          <h2 className="mb-3 text-lg font-semibold">Inbox ingest filters</h2>
+          <p className="mb-3 m-0 text-sm text-muted-foreground">
+            After the Bay Area and role gates run on the listing text, drop
+            mismatches before saving a job or running analyze. Defaults are on
+            so Invalid noise stays out of Inbox.
+          </p>
+          <div className="grid gap-3">
+            <Card>
+              <CardPanel className="flex items-start gap-4 p-4">
+                <Switch
+                  className="mt-0.5 shrink-0"
+                  checked={Boolean(ingestFilters.dropOutOfArea)}
+                  disabled={!!savingKey}
+                  onCheckedChange={() => toggleIngestFilter("dropOutOfArea")}
+                  aria-label={`Drop out of area ${ingestFilters.dropOutOfArea ? "on" : "off"}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="m-0 font-semibold">Drop out of area</p>
+                  <p className="mt-1 m-0 text-sm text-muted-foreground">
+                    Skip listings that fail the Bay Area / remote location gate.
+                    They never appear in Inbox.
+                  </p>
+                </div>
+              </CardPanel>
+            </Card>
+            <Card>
+              <CardPanel className="flex items-start gap-4 p-4">
+                <Switch
+                  className="mt-0.5 shrink-0"
+                  checked={Boolean(ingestFilters.dropWrongRole)}
+                  disabled={!!savingKey}
+                  onCheckedChange={() => toggleIngestFilter("dropWrongRole")}
+                  aria-label={`Drop wrong role ${ingestFilters.dropWrongRole ? "on" : "off"}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="m-0 font-semibold">Drop wrong role</p>
+                  <p className="mt-1 m-0 text-sm text-muted-foreground">
+                    Skip titles that fail the SWE / adjacent role filter. Turn
+                    off if you want to review borderline roles in Invalid.
+                  </p>
+                </div>
+              </CardPanel>
+            </Card>
+            <Card>
+              <CardPanel className="flex items-start gap-4 p-4">
+                <Switch
+                  className="mt-0.5 shrink-0"
+                  checked={Boolean(ingestFilters.greenhouseTwoPhase)}
+                  disabled={!!savingKey}
+                  onCheckedChange={() =>
+                    toggleIngestFilter("greenhouseTwoPhase")
+                  }
+                  aria-label={`Greenhouse two-phase poll ${ingestFilters.greenhouseTwoPhase ? "on" : "off"}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="m-0 font-semibold">
+                    Greenhouse two-phase poll
+                  </p>
+                  <p className="mt-1 m-0 text-sm text-muted-foreground">
+                    List board jobs without full JDs, drop out-of-area /
+                    wrong-role on title+location, then fetch detail only for
+                    keepers. Faster and quieter. Optional per-company location
+                    prefs live on Sources.
+                  </p>
+                </div>
+              </CardPanel>
+            </Card>
           </div>
         </section>
       ) : null}
@@ -364,19 +567,20 @@ export default function SettingsPage() {
               const on = Boolean(gmailIngest[p.key]);
               return (
                 <Card key={p.key}>
-                  <CardPanel className="flex items-center justify-between gap-4 p-4">
-                    <div className="min-w-0">
-                      <p className="m-0 font-semibold">{p.label}</p>
-                      <p className="mt-1 m-0 text-sm text-muted-foreground">
-                        {p.description}
-                      </p>
-                    </div>
+                  <CardPanel className="flex items-start gap-4 p-4">
                     <Switch
+                      className="mt-0.5 shrink-0"
                       checked={on}
                       disabled={!!savingKey}
                       onCheckedChange={() => toggleGmail(p.key)}
                       aria-label={`${p.label} ingest ${on ? "on" : "off"}`}
                     />
+                    <div className="min-w-0 flex-1">
+                      <p className="m-0 font-semibold">{p.label}</p>
+                      <p className="mt-1 m-0 text-sm text-muted-foreground">
+                        {p.description}
+                      </p>
+                    </div>
                   </CardPanel>
                 </Card>
               );
@@ -393,19 +597,20 @@ export default function SettingsPage() {
               const on = Boolean(atsIngest[p.key]);
               return (
                 <Card key={p.key}>
-                  <CardPanel className="flex items-center justify-between gap-4 p-4">
-                    <div className="min-w-0">
-                      <p className="m-0 font-semibold">{p.label}</p>
-                      <p className="mt-1 m-0 text-sm text-muted-foreground">
-                        {p.description}
-                      </p>
-                    </div>
+                  <CardPanel className="flex items-start gap-4 p-4">
                     <Switch
+                      className="mt-0.5 shrink-0"
                       checked={on}
                       disabled={!!savingKey}
                       onCheckedChange={() => toggleAts(p.key)}
                       aria-label={`${p.label} ingest ${on ? "on" : "off"}`}
                     />
+                    <div className="min-w-0 flex-1">
+                      <p className="m-0 font-semibold">{p.label}</p>
+                      <p className="mt-1 m-0 text-sm text-muted-foreground">
+                        {p.description}
+                      </p>
+                    </div>
                   </CardPanel>
                 </Card>
               );
@@ -419,8 +624,15 @@ export default function SettingsPage() {
           <h2 className="mb-3 text-lg font-semibold">GitHub evidence</h2>
           <div className="grid gap-3">
             <Card>
-              <CardPanel className="flex items-center justify-between gap-4 p-4">
-                <div className="min-w-0">
+              <CardPanel className="flex items-start gap-4 p-4">
+                <Switch
+                  className="mt-0.5 shrink-0"
+                  checked={Boolean(githubEvidence.enabled)}
+                  disabled={!!savingKey}
+                  onCheckedChange={() => toggleGithub("enabled")}
+                  aria-label={`GitHub evidence ${githubEvidence.enabled ? "on" : "off"}`}
+                />
+                <div className="min-w-0 flex-1">
                   <p className="m-0 font-semibold">Evidence engine</p>
                   <p className="mt-1 m-0 text-sm text-muted-foreground">
                     Poll configured repos at :30 UTC and on manual Sync.
@@ -428,17 +640,18 @@ export default function SettingsPage() {
                     <a href="/repositories">Repositories</a> page.
                   </p>
                 </div>
-                <Switch
-                  checked={Boolean(githubEvidence.enabled)}
-                  disabled={!!savingKey}
-                  onCheckedChange={() => toggleGithub("enabled")}
-                  aria-label={`GitHub evidence ${githubEvidence.enabled ? "on" : "off"}`}
-                />
               </CardPanel>
             </Card>
             <Card>
-              <CardPanel className="flex items-center justify-between gap-4 p-4">
-                <div className="min-w-0">
+              <CardPanel className="flex items-start gap-4 p-4">
+                <Switch
+                  className="mt-0.5 shrink-0"
+                  checked={Boolean(githubEvidence.discoverRepos)}
+                  disabled={!!savingKey || !githubEvidence.enabled}
+                  onCheckedChange={() => toggleGithub("discoverRepos")}
+                  aria-label={`Repo discovery ${githubEvidence.discoverRepos ? "on" : "off"}`}
+                />
+                <div className="min-w-0 flex-1">
                   <p className="m-0 font-semibold">Repo discovery</p>
                   <p className="mt-1 m-0 text-sm text-muted-foreground">
                     Scan your GitHub account for new or missing repos on each
@@ -447,12 +660,6 @@ export default function SettingsPage() {
                     approval — nothing is scanned until you approve it.
                   </p>
                 </div>
-                <Switch
-                  checked={Boolean(githubEvidence.discoverRepos)}
-                  disabled={!!savingKey || !githubEvidence.enabled}
-                  onCheckedChange={() => toggleGithub("discoverRepos")}
-                  aria-label={`Repo discovery ${githubEvidence.discoverRepos ? "on" : "off"}`}
-                />
               </CardPanel>
             </Card>
           </div>

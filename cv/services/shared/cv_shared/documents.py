@@ -8,16 +8,25 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from docx import Document
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-
 from . import collections as C
 from .db import get_db
 from .matching import slugify
 from .ollama_client import chat
+from .resume.achievements import build_achievement_catalog
+from .resume.legacy import (
+    build_resume_lines,
+    build_tailored_resume_lines,
+    paragraphs_to_docx,
+    paragraphs_to_pdf,
+)
+from .resume.render_docx import render_tailored_docx
+from .resume.render_rendercv import (
+    build_rendercv_data,
+    render_pdf_with_rendercv,
+    write_rendercv_yaml,
+)
+from .resume.tailor import gaps_markdown, tailor_resume
+from .settings import get_resume_settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,191 +47,6 @@ def _safe_mkdir(path: Path) -> Path:
     return path
 
 
-def _paragraphs_to_docx(path: Path, lines: list[str]) -> None:
-    doc = Document()
-    for line in lines:
-        if not line.strip():
-            doc.add_paragraph("")
-        else:
-            doc.add_paragraph(line)
-    doc.save(str(path))
-
-
-def _paragraphs_to_pdf(path: Path, lines: list[str]) -> None:
-    styles = getSampleStyleSheet()
-    body = ParagraphStyle(
-        "Body",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=10,
-        leading=13,
-        spaceAfter=6,
-    )
-    header = ParagraphStyle(
-        "Header",
-        parent=styles["Heading1"],
-        fontName="Helvetica-Bold",
-        fontSize=14,
-        leading=18,
-        spaceAfter=10,
-    )
-    story = []
-    for i, line in enumerate(lines):
-        text = (line or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        if not text.strip():
-            story.append(Spacer(1, 0.12 * inch))
-            continue
-        style = header if i == 0 else body
-        story.append(Paragraph(text, style))
-    pdf = SimpleDocTemplate(
-        str(path),
-        pagesize=letter,
-        leftMargin=0.75 * inch,
-        rightMargin=0.75 * inch,
-        topMargin=0.75 * inch,
-        bottomMargin=0.75 * inch,
-    )
-    pdf.build(story)
-
-
-def _select_work_bullets(work_history: list[dict], role_family: str, limit: int = 8) -> list[tuple[dict, list[str]]]:
-    # Prefer Capital One systems bullets for systems roles
-    ordered = sorted(work_history, key=lambda w: w.get("startDate") or "", reverse=True)
-    result = []
-    for role in ordered:
-        bullets = list(role.get("bullets") or [])
-        if role_family == "systems":
-            # keep infra-heavy bullets first
-            bullets = bullets
-        result.append((role, bullets[: max(3, limit // max(len(ordered), 1))]))
-    return result
-
-
-def _select_project_bullets(projects: list[dict], role_family: str) -> list[tuple[dict, list[str]]]:
-    priority = {
-        "systems": ["project_sway_sls", "project_videodl", "project_swayquest_web"],
-        "mobile": ["project_ios_player", "project_android_player", "project_sway_pocket"],
-        "ai": ["project_swayquest_web", "project_sway_sls", "project_sway_pocket"],
-        "product": ["project_swayquest_web", "project_sway_pocket", "project_sway_sls"],
-    }.get(role_family, ["project_swayquest_web", "project_sway_sls", "project_ios_player"])
-
-    by_id = {p["_id"]: p for p in projects}
-    selected = []
-    for pid in priority:
-        if pid in by_id:
-            selected.append(by_id[pid])
-    for p in projects:
-        if p not in selected:
-            selected.append(p)
-        if len(selected) >= 4:
-            break
-    return [(p, list(p.get("resumeBullets") or [])[:3]) for p in selected]
-
-
-def _skills_line(skills: list[dict], categories: list[str], limit: int = 12) -> str:
-    names = []
-    for skill in skills:
-        if skill.get("category") in categories and skill.get("approvedForResume"):
-            names.append(skill["name"])
-        if len(names) >= limit:
-            break
-    # fallback: top approved
-    if len(names) < 6:
-        for skill in skills:
-            if skill.get("approvedForResume") and skill["name"] not in names:
-                names.append(skill["name"])
-            if len(names) >= limit:
-                break
-    return ", ".join(names)
-
-
-def _build_resume_lines(
-    candidate: dict,
-    work_history: list[dict],
-    projects: list[dict],
-    skills: list[dict],
-    match: dict,
-    job: dict,
-) -> list[str]:
-    role_family = match.get("roleFamily") or "product"
-    positioning = (candidate.get("positioningSummaries") or {}).get(
-        role_family
-    ) or (candidate.get("positioningSummaries") or {}).get("product", "")
-
-    contact = " | ".join(
-        filter(
-            None,
-            [
-                candidate.get("location"),
-                candidate.get("email"),
-                candidate.get("phone"),
-                candidate.get("linkedin"),
-                candidate.get("github"),
-            ],
-        )
-    )
-
-    lines = [
-        candidate.get("name") or "Candidate",
-        contact,
-        "",
-        "PROFESSIONAL SUMMARY",
-        positioning,
-        "",
-        "TECHNICAL SKILLS",
-    ]
-
-    if role_family == "systems":
-        lines.append(
-            "Systems & Infrastructure: "
-            + _skills_line(skills, ["systems", "iac", "devops", "cicd", "cloud"], 14)
-        )
-        lines.append(
-            "Data & Observability: "
-            + _skills_line(skills, ["data", "observability", "databases"], 10)
-        )
-        lines.append("Programming: " + _skills_line(skills, ["languages", "backend"], 10))
-    elif role_family == "mobile":
-        lines.append("Mobile: " + _skills_line(skills, ["mobile", "media"], 12))
-        lines.append("Languages: " + _skills_line(skills, ["languages"], 8))
-        lines.append("Backend/Cloud: " + _skills_line(skills, ["cloud", "backend", "databases"], 10))
-    else:
-        lines.append("Frontend/Product: " + _skills_line(skills, ["frontend", "product", "auth", "payments"], 12))
-        lines.append("Backend/Cloud: " + _skills_line(skills, ["backend", "cloud", "databases", "devops"], 12))
-        lines.append("Languages: " + _skills_line(skills, ["languages", "mobile", "ai"], 10))
-
-    lines += ["", "PROFESSIONAL EXPERIENCE"]
-    for role, bullets in _select_work_bullets(work_history, role_family):
-        header = f"{role.get('company')} — {role.get('companyLocation') or ''}".strip(" —")
-        lines.append(header)
-        lines.append(
-            f"{role.get('title')} | {role.get('startDate')} – {role.get('endDate') or 'Present'}"
-        )
-        for b in bullets:
-            lines.append(f"• {b}")
-        lines.append("")
-
-    lines.append("INDEPENDENT SYSTEMS AND PRODUCT ENGINEERING")
-    lines.append("Founder & Software Engineer | Oakland, California | November 2025 – Present")
-    for project, bullets in _select_project_bullets(projects, role_family):
-        lines.append(project.get("name") or "Project")
-        for b in bullets:
-            lines.append(f"• {b}")
-        if not bullets and project.get("summary"):
-            lines.append(f"• {project['summary']}")
-        lines.append("")
-
-    edu = (candidate.get("education") or [{}])[0]
-    lines += [
-        "EDUCATION",
-        edu.get("institution") or "",
-        f"{edu.get('degree') or ''} | {edu.get('school') or ''} | {edu.get('location') or ''} | {edu.get('graduatedAt') or ''}",
-        "",
-        f"Tailored for: {job.get('title')} at {job.get('company')} (role family: {role_family})",
-    ]
-    return lines
-
-
 def _build_cover_letter(
     candidate: dict,
     work_history: list[dict],
@@ -235,7 +59,10 @@ def _build_cover_letter(
     evidence_text = "\n".join(f"- {e.get('claim')}" for e in evidence_used[:12])
     work_text = []
     for role in work_history:
-        work_text.append(f"{role.get('title')} at {role.get('company')} ({role.get('startDate')}–{role.get('endDate')})")
+        work_text.append(
+            f"{role.get('title')} at {role.get('company')} "
+            f"({role.get('startDate')}–{role.get('endDate')})"
+        )
         for b in (role.get("bullets") or [])[:4]:
             work_text.append(f"  • {b}")
 
@@ -300,6 +127,83 @@ Sincerely,
 """
 
 
+def _render_resume_artifacts(
+    *,
+    out_dir: Path,
+    candidate: dict,
+    work_history: list[dict],
+    projects: list[dict],
+    skills: list[dict],
+    match: dict,
+    job: dict,
+    catalog,
+    payload,
+    resume_settings: dict,
+) -> tuple[str, str, list[str]]:
+    """Write resume.pdf/docx/txt/yaml. Returns (resume_text, renderer_used, extra_files)."""
+    engine = (resume_settings.get("renderEngine") or "legacy").strip().lower()
+    template_id = resume_settings.get("templateId") or "classic"
+    extra_files: list[str] = []
+    renderer_used = "legacy"
+
+    rendercv_data = build_rendercv_data(
+        candidate=candidate,
+        skills=skills,
+        work_history=work_history,
+        projects=projects,
+        catalog=catalog,
+        payload=payload,
+        template_id=template_id,
+    )
+    yaml_path = out_dir / "resume.yaml"
+    write_rendercv_yaml(rendercv_data, yaml_path)
+    extra_files.append("resume.yaml")
+
+    # Structured DOCX from tailor payload (both engines)
+    render_tailored_docx(
+        out_dir / "resume.docx",
+        candidate=candidate,
+        skills=skills,
+        work_history=work_history,
+        projects=projects,
+        catalog=catalog,
+        payload=payload,
+        job=job,
+    )
+
+    if payload.selectedAchievementIds:
+        resume_text_lines = build_tailored_resume_lines(
+            candidate=candidate,
+            skills=skills,
+            work_history=work_history,
+            projects=projects,
+            catalog=catalog,
+            payload=payload,
+            job=job,
+        )
+    else:
+        resume_text_lines = build_resume_lines(
+            candidate, work_history, projects, skills, match, job
+        )
+    resume_text = "\n".join(resume_text_lines)
+    (out_dir / "resume.txt").write_text(resume_text, encoding="utf-8")
+
+    pdf_ok = False
+    if engine == "rendercv":
+        try:
+            render_pdf_with_rendercv(yaml_path, out_dir / "resume.pdf")
+            renderer_used = "rendercv"
+            pdf_ok = True
+        except Exception as exc:
+            logger.warning("RenderCV PDF failed, falling back to legacy: %s", exc)
+
+    if not pdf_ok:
+        paragraphs_to_pdf(out_dir / "resume.pdf", resume_text_lines)
+        renderer_used = "legacy" if engine != "rendercv" else "legacy_fallback"
+
+    return resume_text, renderer_used, extra_files
+
+
 def generate_application_package(job_id: str) -> dict:
     db = get_db()
     job = db[C.JOBS].find_one({"_id": job_id})
@@ -315,6 +219,10 @@ def generate_application_package(job_id: str) -> dict:
     )
     projects = list(db[C.PROJECTS].find({"candidateId": "primary-candidate"}))
     skills = list(db[C.SKILLS].find({"candidateId": "primary-candidate"}))
+    resume_settings = get_resume_settings()
+    pages = resume_settings.get("pages") or 2
+    if pages not in (1, 2):
+        pages = 2
 
     evidence_ids = set()
     for m in match.get("strongMatches") or []:
@@ -322,9 +230,9 @@ def generate_application_package(job_id: str) -> dict:
     evidence_used = list(db[C.EVIDENCE].find({"_id": {"$in": list(evidence_ids)}}))
     if not evidence_used:
         evidence_used = list(
-            db[C.EVIDENCE].find({"candidateId": "primary-candidate", "approvedForResume": True}).limit(
-                12
-            )
+            db[C.EVIDENCE]
+            .find({"candidateId": "primary-candidate", "approvedForResume": True})
+            .limit(12)
         )
 
     folder_name = f"{slugify(job.get('company'))}-{slugify(job.get('title'))}"
@@ -347,26 +255,53 @@ def generate_application_package(job_id: str) -> dict:
         json.dumps(evidence_used, indent=2, default=str), encoding="utf-8"
     )
 
-    resume_lines = _build_resume_lines(
-        candidate, work_history, projects, skills, match, job
+    catalog = build_achievement_catalog(work_history, projects, skills=skills)
+    payload = tailor_resume(
+        candidate=candidate,
+        job=job,
+        match=match,
+        catalog=catalog,
+        skills=skills,
+        pages=pages,  # type: ignore[arg-type]
     )
-    _paragraphs_to_docx(out_dir / "resume.docx", resume_lines)
-    _paragraphs_to_pdf(out_dir / "resume.pdf", resume_lines)
+
+    selection_report = payload.to_report()
+    selection_report["rendererRequested"] = resume_settings.get("renderEngine")
+    selection_report["templateId"] = resume_settings.get("templateId")
+    selection_report["pages"] = pages
+    (out_dir / "selection-report.json").write_text(
+        json.dumps(selection_report, indent=2, default=str), encoding="utf-8"
+    )
+    gaps_md = gaps_markdown(match, payload)
+    (out_dir / "gaps.md").write_text(gaps_md, encoding="utf-8")
+
+    resume_text, renderer_used, extra_resume_files = _render_resume_artifacts(
+        out_dir=out_dir,
+        candidate=candidate,
+        work_history=work_history,
+        projects=projects,
+        skills=skills,
+        match=match,
+        job=job,
+        catalog=catalog,
+        payload=payload,
+        resume_settings=resume_settings,
+    )
+    selection_report["renderer"] = renderer_used
+    (out_dir / "selection-report.json").write_text(
+        json.dumps(selection_report, indent=2, default=str), encoding="utf-8"
+    )
 
     cover = _build_cover_letter(
         candidate, work_history, projects, match, job, evidence_used
     )
     cover_lines = cover.splitlines() or [cover]
-    _paragraphs_to_docx(out_dir / "cover-letter.docx", cover_lines)
-    _paragraphs_to_pdf(out_dir / "cover-letter.pdf", cover_lines)
+    paragraphs_to_docx(out_dir / "cover-letter.docx", cover_lines)
+    paragraphs_to_pdf(out_dir / "cover-letter.pdf", cover_lines)
 
     answers = _application_answers(candidate, job, match, evidence_used)
     (out_dir / "application-answers.md").write_text(answers, encoding="utf-8")
-
-    resume_text = "\n".join(resume_lines)
-    cover_text = cover
-    (out_dir / "resume.txt").write_text(resume_text, encoding="utf-8")
-    (out_dir / "cover-letter.txt").write_text(cover_text, encoding="utf-8")
+    (out_dir / "cover-letter.txt").write_text(cover, encoding="utf-8")
 
     package_id = f"pkg_{folder_name}"
     files = [
@@ -376,22 +311,39 @@ def generate_application_package(job_id: str) -> dict:
         "resume.txt",
         "resume.docx",
         "resume.pdf",
+        "resume.yaml",
+        "selection-report.json",
+        "gaps.md",
         "cover-letter.txt",
         "cover-letter.docx",
         "cover-letter.pdf",
         "application-answers.md",
         "evidence.json",
     ]
+    for fname in extra_resume_files:
+        if fname not in files:
+            files.append(fname)
+
     previews = {
         "resume": {
             "title": "Resume",
             "filename": "resume.txt",
             "content": resume_text,
         },
+        "selectionReport": {
+            "title": "Selection report",
+            "filename": "selection-report.json",
+            "content": json.dumps(selection_report, indent=2, default=str),
+        },
+        "gaps": {
+            "title": "Gaps",
+            "filename": "gaps.md",
+            "content": gaps_md,
+        },
         "coverLetter": {
             "title": "Cover letter",
             "filename": "cover-letter.txt",
-            "content": cover_text,
+            "content": cover,
         },
         "applicationAnswers": {
             "title": "Application answers",
@@ -420,6 +372,9 @@ def generate_application_package(job_id: str) -> dict:
         "downloads": [
             {"label": "Resume PDF", "filename": "resume.pdf"},
             {"label": "Resume DOCX", "filename": "resume.docx"},
+            {"label": "Resume YAML", "filename": "resume.yaml"},
+            {"label": "Selection report", "filename": "selection-report.json"},
+            {"label": "Gaps", "filename": "gaps.md"},
             {"label": "Cover letter PDF", "filename": "cover-letter.pdf"},
             {"label": "Cover letter DOCX", "filename": "cover-letter.docx"},
             {"label": "Application answers", "filename": "application-answers.md"},
@@ -427,6 +382,24 @@ def generate_application_package(job_id: str) -> dict:
         "evidenceIds": [e["_id"] for e in evidence_used],
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "roleFamily": match.get("roleFamily"),
+        "renderer": renderer_used,
+        "templateId": resume_settings.get("templateId"),
+        "tailorPayload": {
+            "targetRole": payload.targetRole,
+            "selectedAchievementIds": payload.selectedAchievementIds,
+            "selectedSkillIds": payload.selectedSkillIds,
+            "selectedProjectIds": payload.selectedProjectIds,
+            "omittedRequirements": payload.omittedRequirements,
+            "usedLlm": payload.usedLlm,
+            "fallbackReason": payload.fallbackReason,
+            "bulletCount": len(payload.selectedAchievementIds),
+        },
+        "selectionSummary": {
+            "bulletCount": len(payload.selectedAchievementIds),
+            "omittedRequirements": payload.omittedRequirements,
+            "usedLlm": payload.usedLlm,
+            "renderer": renderer_used,
+        },
     }
     db[C.APPLICATION_PACKAGES].replace_one({"_id": package_id}, package, upsert=True)
 
@@ -449,6 +422,7 @@ def generate_application_package(job_id: str) -> dict:
                 "jobId": job_id,
                 "filename": fname,
                 "path": str(out_dir / fname),
+                "renderer": renderer_used if fname.startswith("resume") else None,
             },
             upsert=True,
         )
@@ -472,7 +446,9 @@ def _application_answers(
         if gaps
         else "- None flagged as critical."
     )
-    evidence_block = "\n".join(f"- [{e['_id']}] {e.get('claim')}" for e in evidence_used[:10])
+    evidence_block = "\n".join(
+        f"- [{e['_id']}] {e.get('claim')}" for e in evidence_used[:10]
+    )
     return f"""# Application answers — {job.get('title')} @ {job.get('company')}
 
 ## Why do you want to work here?

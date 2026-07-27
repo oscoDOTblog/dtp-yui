@@ -18,7 +18,7 @@ GMAIL_INGEST_KEYS = (
     "otherEmail",
 )
 
-ATS_INGEST_KEYS = ("greenhouse",)
+ATS_INGEST_KEYS = ("greenhouse", "ashby")
 
 LOOKBACK_PRESETS = ("1d", "7d", "30d", "90d", "365d", "all")
 
@@ -31,18 +31,34 @@ DEFAULT_GITHUB_EVIDENCE = {
     "discoverRepos": True,
 }
 
+# Drop gated listings before they hit Inbox (normalize → skip upsert/analyze)
+DEFAULT_INGEST_FILTERS = {
+    "dropOutOfArea": True,
+    "dropWrongRole": True,
+    # Greenhouse: list without content → prefilter → detail fetch
+    "greenhouseTwoPhase": True,
+}
+
 # Ollama chat call sites that can enable thinking independently
 OLLAMA_THINK_PROCESSES = (
     "jobExtract",
     "profileUpdate",
     "githubClassify",
     "coverLetter",
+    "resumeTailor",
 )
 
 DEFAULT_OLLAMA = {
     # Legacy global flag — still accepted on patch; seeds processes when migrating
     "think": False,
     "thinkByProcess": {key: False for key in OLLAMA_THINK_PROCESSES},
+}
+
+RESUME_RENDER_ENGINES = ("legacy", "rendercv")
+DEFAULT_RESUME = {
+    "renderEngine": "legacy",
+    "templateId": "classic",
+    "pages": 2,
 }
 
 ALERT_SOURCE_TO_KEY = {
@@ -63,10 +79,12 @@ def default_app_settings() -> dict[str, Any]:
         "gmailIngest": dict(DEFAULT_GMAIL_INGEST),
         "atsIngest": dict(DEFAULT_ATS_INGEST),
         "githubEvidence": dict(DEFAULT_GITHUB_EVIDENCE),
+        "ingestFilters": dict(DEFAULT_INGEST_FILTERS),
         "ollama": {
             "think": False,
             "thinkByProcess": {key: False for key in OLLAMA_THINK_PROCESSES},
         },
+        "resume": dict(DEFAULT_RESUME),
         "updatedAt": _now(),
     }
 
@@ -86,6 +104,16 @@ def _normalize_ats_ingest(raw: dict[str, Any] | None) -> dict[str, bool]:
     if not isinstance(raw, dict):
         return out
     for key in ATS_INGEST_KEYS:
+        if key in raw:
+            out[key] = bool(raw[key])
+    return out
+
+
+def _normalize_ingest_filters(raw: dict[str, Any] | None) -> dict[str, bool]:
+    out = dict(DEFAULT_INGEST_FILTERS)
+    if not isinstance(raw, dict):
+        return out
+    for key in DEFAULT_INGEST_FILTERS:
         if key in raw:
             out[key] = bool(raw[key])
     return out
@@ -140,6 +168,22 @@ def _normalize_ollama(raw: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _normalize_resume(raw: dict[str, Any] | None) -> dict[str, Any]:
+    out = dict(DEFAULT_RESUME)
+    if not isinstance(raw, dict):
+        return out
+    engine = str(raw.get("renderEngine") or "").strip().lower()
+    if engine in RESUME_RENDER_ENGINES:
+        out["renderEngine"] = engine
+    template = str(raw.get("templateId") or "").strip()
+    if template:
+        out["templateId"] = template
+    pages = raw.get("pages")
+    if pages in (1, 2) or pages in ("1", "2"):
+        out["pages"] = int(pages)
+    return out
+
+
 def get_app_settings() -> dict[str, Any]:
     """Return app settings, creating defaults if missing."""
     db = get_db()
@@ -152,12 +196,16 @@ def get_app_settings() -> dict[str, Any]:
     gmail = _normalize_gmail_ingest(doc.get("gmailIngest"))
     ats = _normalize_ats_ingest(doc.get("atsIngest"))
     github = _normalize_github_evidence(doc.get("githubEvidence"))
+    ingest_filters = _normalize_ingest_filters(doc.get("ingestFilters"))
     ollama = _normalize_ollama(doc.get("ollama"))
+    resume = _normalize_resume(doc.get("resume"))
     needs_fix = (
         gmail != doc.get("gmailIngest")
         or ats != doc.get("atsIngest")
         or github != doc.get("githubEvidence")
+        or ingest_filters != doc.get("ingestFilters")
         or ollama != doc.get("ollama")
+        or resume != doc.get("resume")
     )
     if needs_fix:
         db[C.SETTINGS].update_one(
@@ -167,7 +215,9 @@ def get_app_settings() -> dict[str, Any]:
                     "gmailIngest": gmail,
                     "atsIngest": ats,
                     "githubEvidence": github,
+                    "ingestFilters": ingest_filters,
                     "ollama": ollama,
+                    "resume": resume,
                     "updatedAt": _now(),
                 }
             },
@@ -176,7 +226,9 @@ def get_app_settings() -> dict[str, Any]:
     doc["gmailIngest"] = gmail
     doc["atsIngest"] = ats
     doc["githubEvidence"] = github
+    doc["ingestFilters"] = ingest_filters
     doc["ollama"] = ollama
+    doc["resume"] = resume
     return doc
 
 
@@ -187,7 +239,9 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
     gmail = dict(current.get("gmailIngest") or DEFAULT_GMAIL_INGEST)
     ats = dict(current.get("atsIngest") or DEFAULT_ATS_INGEST)
     github = _normalize_github_evidence(current.get("githubEvidence"))
+    ingest_filters = _normalize_ingest_filters(current.get("ingestFilters"))
     ollama = _normalize_ollama(current.get("ollama"))
+    resume = _normalize_resume(current.get("resume"))
 
     incoming_gmail = partial.get("gmailIngest") if isinstance(partial, dict) else None
     if isinstance(incoming_gmail, dict):
@@ -216,6 +270,14 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
             merged["defaultLookback"] = incoming_gh["defaultLookback"]
         github = _normalize_github_evidence(merged)
 
+    incoming_filters = (
+        partial.get("ingestFilters") if isinstance(partial, dict) else None
+    )
+    if isinstance(incoming_filters, dict):
+        for key in DEFAULT_INGEST_FILTERS:
+            if key in incoming_filters:
+                ingest_filters[key] = bool(incoming_filters[key])
+
     incoming_ollama = partial.get("ollama") if isinstance(partial, dict) else None
     if isinstance(incoming_ollama, dict):
         merged_ollama = {
@@ -239,6 +301,17 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
                     )
         ollama = _normalize_ollama(merged_ollama)
 
+    incoming_resume = partial.get("resume") if isinstance(partial, dict) else None
+    if isinstance(incoming_resume, dict):
+        merged_resume = dict(resume)
+        if "renderEngine" in incoming_resume:
+            merged_resume["renderEngine"] = incoming_resume["renderEngine"]
+        if "templateId" in incoming_resume:
+            merged_resume["templateId"] = incoming_resume["templateId"]
+        if "pages" in incoming_resume:
+            merged_resume["pages"] = incoming_resume["pages"]
+        resume = _normalize_resume(merged_resume)
+
     updated_at = _now()
     db[C.SETTINGS].update_one(
         {"_id": APP_SETTINGS_ID},
@@ -247,7 +320,9 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
                 "gmailIngest": gmail,
                 "atsIngest": ats,
                 "githubEvidence": github,
+                "ingestFilters": ingest_filters,
                 "ollama": ollama,
+                "resume": resume,
                 "updatedAt": updated_at,
             }
         },
@@ -258,7 +333,9 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
         "gmailIngest": gmail,
         "atsIngest": ats,
         "githubEvidence": github,
+        "ingestFilters": ingest_filters,
         "ollama": ollama,
+        "resume": resume,
         "updatedAt": updated_at,
     }
 
@@ -290,6 +367,24 @@ def is_ats_source_enabled(
     return bool(ats_map.get(key, True))
 
 
+def ingest_drop_reason(
+    normalized: dict[str, Any],
+    settings: dict[str, Any] | None = None,
+) -> str | None:
+    """If normalized job should be skipped before upsert, return counter key.
+
+    Returns ``outOfArea`` / ``wrongRole`` / None.
+    """
+    doc = settings if settings is not None else get_app_settings()
+    filters = _normalize_ingest_filters(doc.get("ingestFilters"))
+    status = (normalized.get("status") or "").strip()
+    if status == "out_of_area" and filters.get("dropOutOfArea", True):
+        return "outOfArea"
+    if status == "wrong_role" and filters.get("dropWrongRole", True):
+        return "wrongRole"
+    return None
+
+
 def is_github_evidence_enabled(settings: dict[str, Any] | None = None) -> bool:
     """Master Settings toggle for GitHub evidence scanning."""
     doc = settings if settings is not None else get_app_settings()
@@ -303,7 +398,7 @@ def is_ollama_think_enabled(
 ) -> bool:
     """Whether Ollama thinking is on for a process (default false).
 
-    process: jobExtract | profileUpdate | githubClassify | coverLetter
+    process: jobExtract | profileUpdate | githubClassify | coverLetter | resumeTailor
     If process is omitted, returns True only when any process has thinking on.
     """
     doc = settings if settings is not None else get_app_settings()
@@ -315,3 +410,9 @@ def is_ollama_think_enabled(
             return False
         return bool(by_process.get(key, False))
     return any(bool(by_process.get(key)) for key in OLLAMA_THINK_PROCESSES)
+
+
+def get_resume_settings(settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Normalized resume render settings (engine, template, pages)."""
+    doc = settings if settings is not None else get_app_settings()
+    return _normalize_resume(doc.get("resume"))
