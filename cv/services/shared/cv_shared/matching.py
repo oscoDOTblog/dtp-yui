@@ -119,12 +119,133 @@ def _adjacent_for(req: str, lookup: dict[str, dict]) -> list[str]:
     return found
 
 
+_PLACEHOLDER_TITLES = frozenset(
+    {"", "untitled", "untitled role", "unknown", "n/a", "na", "none", "null"}
+)
+_PLACEHOLDER_COMPANIES = frozenset(
+    {"", "unknown", "n/a", "na", "none", "null", "untitled"}
+)
+
+
+def is_placeholder_title(value: str | None) -> bool:
+    return (value or "").strip().lower() in _PLACEHOLDER_TITLES
+
+
+def is_placeholder_company(value: str | None) -> bool:
+    return (value or "").strip().lower() in _PLACEHOLDER_COMPANIES
+
+
+def clean_title_hint(value: str | None) -> str:
+    text = (value or "").strip()
+    return "" if is_placeholder_title(text) else text
+
+
+def clean_company_hint(value: str | None) -> str:
+    text = (value or "").strip()
+    return "" if is_placeholder_company(text) else text
+
+
+def _guess_title_from_description(description: str) -> str:
+    """Best-effort role title from pasted/fetched listing text."""
+    for raw in (description or "").splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line or len(line) < 4 or len(line) > 120:
+            continue
+        if re.match(r"^https?://", line, flags=re.I):
+            continue
+        lower = line.lower()
+        if lower.startswith(
+            (
+                "job description",
+                "about the role",
+                "about this role",
+                "about the job",
+                "responsibilities",
+                "requirements",
+                "what you'll",
+                "what you will",
+                "who we are",
+                "overview",
+            )
+        ):
+            continue
+        labeled = re.match(
+            r"^(?:job\s+)?(?:title|role|position)\s*[:\-–—]\s*(.+)$",
+            line,
+            flags=re.I,
+        )
+        if labeled:
+            return labeled.group(1).strip()[:120]
+        # "Senior Engineer — Netflix" / "Role at Company"
+        parts = re.split(r"\s+[|\-–—]\s+|\s+at\s+", line, maxsplit=1, flags=re.I)
+        candidate = parts[0].strip()
+        if len(candidate) >= 4:
+            return candidate[:120]
+    return ""
+
+
+def _guess_company_from_description(description: str) -> str:
+    for raw in (description or "").splitlines()[:12]:
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line or len(line) > 80:
+            continue
+        labeled = re.match(
+            r"^(?:company|employer|organization)\s*[:\-–—]\s*(.+)$",
+            line,
+            flags=re.I,
+        )
+        if labeled:
+            return labeled.group(1).strip()[:80]
+        at_match = re.search(r"\bat\s+([A-Z][\w.&'’\- ]{1,60})$", line)
+        if at_match and not is_placeholder_company(at_match.group(1)):
+            return at_match.group(1).strip()[:80]
+    return ""
+
+
+def _guess_work_mode(description: str) -> str:
+    blob = (description or "").lower()
+    if re.search(r"\b(fully\s+)?remote\b", blob) and "not remote" not in blob:
+        if re.search(r"\bhybrid\b", blob):
+            return "hybrid"
+        return "remote"
+    if re.search(r"\bhybrid\b", blob):
+        return "hybrid"
+    if re.search(r"\b(on[-\s]?site|in[-\s]?office)\b", blob):
+        return "onsite"
+    return "unknown"
+
+
+def _guess_location(description: str) -> str:
+    for raw in (description or "").splitlines()[:20]:
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line or len(line) > 100:
+            continue
+        labeled = re.match(
+            r"^(?:location|based in|office)\s*[:\-–—]\s*(.+)$",
+            line,
+            flags=re.I,
+        )
+        if labeled:
+            return labeled.group(1).strip()[:120]
+        if re.search(
+            r"\b(san francisco|bay area|oakland|berkeley|palo alto|"
+            r"mountain view|sunnyvale|san jose|remote)\b",
+            line,
+            flags=re.I,
+        ):
+            return line[:120]
+    return ""
+
+
 def extract_job_requirements(description: str, title: str = "", company: str = "") -> dict:
+    hint_title = clean_title_hint(title)
+    hint_company = clean_company_hint(company)
     prompt = (
-        f"Title hint: {title or '(unknown)'}\n"
-        f"Company hint: {company or '(unknown)'}\n\n"
+        f"Title hint: {hint_title or '(unknown — extract from description)'}\n"
+        f"Company hint: {hint_company or '(unknown — extract from description)'}\n\n"
         f"Job description:\n{description[:12000]}"
     )
+    heuristic = _heuristic_extract(description, hint_title, hint_company)
     try:
         raw = chat(
             prompt,
@@ -135,10 +256,25 @@ def extract_job_requirements(description: str, title: str = "", company: str = "
         data = extract_json(raw)
         if not isinstance(data, dict):
             raise ValueError("expected object")
-        return data
     except Exception as exc:
         logger.warning("Ollama extract failed, using heuristic: %s", exc)
-        return _heuristic_extract(description, title, company)
+        return heuristic
+
+    # Never keep placeholder leftovers when the heuristic found something better
+    if is_placeholder_title(data.get("title")):
+        data["title"] = heuristic.get("title") or data.get("title")
+    if is_placeholder_company(data.get("company")):
+        data["company"] = heuristic.get("company") or data.get("company")
+    if not (data.get("location") or "").strip():
+        data["location"] = heuristic.get("location") or ""
+    work_mode = (data.get("workMode") or "").strip().lower()
+    if work_mode in ("", "unknown"):
+        data["workMode"] = heuristic.get("workMode") or "unknown"
+    if not data.get("requiredSkills"):
+        data["requiredSkills"] = heuristic.get("requiredSkills") or []
+    if not data.get("roleFamily"):
+        data["roleFamily"] = heuristic.get("roleFamily")
+    return data
 
 
 def _heuristic_extract(description: str, title: str, company: str) -> dict:
@@ -171,18 +307,26 @@ def _heuristic_extract(description: str, title: str, company: str) -> dict:
     for hint in skill_hints:
         if hint in blob:
             skills.append(hint.title() if hint != "next.js" else "Next.js")
+    resolved_title = (
+        clean_title_hint(title)
+        or _guess_title_from_description(description)
+        or (lines[0][:120] if lines else "")
+    )
+    resolved_company = clean_company_hint(company) or _guess_company_from_description(
+        description
+    )
     return {
-        "title": title or (lines[0][:120] if lines else "Untitled role"),
-        "company": company or "Unknown",
-        "location": "",
-        "workMode": "unknown",
+        "title": resolved_title or "Untitled role",
+        "company": resolved_company or "Unknown",
+        "location": _guess_location(description),
+        "workMode": _guess_work_mode(description),
         "salaryMin": None,
         "salaryMax": None,
         "currency": "USD",
         "requiredSkills": skills[:12],
         "preferredSkills": [],
         "seniority": "unknown",
-        "roleFamily": detect_role_family(title, description),
+        "roleFamily": detect_role_family(resolved_title, description),
         "hardDisqualifiers": [],
         "summary": (description[:400] + "…") if len(description) > 400 else description,
     }
@@ -481,27 +625,30 @@ def analyze_job(job_id: str) -> dict:
         company=job.get("company") or "",
     )
 
-    # Enrich job fields from extraction when missing
+    # Enrich job fields from extraction when missing / still placeholder
     updates: dict[str, Any] = {
         "requiredSkills": extracted.get("requiredSkills") or [],
         "preferredSkills": extracted.get("preferredSkills") or [],
         "status": "analyzed",
         "roleFamily": detect_role_family(
-            extracted.get("title") or job.get("title") or "",
+            clean_title_hint(extracted.get("title"))
+            or clean_title_hint(job.get("title"))
+            or "",
             job.get("descriptionRaw") or "",
             extracted,
         ),
     }
-    if extracted.get("title") and (not job.get("title") or job.get("title") == "Untitled"):
-        updates["title"] = extracted["title"]
-    if extracted.get("company") and (
-        not job.get("company") or job.get("company") == "Unknown"
-    ):
-        updates["company"] = extracted["company"]
-    if extracted.get("location"):
-        updates["location"] = extracted["location"]
-    if extracted.get("workMode"):
-        updates["workMode"] = extracted["workMode"]
+    extracted_title = clean_title_hint(extracted.get("title"))
+    if extracted_title and is_placeholder_title(job.get("title")):
+        updates["title"] = extracted_title
+    extracted_company = clean_company_hint(extracted.get("company"))
+    if extracted_company and is_placeholder_company(job.get("company")):
+        updates["company"] = extracted_company
+    if (extracted.get("location") or "").strip():
+        updates["location"] = extracted["location"].strip()
+    extracted_mode = (extracted.get("workMode") or "").strip().lower()
+    if extracted_mode and extracted_mode != "unknown":
+        updates["workMode"] = extracted_mode
     if extracted.get("salaryMin") or extracted.get("salaryMax"):
         updates["salary"] = {
             "minimum": extracted.get("salaryMin"),

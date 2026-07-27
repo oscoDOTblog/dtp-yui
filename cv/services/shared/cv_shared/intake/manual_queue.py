@@ -118,10 +118,32 @@ def enqueue_urls(
 
 
 def list_queue(*, limit: int = 50) -> list[dict[str, Any]]:
+    """Recent queue items, newest first. Hydrate title/company from job when missing."""
+    db = get_db()
     limit = max(1, min(int(limit or 50), 200))
-    return list(
-        get_db()[C.INTAKE_QUEUE].find({}, sort=[("createdAt", -1)], limit=limit)
-    )
+    items = list(db[C.INTAKE_QUEUE].find({}, sort=[("createdAt", -1)], limit=limit))
+    missing_job_ids = [
+        item["jobId"]
+        for item in items
+        if item.get("jobId") and not item.get("jobTitle")
+    ]
+    if missing_job_ids:
+        jobs = {
+            job["_id"]: job
+            for job in db[C.JOBS].find(
+                {"_id": {"$in": missing_job_ids}},
+                {"title": 1, "company": 1},
+            )
+        }
+        for item in items:
+            job = jobs.get(item.get("jobId"))
+            if not job:
+                continue
+            if not item.get("jobTitle") and job.get("title"):
+                item["jobTitle"] = job["title"]
+            if not item.get("jobCompany") and job.get("company"):
+                item["jobCompany"] = job["company"]
+    return items
 
 
 def get_queue_item(item_id: str) -> dict[str, Any] | None:
@@ -236,6 +258,8 @@ def mark_done(
     *,
     job_id: str | None,
     fetch_status: str | None = None,
+    job_title: str | None = None,
+    job_company: str | None = None,
 ) -> None:
     now = _now()
     fields: dict[str, Any] = {
@@ -247,6 +271,10 @@ def mark_done(
     }
     if fetch_status is not None:
         fields["fetchStatus"] = fetch_status
+    if job_title:
+        fields["jobTitle"] = str(job_title).strip()[:200]
+    if job_company:
+        fields["jobCompany"] = str(job_company).strip()[:120]
     get_db()[C.INTAKE_QUEUE].update_one({"_id": item_id}, {"$set": fields})
 
 

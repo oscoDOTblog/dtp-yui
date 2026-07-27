@@ -432,6 +432,12 @@ def _drain_manual_queue(
         try:
             raw = queue_item_to_raw(item)
             queue_meta = raw.pop("_queueMeta", {}) or {}
+            raw_title = (raw.get("title") or "").strip()
+            raw_company = (raw.get("company") or "").strip()
+            if raw_title and raw_title not in ("Untitled", "Untitled role"):
+                title_label = f"{raw_title} @ {raw_company or '?'}"
+                summary["currentTitle"] = f"Queue: {title_label}"
+                publish()
             if queue_meta.get("skipEnrich") or (raw.get("source") or "") == "greenhouse":
                 enriched = raw
             else:
@@ -462,13 +468,23 @@ def _drain_manual_queue(
                 summary["jobsUpdated"] += 1
                 summary["manualJobsUpdated"] = summary.get("manualJobsUpdated", 0) + 1
 
+            progress_title = (job.get("title") or "").strip()
+            progress_company = (job.get("company") or "").strip()
+            if progress_title and progress_title not in ("Untitled", "Untitled role"):
+                summary["currentTitle"] = f"Analyzing: {progress_title} @ {progress_company or '?'}"
+                publish()
+
             _analyze_after_upsert(
                 job, created=result["created"], analyze=analyze, summary=summary
             )
+            # Refresh after analyze so queue rows get extracted title/company
+            job = get_db()[C.JOBS].find_one({"_id": job["_id"]}) or job
             mark_done(
                 queue_id,
                 job_id=job.get("_id"),
                 fetch_status=enriched.get("fetchStatus"),
+                job_title=job.get("title"),
+                job_company=job.get("company"),
             )
         except Exception as exc:
             logger.exception("manual queue ingest failed for %s", queue_id)

@@ -23,6 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { jobHeadline, jobMetaLine } from "../../../lib/jobDisplay";
 
 function recommendationVariant(recommendation) {
   if (recommendation === "apply") return "success";
@@ -208,12 +209,9 @@ export default function JobDetailPage() {
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h1 className="m-0 mb-1.5 text-3xl font-semibold tracking-tight max-sm:text-2xl">
-            {job.title} — {job.company}
+            {jobHeadline(job)}
           </h1>
-          <p className="m-0 text-muted-foreground">
-            {job.location || "Location n/a"} · {job.workMode || "unknown"} ·
-            status: {job.status}
-          </p>
+          <p className="m-0 text-muted-foreground">{jobMetaLine(job)}</p>
         </div>
         {openHref ? (
           <Button

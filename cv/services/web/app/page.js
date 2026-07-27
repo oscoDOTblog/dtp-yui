@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { jobHeadline, jobMetaLine } from "../lib/jobDisplay";
 
 const PAGE_SIZE_OPTIONS = [
   { label: "25 at a time", value: "25" },
@@ -602,7 +603,7 @@ export default function HomePage() {
                         className="min-w-0 flex-1 text-inherit no-underline hover:no-underline"
                       >
                         <h2 className="m-0 text-base font-semibold hover:text-primary">
-                          {job.title} — {job.company}
+                          {jobHeadline(job)}
                         </h2>
                       </a>
                       {match ? (
@@ -620,8 +621,7 @@ export default function HomePage() {
                       )}
                     </div>
                     <p className="mt-1.5 m-0 text-sm text-muted-foreground">
-                      {job.location || "Location n/a"} ·{" "}
-                      {job.workMode || "unknown"} · {job.status}
+                      {jobMetaLine(job)}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       <Badge variant="outline">{sourceLabel(job)}</Badge>

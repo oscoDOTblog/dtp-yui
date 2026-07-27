@@ -174,14 +174,60 @@ def queue_item_to_raw(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _company_from_url(url: str) -> str:
+    host = (parse.urlparse(url or "").netloc or "").lower()
+    if not host:
+        return ""
+    host = host[4:] if host.startswith("www.") else host
+    # jobs.netflix.com / careers.foo.com / boards.greenhouse.io
+    if "greenhouse.io" in host or "lever.co" in host or "ashbyhq.com" in host:
+        return ""
+    parts = [p for p in host.split(".") if p and p not in ("www", "jobs", "careers", "com", "io", "co", "net", "org")]
+    if not parts:
+        return ""
+    return parts[0].replace("-", " ").title()
+
+
+def _guess_paste_title(paste: str) -> str:
+    for raw in (paste or "").splitlines()[:15]:
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line or len(line) < 4 or len(line) > 120:
+            continue
+        if re.match(r"^https?://", line, flags=re.I):
+            continue
+        lower = line.lower()
+        if lower.startswith(
+            (
+                "job description",
+                "about the role",
+                "about this role",
+                "responsibilities",
+                "requirements",
+            )
+        ):
+            continue
+        labeled = re.match(
+            r"^(?:job\s+)?(?:title|role|position)\s*[:\-–—]\s*(.+)$",
+            line,
+            flags=re.I,
+        )
+        if labeled:
+            return labeled.group(1).strip()[:120]
+        parts = re.split(r"\s+[|\-–—]\s+|\s+at\s+", line, maxsplit=1, flags=re.I)
+        return parts[0].strip()[:120]
+    return ""
+
+
 def _raw_from_paste(url: str, paste: str, queue_id: Any) -> dict[str, Any]:
     fields = description_fields_from_html_or_text(paste)
     plain = fields["descriptionRaw"]
+    title = _guess_paste_title(plain or paste) or "Untitled"
+    company = _company_from_url(url) or "Unknown"
     return {
         "externalId": _manual_external_id(url, plain or paste),
         "source": "manual",
-        "title": "Untitled",
-        "company": "Unknown",
+        "title": title,
+        "company": company,
         "location": "",
         "descriptionRaw": plain,
         "descriptionText": plain,
