@@ -18,11 +18,17 @@ GMAIL_INGEST_KEYS = (
     "otherEmail",
 )
 
+# Master switch for all Gmail API ingest (sender keys are nested filters)
+GMAIL_INGEST_MASTER_KEY = "enabled"
+
 ATS_INGEST_KEYS = ("greenhouse", "ashby")
 
 LOOKBACK_PRESETS = ("1d", "7d", "30d", "90d", "365d", "all")
 
-DEFAULT_GMAIL_INGEST = {key: True for key in GMAIL_INGEST_KEYS}
+DEFAULT_GMAIL_INGEST = {
+    GMAIL_INGEST_MASTER_KEY: True,
+    **{key: True for key in GMAIL_INGEST_KEYS},
+}
 DEFAULT_ATS_INGEST = {key: True for key in ATS_INGEST_KEYS}
 DEFAULT_GITHUB_EVIDENCE = {
     "enabled": True,
@@ -93,10 +99,22 @@ def _normalize_gmail_ingest(raw: dict[str, Any] | None) -> dict[str, bool]:
     out = dict(DEFAULT_GMAIL_INGEST)
     if not isinstance(raw, dict):
         return out
+    if GMAIL_INGEST_MASTER_KEY in raw:
+        out[GMAIL_INGEST_MASTER_KEY] = bool(raw[GMAIL_INGEST_MASTER_KEY])
     for key in GMAIL_INGEST_KEYS:
         if key in raw:
             out[key] = bool(raw[key])
     return out
+
+
+def is_gmail_ingest_enabled(settings: dict[str, Any] | None = None) -> bool:
+    """Master Settings toggle — when false, skip Gmail API entirely."""
+    doc = settings if settings is not None else get_app_settings()
+    gmail = _normalize_gmail_ingest(doc.get("gmailIngest"))
+    if not gmail.get(GMAIL_INGEST_MASTER_KEY, True):
+        return False
+    # No point calling Gmail if every sender filter is off
+    return any(bool(gmail.get(key, True)) for key in GMAIL_INGEST_KEYS)
 
 
 def _normalize_ats_ingest(raw: dict[str, Any] | None) -> dict[str, bool]:
@@ -245,9 +263,14 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
 
     incoming_gmail = partial.get("gmailIngest") if isinstance(partial, dict) else None
     if isinstance(incoming_gmail, dict):
+        if GMAIL_INGEST_MASTER_KEY in incoming_gmail:
+            gmail[GMAIL_INGEST_MASTER_KEY] = bool(
+                incoming_gmail[GMAIL_INGEST_MASTER_KEY]
+            )
         for key in GMAIL_INGEST_KEYS:
             if key in incoming_gmail:
                 gmail[key] = bool(incoming_gmail[key])
+        gmail = _normalize_gmail_ingest(gmail)
 
     incoming_ats = partial.get("atsIngest") if isinstance(partial, dict) else None
     if isinstance(incoming_ats, dict):
@@ -350,6 +373,8 @@ def is_gmail_source_enabled(
 ) -> bool:
     doc = settings if settings is not None else get_app_settings()
     gmail = _normalize_gmail_ingest(doc.get("gmailIngest"))
+    if not gmail.get(GMAIL_INGEST_MASTER_KEY, True):
+        return False
     key = gmail_ingest_key_for_alert_source(alert_source)
     return bool(gmail.get(key, True))
 

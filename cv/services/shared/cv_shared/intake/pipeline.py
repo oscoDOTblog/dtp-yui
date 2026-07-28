@@ -16,6 +16,7 @@ from ..settings import (
     get_app_settings,
     ingest_drop_reason,
     is_ats_source_enabled,
+    is_gmail_ingest_enabled,
     is_gmail_source_enabled,
 )
 from ..telegram import notify_apply_match
@@ -656,6 +657,7 @@ def run_ingest(
         "telegramSent": 0,
         "skippedDisabledSource": 0,
         "skippedDisabledAts": {},
+        "skippedDisabledGmail": False,
         "skippedNoCreds": False,
         "reprocessCleared": 0,
         "gmailJobsCreated": 0,
@@ -750,7 +752,10 @@ def run_ingest(
     }
 
     if run_gmail and not was_cancelled():
-        if not credentials_available():
+        if not is_gmail_ingest_enabled(app_settings):
+            summary["skippedDisabledGmail"] = True
+            publish()
+        elif not credentials_available():
             summary["skippedNoCreds"] = True
             publish()
         else:

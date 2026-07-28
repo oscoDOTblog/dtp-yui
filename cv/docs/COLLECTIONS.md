@@ -94,6 +94,7 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
 {
   "_id": "app",
   "gmailIngest": {
+    "enabled": true,
     "linkedinEmail": true,
     "indeedEmail": true,
     "glassdoorEmail": true,

@@ -563,7 +563,27 @@ export default function SettingsPage() {
         <section className="mt-10">
           <h2 className="mb-3 text-lg font-semibold">Gmail alert ingest</h2>
           <div className="grid gap-3">
+            <Card>
+              <CardPanel className="flex items-start gap-4 p-4">
+                <Switch
+                  className="mt-0.5 shrink-0"
+                  checked={Boolean(gmailIngest.enabled ?? true)}
+                  disabled={!!savingKey}
+                  onCheckedChange={() => toggleGmail("enabled")}
+                  aria-label={`Gmail ingest ${gmailIngest.enabled ?? true ? "on" : "off"}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="m-0 font-semibold">Gmail ingest</p>
+                  <p className="mt-1 m-0 text-sm text-muted-foreground">
+                    Master switch for JobAlerts via Gmail. When off, ingest
+                    skips the Gmail API entirely (no OAuth / token refresh).
+                    Greenhouse, Ashby, and Analyze still run.
+                  </p>
+                </div>
+              </CardPanel>
+            </Card>
             {PROVIDERS.map((p) => {
+              const masterOn = Boolean(gmailIngest.enabled ?? true);
               const on = Boolean(gmailIngest[p.key]);
               return (
                 <Card key={p.key}>
@@ -571,7 +591,7 @@ export default function SettingsPage() {
                     <Switch
                       className="mt-0.5 shrink-0"
                       checked={on}
-                      disabled={!!savingKey}
+                      disabled={!!savingKey || !masterOn}
                       onCheckedChange={() => toggleGmail(p.key)}
                       aria-label={`${p.label} ingest ${on ? "on" : "off"}`}
                     />
@@ -579,6 +599,9 @@ export default function SettingsPage() {
                       <p className="m-0 font-semibold">{p.label}</p>
                       <p className="mt-1 m-0 text-sm text-muted-foreground">
                         {p.description}
+                        {!masterOn
+                          ? " Turn on Gmail ingest above to use this filter."
+                          : ""}
                       </p>
                     </div>
                   </CardPanel>

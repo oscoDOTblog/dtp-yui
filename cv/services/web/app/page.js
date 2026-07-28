@@ -143,6 +143,7 @@ export default function HomePage() {
   const [cancelStartedAt, setCancelStartedAt] = useState(null);
   const [showForceClear, setShowForceClear] = useState(false);
   const [autoProcessingEnabled, setAutoProcessingEnabled] = useState(true);
+  const [gmailIngestEnabled, setGmailIngestEnabled] = useState(true);
 
   const ingesting = ingestStatus?.status === "running";
 
@@ -189,8 +190,13 @@ export default function HomePage() {
       setError("");
       await loadJobs();
       if (!cancelled) {
+        let settings = null;
         try {
-          const runtime = await apiGet("/runtime");
+          const [runtime, settingsRes] = await Promise.all([
+            apiGet("/runtime").catch(() => null),
+            apiGet("/settings").catch(() => null),
+          ]);
+          settings = settingsRes;
           if (!cancelled && runtime) {
             const enabled =
               typeof runtime.autoProcessingEnabled === "boolean"
@@ -199,6 +205,9 @@ export default function HomePage() {
                   ? runtime.processingEnabled
                   : true;
             setAutoProcessingEnabled(enabled);
+          }
+          if (!cancelled && settings?.gmailIngest) {
+            setGmailIngestEnabled(Boolean(settings.gmailIngest.enabled ?? true));
           }
         } catch {
           // Older API without /runtime — assume processing on
@@ -217,8 +226,15 @@ export default function HomePage() {
             );
           }
         }
+        const gmailOn = settings?.gmailIngest
+          ? Boolean(settings.gmailIngest.enabled ?? true)
+          : true;
         const hint = ingestErrorHint(status);
-        if (hint && status?.status !== "running") {
+        const skipGmailHint =
+          !gmailOn &&
+          hint &&
+          (/invalid_grant/i.test(hint) || /Gmail OAuth/i.test(hint));
+        if (hint && status?.status !== "running" && !skipGmailHint) {
           setError(hint);
         }
         setLoading(false);
@@ -240,7 +256,15 @@ export default function HomePage() {
       const status = await refreshStatus();
       await loadJobs();
       const hint = ingestErrorHint(status);
-      if (hint) setError(hint);
+      if (
+        hint &&
+        !(
+          !gmailIngestEnabled &&
+          (/invalid_grant/i.test(hint) || /Gmail OAuth/i.test(hint))
+        )
+      ) {
+        setError(hint);
+      }
       if (status && status.status !== "running") {
         setInfo(statusBannerText(status));
         setCancelling(false);
@@ -259,7 +283,7 @@ export default function HomePage() {
       }
     }, 3000);
     return () => clearInterval(id);
-  }, [ingesting, refreshStatus, loadJobs, cancelStartedAt]);
+  }, [ingesting, refreshStatus, loadJobs, cancelStartedAt, gmailIngestEnabled]);
 
   useEffect(() => {
     if (!ingesting || !cancelStartedAt) return undefined;
@@ -514,17 +538,25 @@ export default function HomePage() {
             <p className="m-0 text-sm text-foreground/90">
               {statusBannerText(ingestStatus)}
             </p>
-            {ingestErrorHint(ingestStatus) ? (
-              <p className="mt-1.5 mb-0 text-sm text-destructive">
-                {ingestErrorHint(ingestStatus)}
-              </p>
-            ) : (
-              <p className="mt-1.5 text-sm text-muted-foreground">
-                Splitting digests · fetching listing pages · Bay Area gate ·
-                scoring one by one. You can Open finished jobs below while this
-                runs.
-              </p>
-            )}
+            {(() => {
+              const hint = ingestErrorHint(ingestStatus);
+              const hideGmail =
+                !gmailIngestEnabled &&
+                hint &&
+                (/invalid_grant/i.test(hint) || /Gmail OAuth/i.test(hint));
+              if (hint && !hideGmail) {
+                return (
+                  <p className="mt-1.5 mb-0 text-sm text-destructive">{hint}</p>
+                );
+              }
+              return (
+                <p className="mt-1.5 text-sm text-muted-foreground">
+                  Splitting digests · fetching listing pages · Bay Area gate ·
+                  scoring one by one. You can Open finished jobs below while this
+                  runs.
+                </p>
+              );
+            })()}
             {ingestStatus?.cancelRequested ? (
               <p className="mt-1.5 mb-0 text-sm text-muted-foreground">
                 If this hangs after an API/worker restart, use Force clear lock.

@@ -177,8 +177,9 @@ The **Settings** tab (`/settings`) is the source of truth for Gmail alert provid
 | Other alerts | Wellfound, Google, Dice, ZipRecruiter, unrecognized |
 
 - `GMAIL_QUERY` / `JobAlerts` still control **which mail is fetched**
-- Settings toggles control **which senders are processed** after fetch
-- API: `GET /settings`, `PATCH /settings` with `{ "gmailIngest": { "glassdoorEmail": false } }`
+- Settings **Gmail ingest** master (`gmailIngest.enabled`) skips the Gmail API entirely when off
+- Per-sender toggles control **which senders are processed** after fetch (disabled in UI when master is off)
+- API: `GET /settings`, `PATCH /settings` with `{ "gmailIngest": { "enabled": false } }` or `{ "gmailIngest": { "glassdoorEmail": false } }`
 - Worker and manual ingest both read the same doc — no redeploy when toggling
 - **ATS boards** (Greenhouse, Ashby) have separate master toggles under Settings → ATS board ingest (`atsIngest.greenhouse`, `atsIngest.ashby`). See [GREENHOUSE_SETUP.md](GREENHOUSE_SETUP.md) and [ASHBY_SETUP.md](ASHBY_SETUP.md).
 
