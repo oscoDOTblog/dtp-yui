@@ -8,20 +8,13 @@ import DocumentPackagePanel, {
   savePackageToBrowser,
 } from "../../components/DocumentPackagePanel";
 import ApplicationStatusTracker from "../../components/ApplicationStatusTracker";
+import FitAssessmentTable from "../../components/FitAssessmentTable";
 import MarkdownContent from "../../components/MarkdownContent";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardPanel } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { jobHeadline, jobMetaLine } from "../../../lib/jobDisplay";
 import {
@@ -78,6 +71,7 @@ export default function JobDetailPage() {
   const [statusIndex, setStatusIndex] = useState(0);
   const [message, setMessage] = useState("");
   const [pkg, setPkg] = useState(null);
+  const [fitBusyRequirement, setFitBusyRequirement] = useState("");
 
   async function load() {
     try {
@@ -188,6 +182,44 @@ export default function JobDetailPage() {
       setError(err.message || "Failed to update status");
     } finally {
       setBusy("");
+      setStatusText("");
+    }
+  }
+
+  async function setFitOverride(requirement, fit) {
+    if (!requirement || !fit || busy) return;
+    setBusy("fit");
+    setFitBusyRequirement(requirement);
+    setMessage("");
+    setError("");
+    try {
+      const result = await apiPatch(`/jobs/${jobId}/fit-overrides`, {
+        requirement,
+        fit,
+      });
+      if (result?.match) {
+        setJob((cur) =>
+          cur
+            ? {
+                ...cur,
+                fitOverrides: result.fitOverrides || cur.fitOverrides,
+                match: result.match,
+              }
+            : cur,
+        );
+        const label =
+          fit === "strong" ? "Strength" : fit === "gap" ? "Gap" : "Warning";
+        setMessage(`Fit updated to ${label}. Used on Re-analyze.`);
+      } else {
+        setMessage("Fit override saved — run Re-analyze to apply.");
+        await load();
+      }
+    } catch (err) {
+      setError(err.message || "Failed to update fit");
+      await load();
+    } finally {
+      setBusy("");
+      setFitBusyRequirement("");
       setStatusText("");
     }
   }
@@ -408,58 +440,16 @@ export default function JobDetailPage() {
           <section className="mt-7">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="m-0 text-lg font-semibold">Fit assessment</h2>
-              <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm font-bold">
-                <span className="text-success-foreground">Strength</span>
-                <span className="text-warning-foreground">Warning</span>
-                <span className="text-destructive-foreground">Gap</span>
-              </div>
+              <p className="m-0 text-sm text-muted-foreground">
+                Change Strength / Warning / Gap — saved for Re-analyze
+              </p>
             </div>
-            <div className="overflow-x-auto rounded-xl border border-border bg-card">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Area</TableHead>
-                    <TableHead>Your fit</TableHead>
-                    <TableHead>Notes</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(match.strongMatches || []).map((item, idx) => (
-                    <TableRow key={`s-${idx}`}>
-                      <TableCell>{item.requirement}</TableCell>
-                      <TableCell className="font-bold text-success-foreground">
-                        Strong
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {item.evidenceLevel || "verified evidence"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {(match.warnings || []).map((item, idx) => (
-                    <TableRow key={`w-${idx}`}>
-                      <TableCell>{item.skill || item.requirement}</TableCell>
-                      <TableCell className="font-bold text-warning-foreground">
-                        {item.label || "Warning"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {item.reason}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {(match.meaningfulGaps || []).map((item, idx) => (
-                    <TableRow key={`g-${idx}`}>
-                      <TableCell>{item.skill}</TableCell>
-                      <TableCell className="font-bold text-destructive-foreground">
-                        {item.label || "Gap"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {item.reason}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <FitAssessmentTable
+              match={match}
+              busy={busy === "fit"}
+              busyRequirement={fitBusyRequirement}
+              onChangeFit={setFitOverride}
+            />
           </section>
         </>
       ) : (

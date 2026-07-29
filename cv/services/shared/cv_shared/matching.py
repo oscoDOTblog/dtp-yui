@@ -15,6 +15,159 @@ from .ollama_client import chat, extract_json
 
 logger = logging.getLogger(__name__)
 
+FIT_KINDS = ("strong", "warning", "gap")
+FIT_LABELS = {
+    "strong": "Strength",
+    "warning": "Warning",
+    "gap": "Gap",
+}
+
+
+def normalize_fit_key(text: str) -> str:
+    """Stable key for fit override matching (requirement / skill label)."""
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def normalize_fit_kind(value: str | None) -> str | None:
+    raw = (value or "").strip().lower()
+    aliases = {
+        "strength": "strong",
+        "strong": "strong",
+        "warning": "warning",
+        "warn": "warning",
+        "gap": "gap",
+        "meaningful_gap": "gap",
+        "meaningfulgap": "gap",
+    }
+    kind = aliases.get(raw)
+    return kind if kind in FIT_KINDS else None
+
+
+def _fit_item_label(item: dict[str, Any]) -> str:
+    return str(item.get("requirement") or item.get("skill") or "").strip()
+
+
+def _stamp_fit(
+    item: dict[str, Any],
+    fit: str,
+    *,
+    overridden: bool,
+) -> dict[str, Any]:
+    """Normalize fit fields so items can move between Strength/Warning/Gap."""
+    name = _fit_item_label(item)
+    out = dict(item)
+    out["fit"] = fit
+    out["label"] = FIT_LABELS[fit]
+    out["fitOverridden"] = bool(overridden)
+    if name:
+        out["requirement"] = name
+        out["skill"] = name
+    if fit == "strong":
+        out.pop("severity", None)
+        if not out.get("evidenceLevel"):
+            out["evidenceLevel"] = "user override" if overridden else out.get(
+                "evidenceLevel"
+            )
+    elif fit == "warning":
+        out["severity"] = "warning"
+        if overridden and not (out.get("reason") or "").strip():
+            out["reason"] = "Marked as warning by you."
+    else:
+        if out.get("severity") not in ("critical", "high", "medium"):
+            out["severity"] = "high"
+        if overridden and not (out.get("reason") or "").strip():
+            out["reason"] = "Marked as gap by you."
+    return out
+
+
+def apply_fit_overrides(
+    strong_matches: list[dict[str, Any]],
+    warnings: list[dict[str, Any]],
+    meaningful_gaps: list[dict[str, Any]],
+    overrides: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Rebucket fit rows using user overrides keyed by normalized requirement."""
+    normalized_overrides: dict[str, str] = {}
+    for key, value in (overrides or {}).items():
+        nk = normalize_fit_key(str(key))
+        kind = normalize_fit_kind(str(value) if value is not None else None)
+        if nk and kind:
+            normalized_overrides[nk] = kind
+
+    buckets: dict[str, list[dict[str, Any]]] = {
+        "strong": [],
+        "warning": [],
+        "gap": [],
+    }
+    for item, auto_fit in (
+        *[(row, "strong") for row in strong_matches],
+        *[(row, "warning") for row in warnings],
+        *[(row, "gap") for row in meaningful_gaps],
+    ):
+        key = normalize_fit_key(_fit_item_label(item))
+        target = normalized_overrides.get(key) or auto_fit
+        stamped = _stamp_fit(item, target, overridden=target != auto_fit)
+        stamped["autoFit"] = auto_fit
+        buckets[target].append(stamped)
+
+    return buckets["strong"], buckets["warning"], buckets["gap"]
+
+
+def set_fit_override(job_id: str, requirement: str, fit: str) -> dict[str, Any]:
+    """Persist one fit override and rescore from existing extraction (no Ollama)."""
+    kind = normalize_fit_kind(fit)
+    if not kind:
+        raise ValueError("fit must be strength|warning|gap (or strong)")
+    key = normalize_fit_key(requirement)
+    if not key:
+        raise ValueError("requirement is required")
+
+    db = get_db()
+    job = db[C.JOBS].find_one({"_id": job_id})
+    if not job:
+        raise KeyError(f"job not found: {job_id}")
+
+    overrides = dict(job.get("fitOverrides") or {})
+    # Drop any prior key that normalizes the same way
+    for existing in list(overrides.keys()):
+        if normalize_fit_key(str(existing)) == key:
+            del overrides[existing]
+    overrides[key] = kind
+    now = datetime.now(timezone.utc).isoformat()
+    db[C.JOBS].update_one(
+        {"_id": job_id},
+        {"$set": {"fitOverrides": overrides, "fitOverridesUpdatedAt": now}},
+    )
+    job = db[C.JOBS].find_one({"_id": job_id}) or job
+
+    existing = db[C.JOB_MATCHES].find_one({"jobId": job_id})
+    extracted = (existing or {}).get("extracted")
+    if not extracted:
+        # No prior analyze — keep override for next analyze; return job stub
+        return {
+            "jobId": job_id,
+            "fitOverrides": overrides,
+            "match": None,
+            "rescored": False,
+        }
+
+    match = score_job(job, extracted)
+    db[C.JOB_MATCHES].replace_one({"_id": match["_id"]}, match, upsert=True)
+    try:
+        from .gap_insights import record_gaps_from_match
+
+        record_gaps_from_match(match, job)
+    except Exception:
+        logger.exception("gap insights upsert failed after fit override for %s", job_id)
+
+    return {
+        "jobId": job_id,
+        "fitOverrides": overrides,
+        "match": match,
+        "rescored": True,
+    }
+
+
 EXTRACT_SYSTEM = """You extract structured job requirements as JSON only.
 Return exactly one JSON object with keys:
 title, company, location, workMode, salaryMin, salaryMax, currency,
@@ -576,6 +729,27 @@ def score_job(job: dict, extracted: dict | None = None) -> dict:
             }
         )
 
+    # User fit overrides (Strength/Warning/Gap) — applied before score so re-analyze honors them
+    strong_matches, warnings, meaningful_gaps = apply_fit_overrides(
+        strong_matches,
+        warnings,
+        meaningful_gaps,
+        job.get("fitOverrides"),
+    )
+
+    total_fit = len(strong_matches) + len(warnings) + len(meaningful_gaps)
+    if total_fit:
+        verified_pct = len(strong_matches) / total_fit * 100
+        adjacent_pct = len(warnings) / total_fit * 100
+    # else keep verified_pct / adjacent_pct from the auto loop
+
+    # Recalc hard penalty from remaining gap rows (override can clear clearance gaps)
+    hard_penalty = 0
+    for gap in meaningful_gaps:
+        hl = _fit_item_label(gap).lower()
+        if "clearance" in hl or "citizen" in hl:
+            hard_penalty += 40
+
     final = (
         0.25 * role_align
         + 0.25 * verified_pct
@@ -632,6 +806,11 @@ def score_job(job: dict, extracted: dict | None = None) -> dict:
         "warnings": warnings[:15],
         "meaningfulGaps": meaningful_gaps[:15],
         "adjacentHits": adjacent_hits[:10],
+        "fitOverridesApplied": {
+            normalize_fit_key(str(k)): normalize_fit_kind(str(v))
+            for k, v in (job.get("fitOverrides") or {}).items()
+            if normalize_fit_key(str(k)) and normalize_fit_kind(str(v))
+        },
         "whyViable": why_viable,
         "extracted": extracted,
         "generatedAt": datetime.now(timezone.utc).isoformat(),

@@ -68,7 +68,7 @@ Worker cron at `:30` UTC (and manual Sync on Repositories) polls enabled repos i
 
 ## Manual URL intake queue
 
-Analyze queues one or more job URLs into `cv_intakeQueue`. `POST /ingest/queue` enqueues and kicks `sources=manual` ingest when idle; otherwise items wait for the next hourly/`sources=all` run. Drain path: claim pending → Greenhouse/Ashby single-job API when the URL matches → else enrich/paste → normalize → upsert → auto-analyze. Blocked pages become `needsPaste` until a description is attached. Sync `POST /jobs` create+analyze remains for API compat; Analyze uses the queue.
+Analyze queues one or more job URLs into `cv_intakeQueue`. `POST /ingest/queue` enqueues and kicks `sources=manual` ingest on the **analyze** lane when that lane is idle. Inbox Fetch / hourly `sources=all` runs on a separate **inbox** lane and does **not** drain the Analyze queue. Drain path: claim pending → Greenhouse/Ashby single-job API when the URL matches → else enrich/paste → normalize → upsert → auto-analyze (no auto-drop). Blocked pages become `needsPaste` until a description is attached. Sync `POST /jobs` create+analyze remains for API compat; Analyze uses the queue.
 
 ## Role families
 

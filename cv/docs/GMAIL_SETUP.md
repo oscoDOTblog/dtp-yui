@@ -162,7 +162,7 @@ curl http://localhost:8000/ingest/status
 # Stop: POST /ingest/cancel  (force clear stuck lock: ?force=true)
 ```
 
-Per-run listing cap: `INGEST_MAX_LISTINGS` (default **500**) truncates Gmail + Greenhouse + manual queue in one run so a huge board poll cannot run for hours.
+Per-run listing cap: `INGEST_MAX_LISTINGS` (default **500**) truncates Gmail + Greenhouse in one Inbox run so a huge board poll cannot run for hours. Analyze queue runs on a separate lane with its own budget.
 
 ## 9. Settings — which alert senders to ingest
 

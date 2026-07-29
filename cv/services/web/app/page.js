@@ -174,7 +174,7 @@ export default function HomePage() {
     try {
       const path = runId
         ? `/ingest/status?runId=${encodeURIComponent(runId)}`
-        : "/ingest/status";
+        : "/ingest/status?lane=inbox";
       const data = await apiGet(path);
       setIngestStatus(data);
       return data;
@@ -409,8 +409,8 @@ export default function HomePage() {
     }
     try {
       const path = force
-        ? `/ingest/cancel?force=true${runId ? `&runId=${encodeURIComponent(runId)}` : ""}`
-        : `/ingest/cancel${runId ? `?runId=${encodeURIComponent(runId)}` : ""}`;
+        ? `/ingest/cancel?force=true${runId ? `&runId=${encodeURIComponent(runId)}` : "&lane=inbox"}`
+        : `/ingest/cancel${runId ? `?runId=${encodeURIComponent(runId)}` : "?lane=inbox"}`;
       const result = await apiPost(path);
       if (result.runId) setRunId(result.runId);
       if (force || result.status === "cancelled") {

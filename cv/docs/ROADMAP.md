@@ -11,7 +11,7 @@
 
 ### Manual URL intake queue *(Analyze)*
 
-- Multi-URL paste into `cv_intakeQueue`; process immediately if ingest idle, else next hourly/`sources=all` run
+- Multi-URL paste into `cv_intakeQueue`; process immediately on the Analyze lane if idle (independent of Inbox Fetch)
 - Shared normalize → Bay Area gate → upsert → auto-analyze path
 - Greenhouse single-job URLs use boards API (dedupe with watchlist polls)
 - Blocked pages → `needsPaste` until description attached

@@ -49,6 +49,8 @@ One document per normalized requirement. Upserted on each successful job analyze
 | `status` | Intake: `new` \| `out_of_area` \| `wrong_role`; soft pipeline mirrors (`interested`, `saved`, `interview`, `rejected`) |
 | `applicationStatus` | Human track: `apply` \| `pending` \| `round1`–`round4` \| `rejected` |
 | `applicationStatusAt` | When `applicationStatus` was last set |
+| `fitOverrides` | Map of normalized requirement → `strong` \| `warning` \| `gap` (user fit assessment); applied on score + Re-analyze |
+| `fitOverridesUpdatedAt` | When a fit override was last saved |
 
 ### `locationAssessment`
 
@@ -152,7 +154,7 @@ Seeded from [`seed/jobSources.json`](../seed/jobSources.json). Identity fields u
 
 ### `cv_intakeQueue`
 
-Manual URL intake queue (Analyze page). Drained by `run_ingest` when `sources` is `all` or `manual`.
+Manual URL intake queue (Analyze page). Drained only by `run_ingest` when `sources` is `manual` (analyze lane). Inbox `sources=all` does not touch this queue.
 
 ```json
 {

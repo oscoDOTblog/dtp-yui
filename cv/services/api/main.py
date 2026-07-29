@@ -122,6 +122,16 @@ class ApplicationStatusBody(BaseModel):
     note: Optional[str] = None
 
 
+class FitOverrideBody(BaseModel):
+    """Change one fit-assessment row: Strength / Warning / Gap."""
+
+    requirement: str
+    fit: str = Field(
+        ...,
+        description="strong | warning | gap (aliases: strength)",
+    )
+
+
 class IntakeQueueBody(BaseModel):
     urls: Optional[Any] = None  # str | list[str]
     descriptionRaw: Optional[str] = None
@@ -639,6 +649,23 @@ def post_analyze(job_id: str) -> dict:
     return _serialize(match)
 
 
+@app.patch("/jobs/{job_id}/fit-overrides")
+def patch_fit_override(job_id: str, body: FitOverrideBody) -> dict:
+    """Set Strength/Warning/Gap for one requirement; rescore using stored extraction."""
+    from cv_shared.matching import set_fit_override
+
+    try:
+        result = set_fit_override(job_id, body.requirement, body.fit)
+    except KeyError:
+        raise HTTPException(404, "Job not found") from None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("fit override failed")
+        raise HTTPException(500, str(exc)) from exc
+    return _serialize(result)
+
+
 @app.post("/jobs/{job_id}/decision")
 def post_decision(job_id: str, body: DecisionBody) -> dict:
     """Record a human application-status decision (pipeline track)."""
@@ -763,7 +790,12 @@ def get_job_package(job_id: str) -> dict:
 
 
 @app.get("/jobs/{job_id}/package/files/{filename}")
-def download_package_file(job_id: str, filename: str):
+def download_package_file(
+    job_id: str,
+    filename: str,
+    inline: bool | None = None,
+):
+    """Serve a package file. PDFs default to inline (browser viewer); pass inline=false to download."""
     from fastapi.responses import FileResponse
 
     # Prevent path traversal
@@ -788,10 +820,27 @@ def download_package_file(job_id: str, filename: str):
     if not path.is_file():
         raise HTTPException(404, "File missing on disk")
 
+    suffix = path.suffix.lower()
+    media_types = {
+        ".pdf": "application/pdf",
+        ".txt": "text/plain; charset=utf-8",
+        ".md": "text/markdown; charset=utf-8",
+        ".json": "application/json",
+        ".yaml": "text/yaml; charset=utf-8",
+        ".yml": "text/yaml; charset=utf-8",
+        ".docx": (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+    }
+    media_type = media_types.get(suffix, "application/octet-stream")
+    # PDFs open in the browser viewer by default (like file://…/CV.pdf)
+    use_inline = bool(inline) if inline is not None else suffix == ".pdf"
+
     return FileResponse(
         path=str(path),
         filename=safe_name,
-        media_type="application/octet-stream",
+        media_type=media_type,
+        content_disposition_type="inline" if use_inline else "attachment",
     )
 
 
@@ -894,22 +943,29 @@ def post_ingest_run(
 
 
 @app.get("/ingest/status")
-def get_ingest_status_endpoint(runId: str | None = None) -> dict:
+def get_ingest_status_endpoint(
+    runId: str | None = None,
+    lane: str | None = None,
+) -> dict:
     from cv_shared.intake.pipeline import get_ingest_status
 
-    doc = get_ingest_status(runId)
+    doc = get_ingest_status(runId, lane=lane)
     if not doc:
-        return {"status": "idle", "runId": None}
+        return {"status": "idle", "runId": None, "lane": lane}
     return _serialize(doc)
 
 
 @app.post("/ingest/cancel")
-def post_ingest_cancel(force: bool = False, runId: str | None = None) -> dict:
+def post_ingest_cancel(
+    force: bool = False,
+    runId: str | None = None,
+    lane: str | None = None,
+) -> dict:
     """Request cancel on the running ingest, or force-clear a stuck lock."""
     from cv_shared.intake.pipeline import cancel_ingest
 
     try:
-        result = cancel_ingest(run_id=runId, force=force)
+        result = cancel_ingest(run_id=runId, force=force, lane=lane)
     except Exception as exc:
         logger.exception("ingest cancel failed")
         raise HTTPException(500, str(exc)) from exc

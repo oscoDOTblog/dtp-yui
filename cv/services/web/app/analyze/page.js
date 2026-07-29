@@ -178,7 +178,7 @@ export default function AnalyzePage() {
       } else if (ingest.conflict) {
         setBusy(false);
         setInfo(
-          "Queued — ingest is already running. Items process when it finishes or on the next hourly run.",
+          "Queued — Analyze is already processing. These will drain in that run or the next Process queue.",
         );
       } else {
         setBusy(false);
@@ -206,7 +206,7 @@ export default function AnalyzePage() {
       if (err.status === 409) {
         setInfo(
           err.detail?.message ||
-            "Ingest already running. Queue will drain when it finishes.",
+            "Analyze queue is already processing. Items will drain when that run finishes.",
         );
         if (err.detail?.runId) setRunId(err.detail.runId);
         return;

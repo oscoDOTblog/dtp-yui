@@ -47,6 +47,16 @@ logger = logging.getLogger(__name__)
 
 _ingest_lock = threading.Lock()
 
+# Inbox (Gmail/ATS) and Analyze (manual URL queue) run on separate lanes so
+# Fetch and /analyze can proceed independently.
+INGEST_LANE_INBOX = "inbox"
+INGEST_LANE_ANALYZE = "analyze"
+
+
+def ingest_lane_for_sources(sources: str | None) -> str:
+    mode = (sources or "all").strip().lower()
+    return INGEST_LANE_ANALYZE if mode == "manual" else INGEST_LANE_INBOX
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -73,13 +83,14 @@ def cancel_ingest(
     *,
     run_id: str | None = None,
     force: bool = False,
+    lane: str | None = None,
 ) -> dict[str, Any]:
     """Request cancel on the active ingest, or force-clear a stuck running lock."""
     db = get_db()
     if run_id:
         doc = db[C.SYSTEM_RUNS].find_one({"_id": run_id, "type": "ingest"})
     else:
-        doc = get_running_ingest()
+        doc = get_running_ingest(lane=lane)
 
     if not doc:
         return {
@@ -237,25 +248,45 @@ def fetch_gmail_raw_jobs(max_messages: int = 40) -> tuple[list[dict], list[str]]
     return raw_jobs, message_ids
 
 
-def get_running_ingest() -> dict | None:
+def _lane_query(lane: str | None) -> dict[str, Any]:
+    """Match runs for a lane. Legacy docs without ``lane`` count as inbox."""
+    if not lane:
+        return {}
+    normalized = lane.strip().lower()
+    if normalized == INGEST_LANE_ANALYZE:
+        return {"lane": INGEST_LANE_ANALYZE}
+    if normalized == INGEST_LANE_INBOX:
+        return {
+            "$or": [
+                {"lane": INGEST_LANE_INBOX},
+                {"lane": {"$exists": False}},
+                {"lane": None},
+            ]
+        }
+    return {"lane": normalized}
+
+
+def get_running_ingest(lane: str | None = None) -> dict | None:
     db = get_db()
-    return db[C.SYSTEM_RUNS].find_one(
-        {"type": "ingest", "status": "running"},
-        sort=[("startedAt", -1)],
-    )
+    query: dict[str, Any] = {"type": "ingest", "status": "running"}
+    query.update(_lane_query(lane))
+    return db[C.SYSTEM_RUNS].find_one(query, sort=[("startedAt", -1)])
 
 
-def get_ingest_status(run_id: str | None = None) -> dict | None:
+def get_ingest_status(
+    run_id: str | None = None,
+    *,
+    lane: str | None = None,
+) -> dict | None:
     db = get_db()
     if run_id:
         return db[C.SYSTEM_RUNS].find_one({"_id": run_id})
-    running = get_running_ingest()
+    running = get_running_ingest(lane=lane)
     if running:
         return running
-    return db[C.SYSTEM_RUNS].find_one(
-        {"type": "ingest"},
-        sort=[("startedAt", -1)],
-    )
+    query: dict[str, Any] = {"type": "ingest"}
+    query.update(_lane_query(lane))
+    return db[C.SYSTEM_RUNS].find_one(query, sort=[("startedAt", -1)])
 
 
 def _patch_run(run_id: str, fields: dict[str, Any]) -> None:
@@ -499,16 +530,17 @@ def _drain_manual_queue(
     limit: int = 40,
     run_id: str | None = None,
 ) -> None:
-    """Claim pending URL queue items and ingest them through normalize/upsert."""
-    claim_limit = max(0, min(limit, ingest_max_listings()))
-    if claim_limit <= 0:
-        return
-    claimed = claim_pending(limit=claim_limit)
-    summary["listingsTotal"] = summary.get("listingsTotal", 0) + len(claimed)
-    summary["queueClaimed"] = len(claimed)
-    publish()
+    """Claim pending URL queue items and ingest them through normalize/upsert.
 
-    for item in claimed:
+    Loops until the Analyze queue is empty (or cancelled / listing budget hit)
+    so items enqueued while a run is already active still drain without Inbox.
+    """
+    claim_budget = max(0, min(limit, ingest_max_listings()))
+    if claim_budget <= 0:
+        return
+
+    total_claimed = 0
+    while claim_budget > 0:
         if run_id and _is_cancel_requested(run_id):
             summary["status"] = "cancelled"
             summary["currentTitle"] = "Cancelled"
@@ -516,108 +548,118 @@ def _drain_manual_queue(
             publish()
             break
 
-        queue_id = item["_id"]
-        title_label = item.get("url") or queue_id
-        summary["currentTitle"] = f"Queue: {title_label}"
+        batch_limit = min(40, claim_budget)
+        claimed = claim_pending(limit=batch_limit)
+        if not claimed:
+            break
+
+        total_claimed += len(claimed)
+        claim_budget -= len(claimed)
+        summary["listingsTotal"] = summary.get("listingsTotal", 0) + len(claimed)
+        summary["queueClaimed"] = total_claimed
         publish()
-        try:
-            raw = queue_item_to_raw(item)
-            queue_meta = raw.pop("_queueMeta", {}) or {}
-            raw_title = (raw.get("title") or "").strip()
-            raw_company = (raw.get("company") or "").strip()
-            if raw_title and raw_title not in ("Untitled", "Untitled role"):
-                title_label = f"{raw_title} @ {raw_company or '?'}"
-                summary["currentTitle"] = f"Queue: {title_label}"
+
+        for item in claimed:
+            if run_id and _is_cancel_requested(run_id):
+                summary["status"] = "cancelled"
+                summary["currentTitle"] = "Cancelled"
+                summary["finishedAt"] = _now()
                 publish()
-            src = (raw.get("source") or "").strip().lower()
-            if queue_meta.get("skipEnrich") or src in ("greenhouse", "ashby"):
-                enriched = raw
-            else:
-                enriched = enrich_raw_job(raw)
+                break
 
-            if queue_meta.get("needsPasteIfBlocked") and is_enrich_blocked_or_empty(
-                enriched
-            ):
-                mark_needs_paste(
-                    queue_id,
-                    error="Could not read that page. Paste the job description.",
-                    fetch_status=enriched.get("fetchStatus") or "blocked",
-                )
-                summary["queueNeedsPaste"] = summary.get("queueNeedsPaste", 0) + 1
-                summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
-                publish()
-                continue
-
-            # Fill placeholders from description before Bay Area / role gates
-            enriched = seed_placeholders_from_description(enriched)
-
-            normalized = normalize_raw_job(enriched)
-            if enriched.get("fetchStatus"):
-                normalized["fetchStatus"] = enriched["fetchStatus"]
-
-            drop = ingest_drop_reason(normalized, get_app_settings())
-            if drop:
-                if drop == "outOfArea":
-                    summary["outOfArea"] = summary.get("outOfArea", 0) + 1
-                    summary["skippedOutOfArea"] = (
-                        summary.get("skippedOutOfArea", 0) + 1
-                    )
-                    drop_msg = "Dropped before analyze: out of area"
+            queue_id = item["_id"]
+            title_label = item.get("url") or queue_id
+            summary["currentTitle"] = f"Queue: {title_label}"
+            publish()
+            try:
+                raw = queue_item_to_raw(item)
+                queue_meta = raw.pop("_queueMeta", {}) or {}
+                raw_title = (raw.get("title") or "").strip()
+                raw_company = (raw.get("company") or "").strip()
+                if raw_title and raw_title not in ("Untitled", "Untitled role"):
+                    title_label = f"{raw_title} @ {raw_company or '?'}"
+                    summary["currentTitle"] = f"Queue: {title_label}"
+                    publish()
+                src = (raw.get("source") or "").strip().lower()
+                if queue_meta.get("skipEnrich") or src in ("greenhouse", "ashby"):
+                    enriched = raw
                 else:
-                    summary["wrongRole"] = summary.get("wrongRole", 0) + 1
-                    summary["skippedWrongRole"] = (
-                        summary.get("skippedWrongRole", 0) + 1
+                    enriched = enrich_raw_job(raw)
+
+                if queue_meta.get("needsPasteIfBlocked") and is_enrich_blocked_or_empty(
+                    enriched
+                ):
+                    mark_needs_paste(
+                        queue_id,
+                        error="Could not read that page. Paste the job description.",
+                        fetch_status=enriched.get("fetchStatus") or "blocked",
                     )
-                    drop_msg = "Dropped before analyze: wrong role"
-                mark_failed(
+                    summary["queueNeedsPaste"] = summary.get("queueNeedsPaste", 0) + 1
+                    summary["listingsProcessed"] = (
+                        summary.get("listingsProcessed", 0) + 1
+                    )
+                    publish()
+                    continue
+
+                # Fill placeholders from description before Bay Area / role gates
+                enriched = seed_placeholders_from_description(enriched)
+
+                normalized = normalize_raw_job(enriched)
+                if enriched.get("fetchStatus"):
+                    normalized["fetchStatus"] = enriched["fetchStatus"]
+
+                # Analyze queue is explicit user intent — never auto-drop on Bay Area /
+                # wrong-role filters (still store assessments + status on the job).
+                result = upsert_normalized_job(normalized)
+                job = result["job"]
+                if result["created"]:
+                    summary["jobsCreated"] += 1
+                    summary["manualJobsCreated"] = (
+                        summary.get("manualJobsCreated", 0) + 1
+                    )
+                else:
+                    summary["jobsUpdated"] += 1
+                    summary["manualJobsUpdated"] = (
+                        summary.get("manualJobsUpdated", 0) + 1
+                    )
+
+                progress_title = (job.get("title") or "").strip()
+                progress_company = (job.get("company") or "").strip()
+                if progress_title and progress_title not in (
+                    "Untitled",
+                    "Untitled role",
+                ):
+                    summary["currentTitle"] = (
+                        f"Analyzing: {progress_title} @ {progress_company or '?'}"
+                    )
+                    publish()
+
+                # Same path as job-page Re-analyze — do not skip on early gates
+                _analyze_after_upsert(
+                    job,
+                    created=result["created"],
+                    analyze=analyze,
+                    summary=summary,
+                    force=True,
+                )
+                job = get_db()[C.JOBS].find_one({"_id": job["_id"]}) or job
+                mark_done(
                     queue_id,
-                    error=drop_msg,
+                    job_id=job.get("_id"),
                     fetch_status=enriched.get("fetchStatus"),
+                    job_title=job.get("title"),
+                    job_company=job.get("company"),
                 )
-                summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
-                publish()
-                continue
+            except Exception as exc:
+                logger.exception("manual queue ingest failed for %s", queue_id)
+                summary["errors"].append(f"queue {queue_id}: {exc}")
+                mark_failed(queue_id, error=str(exc))
 
-            result = upsert_normalized_job(normalized)
-            job = result["job"]
-            if result["created"]:
-                summary["jobsCreated"] += 1
-                summary["manualJobsCreated"] = summary.get("manualJobsCreated", 0) + 1
-            else:
-                summary["jobsUpdated"] += 1
-                summary["manualJobsUpdated"] = summary.get("manualJobsUpdated", 0) + 1
+            summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
+            publish()
 
-            progress_title = (job.get("title") or "").strip()
-            progress_company = (job.get("company") or "").strip()
-            if progress_title and progress_title not in ("Untitled", "Untitled role"):
-                summary["currentTitle"] = (
-                    f"Analyzing: {progress_title} @ {progress_company or '?'}"
-                )
-                publish()
-
-            # Same path as job-page Re-analyze — do not skip on early gates / existing match
-            _analyze_after_upsert(
-                job,
-                created=result["created"],
-                analyze=analyze,
-                summary=summary,
-                force=True,
-            )
-            job = get_db()[C.JOBS].find_one({"_id": job["_id"]}) or job
-            mark_done(
-                queue_id,
-                job_id=job.get("_id"),
-                fetch_status=enriched.get("fetchStatus"),
-                job_title=job.get("title"),
-                job_company=job.get("company"),
-            )
-        except Exception as exc:
-            logger.exception("manual queue ingest failed for %s", queue_id)
-            summary["errors"].append(f"queue {queue_id}: {exc}")
-            mark_failed(queue_id, error=str(exc))
-
-        summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
-        publish()
+        if summary.get("status") == "cancelled":
+            break
 
     summary["queuePending"] = count_by_status("pending")
 
@@ -640,6 +682,7 @@ def run_ingest(
     sources_mode = (sources or "all").strip().lower()
     if sources_mode not in ("all", "gmail", "greenhouse", "ashby", "manual"):
         sources_mode = "all"
+    lane = ingest_lane_for_sources(sources_mode)
 
     summary: dict[str, Any] = {
         "startedAt": started,
@@ -678,6 +721,7 @@ def run_ingest(
         "errors": [],
         "status": "running",
         "sourcesMode": sources_mode,
+        "lane": lane,
     }
 
     existing = db[C.SYSTEM_RUNS].find_one({"_id": run_id})
@@ -688,9 +732,13 @@ def run_ingest(
                 "type": "ingest",
                 "status": "running",
                 "startedAt": started,
+                "lane": lane,
+                "sourcesMode": sources_mode,
                 **{k: summary[k] for k in summary if k != "status"},
             }
         )
+    else:
+        _patch_run(run_id, {"lane": lane, "sourcesMode": sources_mode})
 
     def publish(**extra: Any) -> None:
         summary.update(extra)
@@ -738,7 +786,8 @@ def run_ingest(
     run_gmail = sources_mode in ("all", "gmail")
     run_greenhouse = sources_mode in ("all", "greenhouse")
     run_ashby = sources_mode in ("all", "ashby")
-    run_manual = sources_mode in ("all", "manual")
+    # Analyze URL queue is its own lane — never drained by Inbox/hourly sources=all
+    run_manual = sources_mode == "manual"
     max_listings = ingest_max_listings()
     remaining = max_listings
 
@@ -964,7 +1013,7 @@ def run_ingest(
                 summary,
                 analyze=analyze,
                 publish=publish,
-                limit=min(40, remaining if remaining > 0 else 0),
+                limit=remaining if remaining > 0 else 0,
                 run_id=run_id,
             )
         except Exception as exc:
@@ -996,16 +1045,20 @@ def start_ingest_async(
     greenhouse_source_ids: list[str] | None = None,
     ashby_source_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Single-flight background ingest for the API. Returns immediately."""
+    """Background ingest. Inbox and Analyze lanes are single-flight independently."""
+    sources_mode = (sources or "all").strip().lower()
+    lane = ingest_lane_for_sources(sources_mode)
     with _ingest_lock:
-        running = get_running_ingest()
+        running = get_running_ingest(lane=lane)
         if running:
+            label = "Analyze queue" if lane == INGEST_LANE_ANALYZE else "Inbox ingest"
             return {
                 "accepted": False,
                 "conflict": True,
                 "runId": running.get("_id"),
                 "status": "running",
-                "message": "Ingest already running",
+                "lane": lane,
+                "message": f"{label} already running",
             }
 
         run_id = f"ingest_{uuid.uuid4().hex[:16]}"
@@ -1016,6 +1069,8 @@ def start_ingest_async(
                 "status": "running",
                 "startedAt": _now(),
                 "cancelRequested": False,
+                "lane": lane,
+                "sourcesMode": sources_mode,
                 "listingsTotal": 0,
                 "listingsProcessed": 0,
                 "jobsCreated": 0,
@@ -1056,4 +1111,5 @@ def start_ingest_async(
             "conflict": False,
             "runId": run_id,
             "status": "running",
+            "lane": lane,
         }

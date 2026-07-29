@@ -49,6 +49,41 @@ export function clearPackageFromBrowser(jobId) {
   }
 }
 
+function packageFileUrl(jobId, filename, { inline } = {}) {
+  const params = new URLSearchParams();
+  if (inline === true) params.set("inline", "true");
+  if (inline === false) params.set("inline", "false");
+  const qs = params.toString();
+  return `${getApiBase()}/jobs/${jobId}/package/files/${encodeURIComponent(filename)}${
+    qs ? `?${qs}` : ""
+  }`;
+}
+
+function isPdf(filename) {
+  return String(filename || "")
+    .toLowerCase()
+    .endsWith(".pdf");
+}
+
+/** Open in a new tab — PDFs use inline disposition for the browser viewer. */
+function openFromApi(jobId, filename) {
+  const url = packageFileUrl(jobId, filename, {
+    inline: isPdf(filename) ? true : undefined,
+  });
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function downloadFromApi(jobId, filename) {
+  const url = packageFileUrl(jobId, filename, { inline: false });
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 async function copyText(text) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -65,7 +100,7 @@ async function copyText(text) {
 }
 
 function downloadTextFile(filename, content) {
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const blob = new Blob([content], { type: "text/plain; charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -76,21 +111,15 @@ function downloadTextFile(filename, content) {
   URL.revokeObjectURL(url);
 }
 
-function downloadFromApi(jobId, filename) {
-  const url = `${getApiBase()}/jobs/${jobId}/package/files/${encodeURIComponent(filename)}`;
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.target = "_blank";
-  a.rel = "noreferrer";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
-
 function CollapsibleDoc({ title, filename, content, jobId, defaultOpen }) {
   const [open, setOpen] = useState(!!defaultOpen);
   const [copied, setCopied] = useState(false);
+  const pdfName =
+    filename === "resume.txt"
+      ? "resume.pdf"
+      : filename === "cover-letter.txt"
+        ? "cover-letter.pdf"
+        : null;
 
   async function onCopy() {
     try {
@@ -120,6 +149,14 @@ function CollapsibleDoc({ title, filename, content, jobId, defaultOpen }) {
       {open ? (
         <CardPanel className="border-t border-border pt-4">
           <div className="mb-3 flex flex-wrap gap-2">
+            {jobId && pdfName ? (
+              <Button
+                type="button"
+                onClick={() => openFromApi(jobId, pdfName)}
+              >
+                Open PDF
+              </Button>
+            ) : null}
             <Button type="button" variant="outline" onClick={onCopy}>
               {copied ? "Copied!" : "Copy to clipboard"}
             </Button>
@@ -155,6 +192,15 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
   const previewEntries = Object.values(pkg.previews);
   const downloads = pkg.downloads || [];
   const selection = pkg.selectionSummary || pkg.tailorPayload || null;
+  const files = pkg.files || [];
+  const pdfQuickOpen = [
+    files.includes("resume.pdf")
+      ? { label: "Open resume PDF", filename: "resume.pdf" }
+      : null,
+    files.includes("cover-letter.pdf")
+      ? { label: "Open cover letter PDF", filename: "cover-letter.pdf" }
+      : null,
+  ].filter(Boolean);
 
   return (
     <section className="mt-7">
@@ -165,12 +211,28 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
         browser
       </p>
 
+      {pdfQuickOpen.length > 0 ? (
+        <div className="mt-3.5 flex flex-wrap gap-2.5">
+          {pdfQuickOpen.map((item) => (
+            <Button
+              key={item.filename}
+              type="button"
+              onClick={() => openFromApi(jobId, item.filename)}
+            >
+              {item.label}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+
       {selection ? (
         <Card className="mt-3.5">
           <CardPanel className="p-4">
             <p className="m-0 font-semibold">Resume selection</p>
             <p className="mt-1.5 m-0 text-sm text-muted-foreground">
-              {selection.bulletCount ?? selection.selectedAchievementIds?.length ?? 0}{" "}
+              {selection.bulletCount ??
+                selection.selectedAchievementIds?.length ??
+                0}{" "}
               bullets
               {selection.renderer || pkg.renderer
                 ? ` · renderer ${selection.renderer || pkg.renderer}`
@@ -234,16 +296,23 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
 
       {downloads.length > 0 ? (
         <div className="mt-4 flex flex-wrap gap-2.5">
-          {downloads.map((item) => (
-            <Button
-              key={item.filename}
-              type="button"
-              variant="outline"
-              onClick={() => downloadFromApi(jobId, item.filename)}
-            >
-              Download {item.label}
-            </Button>
-          ))}
+          {downloads.map((item) => {
+            const pdf = isPdf(item.filename);
+            return (
+              <Button
+                key={item.filename}
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  pdf
+                    ? openFromApi(jobId, item.filename)
+                    : downloadFromApi(jobId, item.filename)
+                }
+              >
+                {pdf ? `Open ${item.label}` : `Download ${item.label}`}
+              </Button>
+            );
+          })}
           <Button
             type="button"
             onClick={() => {
