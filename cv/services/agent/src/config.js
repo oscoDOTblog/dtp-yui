@@ -75,6 +75,11 @@ export function envConfig() {
       ""
     ),
     headless: process.env.CV_AGENT_HEADLESS !== "0",
+    preview: process.env.CV_AGENT_PREVIEW !== "0",
+    previewMaxWidth: Number.parseInt(
+      process.env.CV_AGENT_PREVIEW_MAX_WIDTH || "960",
+      10
+    ),
     profileDir:
       process.env.CV_AGENT_PROFILE_DIR ||
       path.join(__dirname, "..", "browser-profile"),

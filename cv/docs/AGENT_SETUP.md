@@ -8,7 +8,48 @@ Hybrid browser copilot: Glassdoor discovery → CV score/package → ATS form fi
 |---|---|
 | `services/agent` | Node + Playwright runner (state machine, Glassdoor, ATS adapters) |
 | FastAPI `/agent/*` | Job ingest, runs/events, answer bank |
-| Web `/copilot` | Live activity feed, input queue, pause / take-control / approve |
+| Web `/copilot` | Live browser preview, activity feed, input queue, controls |
+
+## Copilot-first (recommended)
+
+Run the agent **headless** and watch the live JPEG preview on Apply Copilot (Expand for fullscreen). No overlapping Chrome window.
+
+```bash
+cd cv
+docker compose stop agent   # free :8010 if Compose agent is up
+cd services/agent
+cp .env.example .env   # once — HEADLESS=1 + PREVIEW=1
+npm install
+npx playwright install chromium   # once
+npm start
+```
+
+Expect:
+
+```text
+cv-agent listening on :8010 (headless=true, preview=true, api=http://127.0.0.1:8000)
+```
+
+Open http://localhost:7545/copilot → **Start Glassdoor run**. The **Browser** panel polls `GET /agent-api/preview/latest` ~every 400ms.
+
+If web is in Docker and the agent is on the host:
+
+```bash
+# in cv/.env
+AGENT_BASE_INTERNAL=http://host.docker.internal:8010
+```
+
+Then recreate web so the proxy reaches the host agent.
+
+## Headed Chromium (login / CAPTCHA / Take control)
+
+Set in `services/agent/.env`:
+
+```bash
+CV_AGENT_HEADLESS=0
+```
+
+Restart `npm start`. Use this for the first Glassdoor login (persistent profile under `browser-profile/`), CAPTCHA, or when you need the real window for Take control. You can still use the Copilot preview at the same time.
 
 ## Config
 
@@ -27,52 +68,18 @@ Edit [`config/agent.json`](../config/agent.json):
 
 Flip searches by setting `"preferRemote": true` after pasting a remote results URL into `searchUrlRemote`.
 
-## Headed browser (recommended)
+### Agent `.env` knobs
 
-Compose defaults to headless. For Glassdoor login + watching the agent, run on the host with `services/agent/.env`:
+| Var | Purpose |
+|---|---|
+| `CV_AGENT_HEADLESS` | `1` Copilot-first; `0` visible Chrome |
+| `CV_AGENT_PREVIEW` | `1` enable live preview (default); `0` off |
+| `CV_AGENT_PREVIEW_MAX_WIDTH` | JPEG max width (default `960`) |
+| `CV_API_BASE` | FastAPI URL (`http://127.0.0.1:8000` on host) |
 
-```bash
-cd cv
-docker compose stop agent   # free :8010 — Compose agent is headless
-cd services/agent
-cp .env.example .env   # once
-npm install
-npx playwright install chromium   # once
-npm start
-```
+Existing shell/Compose env vars are not overridden by `.env`.
 
-You should see something like:
-
-```text
-cv-agent listening on :8010 (headless=false, api=http://127.0.0.1:8000)
-```
-
-**No Chrome window yet** — `npm start` only starts the control server. Chromium opens when you click **Start Glassdoor run** on Apply Copilot.
-
-If health shows `"headless":true`, something else (usually Compose `agent`) owns `:8010`. Stop it and restart `npm start`.
-
-`.env` defaults (host):
-
-```bash
-CV_AGENT_HEADLESS=0
-CV_API_BASE=http://127.0.0.1:8000
-CV_AGENT_PORT=8010
-CV_AGENT_CONFIG=../../config/agent.json
-GENERATED_APPLICATIONS_DIR=../../generated-applications
-```
-
-Existing shell/Compose env vars are not overridden. Persistent profile: `services/agent/browser-profile/` (gitignored). Log into Glassdoor once in that Chrome window.
-
-Then open **Apply Copilot** at http://localhost:7545/copilot and click **Start Glassdoor run**.
-
-If the **web** container is in Docker but the agent runs on the host, point the proxy at the host:
-
-```bash
-# in cv/.env
-AGENT_BASE_INTERNAL=http://host.docker.internal:8010
-```
-
-Then recreate the web container so it picks up the env.
+If health shows an unexpected `headless` value, something else (usually Compose `agent`) owns `:8010`. Stop it and restart `npm start`.
 
 ## Docker
 
@@ -80,16 +87,17 @@ Then recreate the web container so it picks up the env.
 docker compose up --build agent
 ```
 
-Agent listens on `127.0.0.1:8010`. Web proxies `/agent-api/*` → agent. Resume PDFs must be on the shared `generated-applications` volume (already mounted read-only).
+Compose agent is headless. Preview still works via `/agent-api/preview/latest` when Copilot talks to that service. Resume PDFs must be on the shared `generated-applications` volume.
 
 ## Safety
 
 - Never treats page text as system instructions
-- Will not bypass CAPTCHA — pauses for manual solve
+- Will not bypass CAPTCHA — pauses for manual solve (switch to headed if needed)
 - Legal / demographic / sponsorship fields require saved answers or human input
 - No LinkedIn automation
 - Submit only after Copilot approval
+- Preview frames are ephemeral (not stored in Mongo)
 
 ## Success check
 
-From one Glassdoor search: process cards → upsert/score via API → complete one Greenhouse or Lever form to review → approve submit → confirmation signal → `applicationStatus=pending`.
+From one Glassdoor search: process cards → upsert/score via API → complete one Greenhouse or Lever form to review → approve submit → confirmation signal → `applicationStatus=pending`. Preview should update in Copilot throughout.

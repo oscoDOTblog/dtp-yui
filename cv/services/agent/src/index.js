@@ -3,6 +3,7 @@ import { WebSocketServer } from "ws";
 import { createApiClient } from "./apiClient.js";
 import { createEventBus } from "./eventBus.js";
 import { createInputBroker } from "./inputBroker.js";
+import { createPreviewController } from "./preview.js";
 import { createRunner } from "./runner.js";
 import { envConfig, loadAgentConfig, loadDotEnv } from "./config.js";
 
@@ -12,12 +13,14 @@ const env = envConfig();
 const api = createApiClient(env.apiBase);
 const events = createEventBus({ api });
 const inputBroker = createInputBroker();
-const runner = createRunner({ api, events, inputBroker });
+const preview = createPreviewController();
+const runner = createRunner({ api, events, inputBroker, preview });
 
 const sseClients = new Set();
 const wsClients = new Set();
 
 events.on("event", (event) => {
+  if (event.type === "PREVIEW_FRAME") return;
   const payload = `data: ${JSON.stringify(event)}\n\n`;
   for (const res of sseClients) {
     try {
@@ -27,6 +30,19 @@ events.on("event", (event) => {
     }
   }
   const msg = JSON.stringify(event);
+  for (const ws of wsClients) {
+    if (ws.readyState === 1) {
+      try {
+        ws.send(msg);
+      } catch {
+        wsClients.delete(ws);
+      }
+    }
+  }
+});
+
+preview.on("frame", (meta) => {
+  const msg = JSON.stringify(meta);
   for (const ws of wsClients) {
     if (ws.readyState === 1) {
       try {
@@ -93,6 +109,7 @@ async function handleRequest(req, res) {
         service: "cv-agent",
         apiOk,
         headless: env.headless,
+        preview: preview.getMeta(),
         status: runner.getStatus(),
       });
     }
@@ -106,6 +123,33 @@ async function handleRequest(req, res) {
       return sendJson(res, 200, runner.getStatus());
     }
 
+    if (req.method === "GET" && pathname === "/preview/latest") {
+      const jpeg = preview.getLatestJpeg();
+      if (!jpeg) {
+        res.writeHead(404, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-store",
+        });
+        res.end(JSON.stringify({ detail: "No preview frame yet" }));
+        return;
+      }
+      const meta = preview.getMeta();
+      res.writeHead(200, {
+        "Content-Type": "image/jpeg",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "X-Preview-At": meta.latestAt || "",
+        "X-Preview-Url": meta.pageUrl || "",
+      });
+      res.end(jpeg);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/preview/meta") {
+      return sendJson(res, 200, preview.getMeta());
+    }
+
     if (req.method === "GET" && pathname === "/events/stream") {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
@@ -113,7 +157,9 @@ async function handleRequest(req, res) {
         Connection: "keep-alive",
         "Access-Control-Allow-Origin": "*",
       });
-      res.write(`data: ${JSON.stringify({ type: "CONNECTED", createdAt: new Date().toISOString() })}\n\n`);
+      res.write(
+        `data: ${JSON.stringify({ type: "CONNECTED", createdAt: new Date().toISOString() })}\n\n`
+      );
       sseClients.add(res);
       req.on("close", () => sseClients.delete(res));
       return;
@@ -124,7 +170,6 @@ async function handleRequest(req, res) {
         return sendJson(res, 409, { detail: "Run already in progress" });
       }
       const body = await readJson(req);
-      // Fire and forget — client follows /status + event stream
       runner.start(body).catch((err) => {
         console.error("run failed:", err);
       });
@@ -194,6 +239,7 @@ wss.on("connection", (ws) => {
       type: "CONNECTED",
       createdAt: new Date().toISOString(),
       status: runner.getStatus(),
+      preview: preview.getMeta(),
     })
   );
   ws.on("close", () => wsClients.delete(ws));
@@ -213,6 +259,6 @@ wss.on("connection", (ws) => {
 
 server.listen(env.port, "0.0.0.0", () => {
   console.log(
-    `cv-agent listening on :${env.port} (headless=${env.headless}, api=${env.apiBase})`
+    `cv-agent listening on :${env.port} (headless=${env.headless}, preview=${env.preview}, api=${env.apiBase})`
   );
 });

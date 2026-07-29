@@ -83,9 +83,10 @@ Glassdoor search → extract card → POST /agent/jobs/ingest → score/package
 ```
 
 - Control plane: HTTP + SSE/WebSocket on `:8010` (proxied as `/agent-api` from the web UI)
+- Live browser preview: `GET /preview/latest` JPEG polled by Apply Copilot (Expand for fullscreen); prefer headless + preview day-to-day
 - Persistence: `cv_applicationRuns`, `cv_applicationEvents`, `cv_applicationAnswers`
 - Policy: allowed browser actions only; Level-C / legal questions ask the user; no CAPTCHA bypass; no LinkedIn
-- Headed mode: run the agent on the host with `CV_AGENT_HEADLESS=0` so you can watch Chrome and complete login/CAPTCHA
+- Headed mode: `CV_AGENT_HEADLESS=0` for first Glassdoor login / CAPTCHA / Take control
 - Setup: [AGENT_SETUP.md](AGENT_SETUP.md)
 
 ## Role families

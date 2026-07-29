@@ -42,7 +42,7 @@ function packageResumePath(pkg) {
 /**
  * Main Glassdoor → score → apply runner.
  */
-export function createRunner({ api, events, inputBroker }) {
+export function createRunner({ api, events, inputBroker, preview }) {
   let context = null;
   let running = false;
   let abortRequested = false;
@@ -52,6 +52,21 @@ export function createRunner({ api, events, inputBroker }) {
   let uiMode = AgentUiMode.IDLE;
   let currentJob = null;
   let currentRun = null;
+  let activePageUrl = null;
+
+  async function focusPreview(page) {
+    if (!page) return;
+    try {
+      activePageUrl = page.url();
+    } catch {
+      activePageUrl = null;
+    }
+    if (preview) {
+      await preview.setActivePage(page).catch((err) => {
+        console.error("preview setActivePage failed:", err.message || err);
+      });
+    }
+  }
 
   async function setState(next, message, extra = {}) {
     state = next;
@@ -181,6 +196,7 @@ export function createRunner({ api, events, inputBroker }) {
 
     await setUiMode(AgentUiMode.ACTING);
     await openResultCard(page, card, cfg);
+    await focusPreview(page);
     await screenshot(page, "job_opened");
 
     await setUiMode(AgentUiMode.OBSERVING);
@@ -315,6 +331,7 @@ export function createRunner({ api, events, inputBroker }) {
         return;
       }
     }
+    await focusPreview(applyPage);
 
     // CAPTCHA / challenge pause
     const bodyText = await applyPage.locator("body").innerText().catch(() => "");
@@ -346,6 +363,7 @@ export function createRunner({ api, events, inputBroker }) {
         confidence: 1,
       });
       if (applyPage !== page) await applyPage.close().catch(() => {});
+      await focusPreview(page);
       return;
     }
 
@@ -404,6 +422,7 @@ export function createRunner({ api, events, inputBroker }) {
       }
       if (answer?.action === "SKIP" || answer?.value === "Skip application") {
         if (applyPage !== page) await applyPage.close().catch(() => {});
+        await focusPreview(page);
         return;
       }
     }
@@ -429,6 +448,7 @@ export function createRunner({ api, events, inputBroker }) {
         confidence: 1,
       });
       if (applyPage !== page) await applyPage.close().catch(() => {});
+      await focusPreview(page);
       await setState(ApplicationState.RETURNING_TO_RESULTS, "Returning to results");
       return;
     }
@@ -470,6 +490,7 @@ export function createRunner({ api, events, inputBroker }) {
 
     if (applyPage !== page) {
       await applyPage.close().catch(() => {});
+      await focusPreview(page);
     }
     await setState(ApplicationState.RETURNING_TO_RESULTS, "Returning to Glassdoor results");
   }
@@ -524,9 +545,16 @@ export function createRunner({ api, events, inputBroker }) {
         profileDir: envConfig().profileDir,
       });
       const page = context.pages()[0] || (await context.newPage());
+      if (preview) {
+        await preview.start(page).catch((err) => {
+          console.error("preview start failed:", err.message || err);
+        });
+      }
+      await focusPreview(page);
 
       await setState(ApplicationState.GLASSDOOR_SEARCHING, "Opening Glassdoor search");
       await openGlassdoorSearch(page, cfg, events);
+      await focusPreview(page);
       await screenshot(page, "search_results");
 
       const cards = await listResultCards(page, cfg.maxResultsPerRun);
@@ -547,6 +575,7 @@ export function createRunner({ api, events, inputBroker }) {
         // Prefer keeping results tab: if we navigated away, go back via history or search URL.
         if (!/glassdoor\.com/i.test(page.url()) || !/job/i.test(page.url())) {
           await openGlassdoorSearch(page, cfg, events);
+          await focusPreview(page);
         }
         try {
           await processCard(page, card, cfg, profile, stats);
@@ -559,6 +588,7 @@ export function createRunner({ api, events, inputBroker }) {
           await setState(ApplicationState.FAILED, err.message);
         }
         await closeExtraPages(context, page);
+        await focusPreview(page);
         await humanDelay(cfg);
       }
 
@@ -587,6 +617,10 @@ export function createRunner({ api, events, inputBroker }) {
       throw err;
     } finally {
       running = false;
+      if (preview) {
+        await preview.stop().catch(() => {});
+      }
+      activePageUrl = null;
       if (context) {
         // Keep persistent profile; close browser to free resources after run.
         await context.close().catch(() => {});
@@ -606,6 +640,8 @@ export function createRunner({ api, events, inputBroker }) {
       pauseRequested,
       userControl,
       abortRequested,
+      preview: preview ? preview.getMeta() : { enabled: false },
+      pageUrl: activePageUrl || preview?.getMeta?.()?.pageUrl || null,
     };
   }
 

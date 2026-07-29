@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { agentEventSource, agentGet, agentPost } from "../../lib/agentApi";
+import BrowserPreview from "../components/BrowserPreview";
 
 function formatTime(iso) {
   if (!iso) return "";
@@ -141,8 +142,8 @@ export default function CopilotPage() {
             Apply Copilot
           </h1>
           <p className="m-0 text-muted-foreground">
-            Glassdoor-first Stage 6 runner — watch the headed browser beside this
-            feed. Human approval required before submit.
+            Glassdoor-first Stage 6 runner — live browser preview below (Expand
+            for fullscreen). Human approval required before submit.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -229,6 +230,12 @@ export default function CopilotPage() {
           Abort
         </Button>
       </div>
+
+      <BrowserPreview
+        active={Boolean(status?.running)}
+        pageUrl={status?.pageUrl || status?.preview?.pageUrl || null}
+        uiMode={status?.uiMode || null}
+      />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

@@ -47,18 +47,18 @@ The worker auto-seeds MongoDB from `seed/` on first start (profile + Greenhouse 
 
 Glassdoor-first Playwright runner with human approval before submit. See **[docs/AGENT_SETUP.md](docs/AGENT_SETUP.md)**.
 
-Short version (headed on host):
+Short version (Copilot-first, headless + in-dashboard preview):
 
 ```bash
-cd cv && docker compose stop agent   # free :8010; Compose agent is headless
+cd cv && docker compose stop agent   # free :8010 if needed
 cd services/agent
-cp .env.example .env   # once — HEADLESS=0, API localhost
+cp .env.example .env   # once — HEADLESS=1, PREVIEW=1
 npm install && npx playwright install chromium
 npm start
-# listen only — Chrome opens after Copilot → Start Glassdoor run
+# Chrome stays headless — watch Browser panel on /copilot (Expand for fullscreen)
 ```
 
-If web stays in Docker, set `AGENT_BASE_INTERNAL=http://host.docker.internal:8010` in `cv/.env` and recreate web.
+If web stays in Docker, set `AGENT_BASE_INTERNAL=http://host.docker.internal:8010` in `cv/.env` and recreate web. For first Glassdoor login set `CV_AGENT_HEADLESS=0` once.
 
 ### Laptop vs remote processor (shared Mongo)
 
