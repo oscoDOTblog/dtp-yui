@@ -6,6 +6,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const DEFAULTS = {
   searchUrl: "",
+  searchUrlRemote: "",
+  preferRemote: false,
   query: "software engineer",
   location: "Oakland, CA",
   maxResultsPerRun: 10,
@@ -16,6 +18,20 @@ const DEFAULTS = {
   slowMoMs: 100,
   humanDelayMs: { min: 800, max: 2200 },
 };
+
+/**
+ * Resolve which Glassdoor results URL to open.
+ * preferRemote → searchUrlRemote (fallback searchUrl);
+ * otherwise searchUrl (fallback searchUrlRemote).
+ */
+export function resolveSearchUrl(cfg = {}) {
+  const local = (cfg.searchUrl || "").trim();
+  const remote = (cfg.searchUrlRemote || "").trim();
+  if (cfg.preferRemote) {
+    return remote || local || "";
+  }
+  return local || remote || "";
+}
 
 export function envConfig() {
   return {

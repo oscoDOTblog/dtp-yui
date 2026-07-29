@@ -1,5 +1,7 @@
 {
   "searchUrl": "",
+  "searchUrlRemote": "",
+  "preferRemote": false,
   "query": "software engineer",
   "location": "Oakland, CA",
   "maxResultsPerRun": 10,

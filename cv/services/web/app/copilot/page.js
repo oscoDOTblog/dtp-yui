@@ -273,14 +273,22 @@ export default function CopilotPage() {
               <div className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
                 <p className="m-0">
                   Search: {config.query} @ {config.location}
+                  {config.preferRemote ? " · prefer remote" : ""}
                 </p>
                 <p className="m-0">
                   Caps: {config.maxResultsPerRun} results /{" "}
                   {config.maxApplicationsPerRun} applies · min score{" "}
                   {config.minimumScore}
                 </p>
-                {config.searchUrl ? (
-                  <p className="m-0 break-all">URL: {config.searchUrl}</p>
+                {(config.preferRemote
+                  ? config.searchUrlRemote || config.searchUrl
+                  : config.searchUrl || config.searchUrlRemote) ? (
+                  <p className="m-0 break-all">
+                    URL ({config.preferRemote ? "remote" : "local"}):{" "}
+                    {config.preferRemote
+                      ? config.searchUrlRemote || config.searchUrl
+                      : config.searchUrl || config.searchUrlRemote}
+                  </p>
                 ) : null}
               </div>
             ) : null}

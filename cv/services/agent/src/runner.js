@@ -10,7 +10,7 @@ import {
 } from "./glassdoor/search.js";
 import { resolveAdapter, AtsType } from "./ats/index.js";
 import { RISK } from "./policy.js";
-import { humanDelay, loadAgentConfig, envConfig } from "./config.js";
+import { humanDelay, loadAgentConfig, envConfig, resolveSearchUrl } from "./config.js";
 
 function splitName(fullName = "") {
   const parts = String(fullName).trim().split(/\s+/);
@@ -503,12 +503,15 @@ export function createRunner({ api, events, inputBroker }) {
         source: "glassdoor",
         query: cfg.query,
         location: cfg.location,
-        searchUrl: cfg.searchUrl || null,
+        searchUrl: resolveSearchUrl(cfg) || null,
         config: {
           maxResultsPerRun: cfg.maxResultsPerRun,
           maxApplicationsPerRun: cfg.maxApplicationsPerRun,
           minimumScore: cfg.minimumScore,
           requireApprovalBeforeSubmit: cfg.requireApprovalBeforeSubmit,
+          preferRemote: Boolean(cfg.preferRemote),
+          searchUrl: cfg.searchUrl || null,
+          searchUrlRemote: cfg.searchUrlRemote || null,
         },
         state: ApplicationState.GLASSDOOR_SEARCHING,
       });

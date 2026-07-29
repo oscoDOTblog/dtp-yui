@@ -16,12 +16,16 @@ Edit [`config/agent.json`](../config/agent.json):
 
 | Field | Purpose |
 |---|---|
-| `searchUrl` | Prefer a logged-in Glassdoor saved-search URL (fastest) |
-| `query` / `location` | Used when `searchUrl` is empty |
+| `searchUrl` | Glassdoor job-results URL (local / Bay Area / hybrid search) |
+| `searchUrlRemote` | Glassdoor job-results URL for remote-only search |
+| `preferRemote` | `true` → use `searchUrlRemote` (falls back to `searchUrl`); `false` → use `searchUrl` |
+| `query` / `location` | Used when both URLs are empty |
 | `maxResultsPerRun` | Cards to inspect (default 10) |
 | `maxApplicationsPerRun` | Applies to attempt (default 1 for MVP) |
 | `minimumScore` | Skip below this match score (default 72) |
 | `requireApprovalBeforeSubmit` | Always `true` for MVP |
+
+Flip searches by setting `"preferRemote": true` after pasting a remote results URL into `searchUrlRemote`.
 
 ## Headed browser (recommended)
 

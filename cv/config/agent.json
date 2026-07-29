@@ -1,5 +1,7 @@
 {
-  "searchUrl": "",
+  "searchUrl": "https://www.glassdoor.com/Job/oakland-ca-full-stack-software-engineer-jobs-SRCH_IL.0,10_IC1147380_KO11,39.htm?locId=1147380&locT=C&maxSalary=202000&minSalary=104000&remoteWorkType=1",
+  "searchUrlRemote": "https://www.glassdoor.com/Job/oakland-ca-full-stack-software-engineer-jobs-SRCH_IL.0,10_IC1147380_KO11,39.htm?locId=1147380&locT=C&maxSalary=202000&minSalary=104000",
+  "preferRemote": false,
   "query": "software engineer",
   "location": "Oakland, CA",
   "maxResultsPerRun": 10,

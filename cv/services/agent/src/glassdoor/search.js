@@ -1,21 +1,26 @@
-import { humanDelay } from "../config.js";
+import { humanDelay, resolveSearchUrl } from "../config.js";
 import { sanitizePageText } from "../policy.js";
 
 /**
  * Open Glassdoor search results from config (saved URL preferred).
  */
 export async function openGlassdoorSearch(page, cfg, events) {
+  const searchUrl = resolveSearchUrl(cfg);
+  const mode = cfg.preferRemote ? "remote" : "local";
+
   await events.emit("ACTION_STARTED", {
     action: "NAVIGATE",
     target: "glassdoor_search",
-    message: "Opening Glassdoor search",
+    message: `Opening Glassdoor search (${mode})`,
   });
 
-  if (cfg.searchUrl) {
-    await page.goto(cfg.searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+  if (searchUrl) {
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
   } else {
     const q = encodeURIComponent(cfg.query || "software engineer");
-    const loc = encodeURIComponent(cfg.location || "Oakland, CA");
+    const loc = encodeURIComponent(
+      cfg.preferRemote ? "Remote" : cfg.location || "Oakland, CA"
+    );
     const url = `https://www.glassdoor.com/Job/jobs.htm?sc.keyword=${q}&locT=C&locKeyword=${loc}`;
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
   }
@@ -23,8 +28,9 @@ export async function openGlassdoorSearch(page, cfg, events) {
   await humanDelay(cfg);
   await events.emit("ACTION_COMPLETED", {
     action: "NAVIGATE",
-    message: "Glassdoor search results loaded",
+    message: `Glassdoor search results loaded (${mode})`,
     pageUrl: page.url(),
+    preferRemote: Boolean(cfg.preferRemote),
   });
 }
 
