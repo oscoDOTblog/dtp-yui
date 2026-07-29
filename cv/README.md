@@ -50,8 +50,10 @@ Glassdoor-first Playwright runner with human approval before submit. See **[docs
 Short version (headed on host):
 
 ```bash
-cd services/agent && npm install && npx playwright install chromium
-CV_AGENT_HEADLESS=0 CV_API_BASE=http://127.0.0.1:8000 npm start
+cd services/agent
+cp .env.example .env   # once — HEADLESS=0, API localhost
+npm install && npx playwright install chromium
+npm start
 ```
 
 Then open Apply Copilot and start a run. Configure search in `config/agent.json`.

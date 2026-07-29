@@ -4,7 +4,9 @@ import { createApiClient } from "./apiClient.js";
 import { createEventBus } from "./eventBus.js";
 import { createInputBroker } from "./inputBroker.js";
 import { createRunner } from "./runner.js";
-import { envConfig, loadAgentConfig } from "./config.js";
+import { envConfig, loadAgentConfig, loadDotEnv } from "./config.js";
+
+await loadDotEnv();
 
 const env = envConfig();
 const api = createApiClient(env.apiBase);

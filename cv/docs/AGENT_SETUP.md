@@ -29,20 +29,27 @@ Flip searches by setting `"preferRemote": true` after pasting a remote results U
 
 ## Headed browser (recommended)
 
-Compose defaults to headless. For Glassdoor login + watching the agent:
+Compose defaults to headless. For Glassdoor login + watching the agent, run on the host with `services/agent/.env`:
 
 ```bash
 cd cv/services/agent
+cp .env.example .env   # once
 npm install
 npx playwright install chromium   # once
-CV_AGENT_HEADLESS=0 \
-CV_API_BASE=http://127.0.0.1:8000 \
-CV_AGENT_CONFIG=../../config/agent.json \
-GENERATED_APPLICATIONS_DIR=../../generated-applications \
 npm start
 ```
 
-Persistent profile: `services/agent/browser-profile/` (gitignored). Log into Glassdoor once in that Chrome window.
+`.env` defaults (host):
+
+```bash
+CV_AGENT_HEADLESS=0
+CV_API_BASE=http://127.0.0.1:8000
+CV_AGENT_PORT=8010
+CV_AGENT_CONFIG=../../config/agent.json
+GENERATED_APPLICATIONS_DIR=../../generated-applications
+```
+
+Existing shell/Compose env vars are not overridden. Persistent profile: `services/agent/browser-profile/` (gitignored). Log into Glassdoor once in that Chrome window.
 
 Then open **Apply Copilot** at http://localhost:7545/copilot and click **Start Glassdoor run**.
 
