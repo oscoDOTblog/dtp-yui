@@ -32,12 +32,24 @@ Flip searches by setting `"preferRemote": true` after pasting a remote results U
 Compose defaults to headless. For Glassdoor login + watching the agent, run on the host with `services/agent/.env`:
 
 ```bash
-cd cv/services/agent
+cd cv
+docker compose stop agent   # free :8010 — Compose agent is headless
+cd services/agent
 cp .env.example .env   # once
 npm install
 npx playwright install chromium   # once
 npm start
 ```
+
+You should see something like:
+
+```text
+cv-agent listening on :8010 (headless=false, api=http://127.0.0.1:8000)
+```
+
+**No Chrome window yet** — `npm start` only starts the control server. Chromium opens when you click **Start Glassdoor run** on Apply Copilot.
+
+If health shows `"headless":true`, something else (usually Compose `agent`) owns `:8010`. Stop it and restart `npm start`.
 
 `.env` defaults (host):
 

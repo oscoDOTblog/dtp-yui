@@ -50,13 +50,15 @@ Glassdoor-first Playwright runner with human approval before submit. See **[docs
 Short version (headed on host):
 
 ```bash
+cd cv && docker compose stop agent   # free :8010; Compose agent is headless
 cd services/agent
 cp .env.example .env   # once — HEADLESS=0, API localhost
 npm install && npx playwright install chromium
 npm start
+# listen only — Chrome opens after Copilot → Start Glassdoor run
 ```
 
-Then open Apply Copilot and start a run. Configure search in `config/agent.json`.
+If web stays in Docker, set `AGENT_BASE_INTERNAL=http://host.docker.internal:8010` in `cv/.env` and recreate web.
 
 ### Laptop vs remote processor (shared Mongo)
 
