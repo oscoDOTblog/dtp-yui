@@ -1,0 +1,14 @@
+{
+  "name": "cv-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "playwright": "^1.54.2",
+    "ws": "^8.18.3"
+  }
+}

@@ -41,6 +41,7 @@ export default function HeaderNav() {
             { href: "/", label: "Inbox" },
             { href: "/analyze", label: "Analyze" },
             { href: "/applications", label: "Applications" },
+            { href: "/copilot", label: "Apply Copilot" },
           ]}
         />
         <NavMenu

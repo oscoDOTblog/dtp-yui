@@ -101,9 +101,41 @@ services:
     environment:
       NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-}
       API_BASE_INTERNAL: ${API_BASE_INTERNAL:-http://api:8000}
+      AGENT_BASE_INTERNAL: ${AGENT_BASE_INTERNAL:-http://agent:8010}
+      NEXT_PUBLIC_AGENT_WS_PATH: ${NEXT_PUBLIC_AGENT_WS_PATH:-/agent-ws}
     ports:
       # Dedicated host port so other apps can share this machine (default 7545)
       - "${WEB_HOST_PORT:-7545}:3000"
+
+  agent:
+    build:
+      context: ./services/agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    env_file:
+      - .env
+    environment:
+      CV_API_BASE: ${CV_API_BASE:-http://api:8000}
+      CV_AGENT_PORT: "8010"
+      # Headed browser needs a display; default headless in Compose.
+      # For interactive Glassdoor login: run agent on the host with CV_AGENT_HEADLESS=0.
+      CV_AGENT_HEADLESS: ${CV_AGENT_HEADLESS:-1}
+      CV_AGENT_PROFILE_DIR: /app/browser-profile
+      CV_AGENT_SCREENSHOT_DIR: /app/screenshots
+      CV_AGENT_CONFIG: /app/config/agent.json
+      GENERATED_APPLICATIONS_DIR: /app/generated-applications
+    ports:
+      - "127.0.0.1:8010:8010"
+    volumes:
+      - ./services/agent/browser-profile:/app/browser-profile
+      - ./services/agent/screenshots:/app/screenshots
+      - ./generated-applications:/app/generated-applications:ro
+      - ./config:/app/config:ro
+    shm_size: "1gb"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   mongodb_data:

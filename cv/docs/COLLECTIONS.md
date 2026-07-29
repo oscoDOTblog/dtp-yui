@@ -210,8 +210,44 @@ Seeded from [`seed/repositories.json`](../seed/repositories.json). Identity upse
 | `extracted` | Classifier output (skills / levels / claims) |
 | `createdAt` | When analyzed |
 
+## Stage 6 — Browser apply agent
+
+| Collection | Purpose |
+|---|---|
+| `cv_applicationRuns` | Glassdoor (and later) apply-agent run metadata + stats |
+| `cv_applicationEvents` | Auditable structured events for a run (no raw secrets) |
+| `cv_applicationAnswers` | Reusable confirmed answers with reuse policy |
+
+### `cv_applicationRuns`
+
+| Field | Purpose |
+|---|---|
+| `_id` | `run_…` |
+| `source` | e.g. `glassdoor` |
+| `query` / `location` / `searchUrl` | Search config used for the run |
+| `config` | Caps (max results / applies / minimumScore) |
+| `state` | State-machine value (`GLASSDOOR_SEARCHING`, `FORM_FILLING`, …) |
+| `uiMode` | Copilot UI mode (`ACTING`, `AWAITING_USER_INPUT`, …) |
+| `currentJob` | Snapshot of the listing being processed |
+| `resultsViewed` / `jobsExtracted` / `applicationsSubmitted` | Counters |
+| `startedAt` / `finishedAt` / `error` | Lifecycle |
+
+### `cv_applicationEvents`
+
+Append-only audit trail keyed by `runId` + `sequence`. Stores decisions, actions, and prompts — not plaintext passwords or Level-C values.
+
+### `cv_applicationAnswers`
+
+| Field | Purpose |
+|---|---|
+| `normalizedQuestion` | Lowercased question key |
+| `answer` / `answerType` | Confirmed value |
+| `source` | e.g. `USER_CONFIRMED` |
+| `riskLevel` | `LOW` \| `MEDIUM` \| `HIGH` \| `LEGAL` |
+| `allowedForAutofill` / `reusePolicy` | Whether / how to reuse |
+
 Constants live in [`services/shared/cv_shared/collections.py`](../services/shared/cv_shared/collections.py).
 
 ## Stage 2C+ / later stubs
 
-_(none currently — Stage 4 collections are active)_
+_(Lever board API still pending — Greenhouse/Ashby active; Stage 6 browser agent active)_

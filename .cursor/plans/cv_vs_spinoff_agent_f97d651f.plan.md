@@ -4,22 +4,22 @@ overview: Keep the hybrid job-application browser agent inside dtp-yui’s CV pr
 todos:
   - id: agent-service-scaffold
     content: Add cv/services/agent Compose service (Node + Playwright, persistent profile) that calls FastAPI for upsert/score/package/status
-    status: pending
+    status: completed
   - id: glassdoor-inbox-runner
     content: "MVP entry: open Glassdoor with persistent profile, run one saved search, iterate result cards, extract + fingerprint via CV API"
-    status: pending
+    status: completed
   - id: state-machine-events
     content: Implement application state machine (start SEARCHING on Glassdoor) + Mongo event log + WebSocket/SSE feed to web UI
-    status: pending
+    status: completed
   - id: mvp0-ats-adapters
-    content: "Greenhouse + Lever + generic fill after Apply redirect; pause before submit; human approve + confirmation"
-    status: pending
+    content: Greenhouse + Lever + generic fill after Apply redirect; pause before submit; human approve + confirmation
+    status: completed
   - id: dashboard-copilot-panels
     content: "Copilot panels: current Glassdoor job, activity feed, input queue, pause/approve/take-control (CV Inbox entry deferred)"
-    status: pending
+    status: completed
   - id: docs-stage6
     content: Update ROADMAP/ARCHITECTURE/COLLECTIONS for Stage 6 apply runner + Glassdoor-first flow
-    status: pending
+    status: completed
 isProject: false
 ---
 

@@ -122,6 +122,81 @@ class ApplicationStatusBody(BaseModel):
     note: Optional[str] = None
 
 
+class AgentJobIngestBody(BaseModel):
+    title: Optional[str] = None
+    company: Optional[str] = None
+    location: Optional[str] = None
+    salary: Optional[str] = None
+    descriptionRaw: Optional[str] = None
+    sourceUrl: Optional[str] = None
+    canonicalApplyUrl: Optional[str] = None
+    sourceJobId: Optional[str] = None
+    analyze: bool = True
+
+
+class AgentRunCreateBody(BaseModel):
+    source: Optional[str] = "glassdoor"
+    query: Optional[str] = None
+    location: Optional[str] = None
+    searchUrl: Optional[str] = None
+    config: Optional[dict[str, Any]] = None
+    state: Optional[str] = None
+    uiMode: Optional[str] = None
+    currentJob: Optional[dict[str, Any]] = None
+
+
+class AgentRunPatchBody(BaseModel):
+    state: Optional[str] = None
+    uiMode: Optional[str] = None
+    currentJob: Optional[dict[str, Any]] = None
+    resultsViewed: Optional[int] = None
+    jobsExtracted: Optional[int] = None
+    applicationsSubmitted: Optional[int] = None
+    finishedAt: Optional[str] = None
+    error: Optional[str] = None
+    config: Optional[dict[str, Any]] = None
+
+
+class AgentEventBody(BaseModel):
+    type: str
+    sequence: Optional[int] = None
+    state: Optional[str] = None
+    uiMode: Optional[str] = None
+    message: Optional[str] = None
+    action: Optional[str] = None
+    target: Optional[str] = None
+    decision: Optional[str] = None
+    reason: Optional[str] = None
+    confidence: Optional[float] = None
+    evidence: Optional[list[Any]] = None
+    concerns: Optional[list[Any]] = None
+    score: Optional[float] = None
+    atsType: Optional[str] = None
+    pageUrl: Optional[str] = None
+    requestId: Optional[str] = None
+    question: Optional[str] = None
+    options: Optional[list[Any]] = None
+    riskLevel: Optional[str] = None
+    kind: Optional[str] = None
+    reviewSummary: Optional[dict[str, Any]] = None
+    currentJob: Optional[dict[str, Any]] = None
+    recoverable: Optional[bool] = None
+    confirmation: Optional[dict[str, Any]] = None
+    stats: Optional[dict[str, Any]] = None
+    createdAt: Optional[str] = None
+
+
+class AgentAnswerBody(BaseModel):
+    normalizedQuestion: Optional[str] = None
+    question: Optional[str] = None
+    answer: Any = None
+    answerType: Optional[str] = "TEXT"
+    source: Optional[str] = "USER_CONFIRMED"
+    riskLevel: Optional[str] = "MEDIUM"
+    allowedForAutofill: Optional[bool] = False
+    reusePolicy: Optional[str] = "ONCE"
+
+
 class FitOverrideBody(BaseModel):
     """Change one fit-assessment row: Strength / Warning / Gap."""
 
@@ -1431,3 +1506,102 @@ def sync_repository(
         repository_ids=[repo_id],
         force=bool(payload.force),
     )
+
+
+# --- Stage 6 apply agent ---
+
+
+@app.post("/agent/jobs/ingest")
+def agent_ingest_job(body: AgentJobIngestBody) -> dict:
+    """Upsert a Glassdoor-extracted listing and optionally analyze."""
+    from cv_shared.agent_runs import ingest_glassdoor_job
+
+    if not (body.descriptionRaw or "").strip() and not (body.sourceUrl or "").strip():
+        raise HTTPException(400, "descriptionRaw or sourceUrl required")
+    try:
+        result = ingest_glassdoor_job(body.model_dump())
+    except Exception as exc:
+        logger.exception("agent ingest failed")
+        raise HTTPException(500, str(exc)) from exc
+    return {
+        "job": _serialize(result["job"]),
+        "created": result["created"],
+        "reason": result.get("reason"),
+        "match": _serialize(result["match"]) if result.get("match") else None,
+    }
+
+
+@app.get("/agent/profile")
+def agent_profile() -> dict:
+    from cv_shared.agent_runs import candidate_agent_profile
+
+    return candidate_agent_profile()
+
+
+@app.post("/agent/runs")
+def agent_create_run(body: AgentRunCreateBody) -> dict:
+    from cv_shared.agent_runs import create_application_run
+
+    doc = create_application_run(body.model_dump(exclude_none=True))
+    return _serialize(doc)
+
+
+@app.get("/agent/runs")
+def agent_list_runs(limit: int = 50) -> list:
+    db = get_db()
+    docs = list(
+        db[C.APPLICATION_RUNS].find().sort("startedAt", -1).limit(min(limit, 200))
+    )
+    return [_serialize(d) for d in docs]
+
+
+@app.get("/agent/runs/{run_id}")
+def agent_get_run(run_id: str) -> dict:
+    doc = get_db()[C.APPLICATION_RUNS].find_one({"_id": run_id})
+    if not doc:
+        raise HTTPException(404, "Run not found")
+    return _serialize(doc)
+
+
+@app.patch("/agent/runs/{run_id}")
+def agent_patch_run(run_id: str, body: AgentRunPatchBody) -> dict:
+    from cv_shared.agent_runs import patch_application_run
+
+    doc = patch_application_run(run_id, body.model_dump(exclude_none=True))
+    if not doc:
+        raise HTTPException(404, "Run not found")
+    return _serialize(doc)
+
+
+@app.post("/agent/runs/{run_id}/events")
+def agent_append_event(run_id: str, body: AgentEventBody) -> dict:
+    from cv_shared.agent_runs import append_application_event
+
+    if not get_db()[C.APPLICATION_RUNS].find_one({"_id": run_id}):
+        raise HTTPException(404, "Run not found")
+    doc = append_application_event(run_id, body.model_dump(exclude_none=True))
+    return _serialize(doc)
+
+
+@app.get("/agent/runs/{run_id}/events")
+def agent_list_events(run_id: str) -> list:
+    from cv_shared.agent_runs import list_application_events
+
+    return [_serialize(e) for e in list_application_events(run_id)]
+
+
+@app.get("/agent/answers")
+def agent_list_answers() -> list:
+    docs = list(get_db()[C.APPLICATION_ANSWERS].find().sort("updatedAt", -1))
+    return [_serialize(d) for d in docs]
+
+
+@app.post("/agent/answers")
+def agent_save_answer(body: AgentAnswerBody) -> dict:
+    from cv_shared.agent_runs import save_application_answer
+
+    try:
+        doc = save_application_answer(body.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _serialize(doc)

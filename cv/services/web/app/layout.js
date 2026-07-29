@@ -41,7 +41,7 @@ export default function RootLayout({ children }) {
               {children}
             </main>
             <footer className="border-t border-border px-5 py-4 text-center text-sm text-muted-foreground">
-              Stage 4 · evidence-grounded · human approval
+              Stage 6 · evidence-grounded · human approval
               required
             </footer>
           </div>

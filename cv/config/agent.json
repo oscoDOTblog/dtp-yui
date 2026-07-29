@@ -1,0 +1,15 @@
+{
+  "searchUrl": "",
+  "query": "software engineer",
+  "location": "Oakland, CA",
+  "maxResultsPerRun": 10,
+  "maxApplicationsPerRun": 1,
+  "minimumScore": 72,
+  "maxRuntimeMinutes": 90,
+  "requireApprovalBeforeSubmit": true,
+  "slowMoMs": 100,
+  "humanDelayMs": {
+    "min": 800,
+    "max": 2200
+  }
+}

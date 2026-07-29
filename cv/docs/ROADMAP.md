@@ -74,11 +74,13 @@
 - Learn from `userDecisions`
 - Nightly cleanup of expired listings + DB backup
 
-## Stage 6 — Browser assistance (non-LinkedIn ATS)
+## Stage 6 — Browser assistance (non-LinkedIn ATS) *(in progress)*
 
-- Playwright Level 3: fill external ATS, pause before submit
+- Playwright apply agent (`cv/services/agent`) — Glassdoor-first discovery
+- Upsert/score/package via existing FastAPI; Greenhouse + Lever + generic form fill
+- Live Apply Copilot dashboard (`/copilot`) with activity feed + human pause before submit
 - Explicitly **no** LinkedIn Easy Apply automation or scraping
-- Optional: user-triggered form-fill assist
+- Deferred: CV Inbox as run entry (Glassdoor becomes step 2), Workday adapter, auto-submit
 
 ## Explicitly deferred
 
@@ -87,3 +89,4 @@
 - USAJOBS unless opted in
 - Live commute APIs
 - Fully autonomous submission without human review
+- CV Inbox as first step of an agent run (Glassdoor is MVP entry)

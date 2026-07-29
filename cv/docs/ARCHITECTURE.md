@@ -6,9 +6,10 @@ Local job-search copilot: score jobs against a grounded candidate knowledge base
 
 | Layer | Technology |
 |---|---|
-| UI | Next.js (JavaScript, CSS Modules) |
+| UI | Next.js (JavaScript, Tailwind v4 + coss) |
 | API | FastAPI |
 | Worker | Python + APScheduler |
+| Apply agent | Node + Playwright (Stage 6) |
 | Database | MongoDB 8 |
 | Local AI | Ollama on host |
 | Deploy | Docker Compose on Legion Slim 5 |
@@ -19,6 +20,7 @@ Local job-search copilot: score jobs against a grounded candidate knowledge base
 |---|---|---|
 | Web | `0.0.0.0:${WEB_HOST_PORT:-7545}` → container `:3000` | Dev: `http://localhost:7545`. LAN/production host: `http://<host-ip>:7545` |
 | API | `127.0.0.1:8000` | Browser uses same-origin `/backend` proxy on web — no hardcoded LAN IP |
+| Agent | `127.0.0.1:8010` | Browser uses `/agent-api` proxy; headed runs often on host |
 | MongoDB | `127.0.0.1:27017` | Not exposed on LAN |
 
 `WEB_HOST_PORT=7545` keeps this UI off `:80` / `:3000` so other apps can share the same production host. Leave `NEXT_PUBLIC_API_BASE` empty so one build works from localhost and LAN.
@@ -69,6 +71,22 @@ Worker cron at `:30` UTC (and manual Sync on Repositories) polls enabled repos i
 ## Manual URL intake queue
 
 Analyze queues one or more job URLs into `cv_intakeQueue`. `POST /ingest/queue` enqueues and kicks `sources=manual` ingest on the **analyze** lane when that lane is idle. Inbox Fetch / hourly `sources=all` runs on a separate **inbox** lane and does **not** drain the Analyze queue. Drain path: claim pending → Greenhouse/Ashby single-job API when the URL matches → else enrich/paste → normalize → upsert → auto-analyze (no auto-drop). Blocked pages become `needsPaste` until a description is attached. Sync `POST /jobs` create+analyze remains for API compat; Analyze uses the queue.
+
+## Stage 6 apply agent
+
+Long-running Node service (`cv/services/agent`) drives a **persistent Chromium profile** with Playwright. MVP entry is a configured **Glassdoor saved search / results inbox** (not CV Inbox — that becomes an upstream first step later).
+
+```text
+Glassdoor search → extract card → POST /agent/jobs/ingest → score/package
+  → Apply → Greenhouse|Lever|generic fill → AWAITING_REVIEW → human submit
+  → confirmation signals → return to results
+```
+
+- Control plane: HTTP + SSE/WebSocket on `:8010` (proxied as `/agent-api` from the web UI)
+- Persistence: `cv_applicationRuns`, `cv_applicationEvents`, `cv_applicationAnswers`
+- Policy: allowed browser actions only; Level-C / legal questions ask the user; no CAPTCHA bypass; no LinkedIn
+- Headed mode: run the agent on the host with `CV_AGENT_HEADLESS=0` so you can watch Chrome and complete login/CAPTCHA
+- Setup: [AGENT_SETUP.md](AGENT_SETUP.md)
 
 ## Role families
 

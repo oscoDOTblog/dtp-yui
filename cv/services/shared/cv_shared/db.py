@@ -58,3 +58,8 @@ def ensure_indexes(db: Database | None = None) -> None:
     db[C.REPOSITORIES].create_index("fullName", unique=True)
     db[C.REPOSITORY_SCANS].create_index("repositoryId")
     db[C.REPOSITORY_SCANS].create_index("sha")
+    db[C.APPLICATION_RUNS].create_index("startedAt")
+    db[C.APPLICATION_RUNS].create_index("state")
+    db[C.APPLICATION_EVENTS].create_index([("runId", 1), ("sequence", 1)])
+    db[C.APPLICATION_EVENTS].create_index("createdAt")
+    db[C.APPLICATION_ANSWERS].create_index("normalizedQuestion")

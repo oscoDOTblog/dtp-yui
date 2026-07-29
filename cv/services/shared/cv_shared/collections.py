@@ -30,6 +30,9 @@ SETTINGS = f"{PREFIX}settings"
 INTAKE_QUEUE = f"{PREFIX}intakeQueue"
 REPOSITORIES = f"{PREFIX}repositories"
 REPOSITORY_SCANS = f"{PREFIX}repositoryScans"
+APPLICATION_RUNS = f"{PREFIX}applicationRuns"
+APPLICATION_EVENTS = f"{PREFIX}applicationEvents"
+APPLICATION_ANSWERS = f"{PREFIX}applicationAnswers"
 
 # Logical seed key -> actual Mongo collection name
 SEED_COLLECTIONS = {

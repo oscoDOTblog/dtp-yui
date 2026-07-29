@@ -36,10 +36,25 @@ You can omit the local `mongodb` Compose service when using Atlas. Data is store
 Open:
 
 - Web: http://localhost:7545
+- Apply Copilot: http://localhost:7545/copilot
 - API: http://localhost:8000/health
+- Agent: http://localhost:8010/health
 - API docs: http://localhost:8000/docs
 
 The worker auto-seeds MongoDB from `seed/` on first start (profile + Greenhouse watchlist).
+
+## Apply agent (Stage 6)
+
+Glassdoor-first Playwright runner with human approval before submit. See **[docs/AGENT_SETUP.md](docs/AGENT_SETUP.md)**.
+
+Short version (headed on host):
+
+```bash
+cd services/agent && npm install && npx playwright install chromium
+CV_AGENT_HEADLESS=0 CV_API_BASE=http://127.0.0.1:8000 npm start
+```
+
+Then open Apply Copilot and start a run. Configure search in `config/agent.json`.
 
 ### Laptop vs remote processor (shared Mongo)
 
