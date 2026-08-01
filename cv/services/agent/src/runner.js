@@ -7,6 +7,9 @@ import {
   closeExtraPages,
   canUseHeadedDisplay,
   pageLooksLikeBotChallenge,
+  resolveBrowserMode,
+  resolveBrowserEngine,
+  resolveCdpEndpoint,
 } from "./browser.js";
 import {
   openGlassdoorSearch,
@@ -102,6 +105,7 @@ function packageCoverLetter(pkg) {
  * Main Glassdoor → score → apply runner.
  */
 export function createRunner({ api, events, inputBroker, preview }) {
+  let browserHandle = null;
   let context = null;
   let running = false;
   let abortRequested = false;
@@ -115,6 +119,8 @@ export function createRunner({ api, events, inputBroker, preview }) {
   let headed = !envConfig().headless;
   let activePage = null;
   let applyMode = "easyApplyLocal";
+  let browserMode = resolveBrowserMode();
+  let cdpEndpoint = null;
 
   const humanTakeover = createHumanTakeover({
     getUiMode: () => uiMode,
@@ -768,19 +774,29 @@ export function createRunner({ api, events, inputBroker, preview }) {
           searchUrls: cfg.searchUrls || null,
           headed,
           easyApply: isEasyApplyMode(cfg.applyMode),
+          browserEngine: resolveBrowserEngine(),
+          browserMode: resolveBrowserMode(),
+          cdpEndpoint:
+            resolveBrowserMode() === "cdp" ? resolveCdpEndpoint() : null,
         },
         state: ApplicationState.GLASSDOOR_SEARCHING,
       });
       currentRun = { runId: run._id };
       events.setRunId(run._id);
 
-      context = await launchBrowser({
+      browserHandle = await launchBrowser({
         headless: !headed,
         slowMoMs: cfg.slowMoMs,
         profileDir: env.profileDir,
       });
+      context = browserHandle.context;
+      browserMode = browserHandle.mode || resolveBrowserMode();
+      cdpEndpoint = browserHandle.cdpEndpoint || null;
       await humanTakeover.install(context);
-      const page = context.pages()[0] || (await context.newPage());
+      const page =
+        browserHandle.page ||
+        context.pages()[0] ||
+        (await context.newPage());
       if (preview) {
         await preview.start(page).catch((err) => {
           console.error("preview start failed:", err.message || err);
@@ -869,8 +885,12 @@ export function createRunner({ api, events, inputBroker, preview }) {
       activePageUrl = null;
       activePage = null;
       humanTakeover.reset();
-      if (context) {
-        // Keep persistent profile; close browser to free resources after run.
+      if (browserHandle) {
+        // CDP: disconnect (kill only if we spawned Chrome). Launch: close context.
+        await browserHandle.close().catch(() => {});
+        browserHandle = null;
+        context = null;
+      } else if (context) {
         await context.close().catch(() => {});
         context = null;
       }
@@ -891,6 +911,11 @@ export function createRunner({ api, events, inputBroker, preview }) {
       headed,
       applyMode,
       applyModeLabel: APPLY_MODE_META[applyMode]?.shortLabel || applyMode,
+      browserEngine: resolveBrowserEngine(),
+      browserMode,
+      cdpEndpoint:
+        cdpEndpoint ||
+        (browserMode === "cdp" ? resolveCdpEndpoint() : null),
       preview: preview ? preview.getMeta() : { enabled: false },
       pageUrl: activePageUrl || preview?.getMeta?.()?.pageUrl || null,
     };

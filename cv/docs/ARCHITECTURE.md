@@ -85,7 +85,7 @@ Analyze queues one or more job URLs into `cv_intakeQueue`. `POST /ingest/queue` 
 
 ## Stage 6 apply agent
 
-Long-running Node service (`cv/services/agent`) drives a **persistent Firefox profile** by default (`CV_AGENT_BROWSER=firefox`; Chromium/Chrome optional) with Playwright. MVP entry is a configured **Glassdoor Easy Apply search** (Indeed Smart Apply wizard). CV Inbox becomes an upstream first step later.
+Long-running Node service (`cv/services/agent`) **attaches to your daily Google Chrome over CDP** by default (`CV_AGENT_BROWSER=chromium`, `CV_AGENT_BROWSER_MODE=cdp`, `CV_AGENT_CDP_URL=http://127.0.0.1:9222`). Chrome must be restarted once with `--remote-debugging-port` (dtp-os Apply Copilot tool or `scripts/relaunch-chrome-cdp.sh`); the agent does not spawn a blank profile and does not quit Chrome on run end. Legacy `CV_AGENT_CDP_SPAWN=1` / Playwright `launch` / Firefox remain available. MVP entry is a configured **Glassdoor Easy Apply search** (Indeed Smart Apply wizard). CV Inbox becomes an upstream first step later.
 
 ```text
 Copilot mode (Easy Apply Local|Remote) → Glassdoor URL → extract → ingest/score
@@ -97,7 +97,7 @@ Copilot mode (Easy Apply Local|Remote) → Glassdoor URL → extract → ingest/
 - Control plane: HTTP + SSE/WebSocket on `:8010` (proxied as `/agent-api`)
 - **Default topology**: host `npm start` owns `:8010`. Compose `agent` is opt-in via profile `headless-agent`
 - Copilot **Apply mode** ToggleGroup: Easy Apply Local/Remote enabled; Company Apply stubs disabled
-- Live browser preview + optional headed Firefox/Chrome window; human takeover auto-pauses on click/type
+- Live browser preview + headed Chrome (CDP); human takeover auto-pauses on click/type
 - Tech Yes/No → `AUTO_YES`; legal/uncertain → Input queue; submit always requires approval (for now)
 - Latest work role from `cv_workHistory` via `GET /agent/profile` (`latestRole`)
 - Applied-job skip: any `apply`/`pending`/`round*`/`rejected` status

@@ -1,7 +1,13 @@
 import http from "http";
 import { WebSocketServer } from "ws";
 import { createApiClient } from "./apiClient.js";
-import { canUseHeadedDisplay, resolveBrowserEngine } from "./browser.js";
+import {
+  canUseHeadedDisplay,
+  resolveBrowserEngine,
+  resolveBrowserMode,
+  resolveCdpEndpoint,
+  resolveCdpSpawnEnabled,
+} from "./browser.js";
 import { createEventBus } from "./eventBus.js";
 import { createInputBroker } from "./inputBroker.js";
 import { createPreviewController } from "./preview.js";
@@ -105,11 +111,17 @@ async function handleRequest(req, res) {
       } catch {
         apiOk = false;
       }
+      const browserEngine = resolveBrowserEngine();
+      const browserMode = resolveBrowserMode(browserEngine);
       return sendJson(res, 200, {
         ok: true,
         service: "cv-agent",
         apiOk,
-        browser: resolveBrowserEngine(),
+        browser: browserEngine,
+        browserEngine,
+        browserMode,
+        cdpEndpoint: browserMode === "cdp" ? resolveCdpEndpoint() : null,
+        cdpSpawn: browserMode === "cdp" ? resolveCdpSpawnEnabled() : false,
         headless: env.headless,
         headedDefault: !env.headless,
         canUseHeadedDisplay: canUseHeadedDisplay(),
@@ -273,7 +285,11 @@ wss.on("connection", (ws) => {
 });
 
 server.listen(env.port, "0.0.0.0", () => {
+  const browserEngine = resolveBrowserEngine();
+  const browserMode = resolveBrowserMode(browserEngine);
+  const cdp =
+    browserMode === "cdp" ? ` cdp=${resolveCdpEndpoint()}` : "";
   console.log(
-    `cv-agent listening on :${env.port} (browser=${resolveBrowserEngine()}, headless=${env.headless}, headedDefault=${!env.headless}, preview=${env.preview}, api=${env.apiBase})`
+    `cv-agent listening on :${env.port} (browser=${browserEngine}, mode=${browserMode}${cdp}, headless=${env.headless}, headedDefault=${!env.headless}, preview=${env.preview}, api=${env.apiBase})`
   );
 });

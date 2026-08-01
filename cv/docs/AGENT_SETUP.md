@@ -6,7 +6,7 @@ Hybrid browser copilot: Glassdoor discovery → CV score/package → Easy Apply 
 
 | Piece | Role |
 |---|---|
-| `services/agent` (host) | Node + Playwright runner — **owns :8010**; headed Firefox (default) or Chrome + Copilot preview |
+| `services/agent` (host) | Node + Playwright runner — **owns :8010**; attaches to your daily Chrome via CDP + Copilot preview |
 | FastAPI `/agent/*` | Job ingest, runs/events, answer bank, `/agent/profile` (incl. latest work role) |
 | Web `/copilot` | Mode picker, live preview, activity feed, input queue, controls |
 | Compose `agent` | Opt-in headless only (`--profile headless-agent`) |
@@ -17,21 +17,41 @@ Hybrid browser copilot: Glassdoor discovery → CV score/package → Easy Apply 
 cd cv
 docker compose up -d          # api, web, mongo, worker — agent is NOT started
 cd services/agent
-cp .env.example .env          # once — HEADLESS=0 + PREVIEW=1 + BROWSER=firefox
+cp .env.example .env          # once — HEADLESS=0 + BROWSER=chromium + MODE=cdp
 npm install
-npx playwright install firefox   # once (default engine)
-# optional if you switch back to Chrome:
-# npx playwright install chromium
+npx playwright install chromium   # once (needed for connectOverCDP client)
 npm start
 ```
 
 Open http://localhost:7545/copilot → pick **Easy Apply (Local)** or **Easy Apply (Remote)** → **Start Glassdoor run**.
 
-- Agent launches **Firefox** by default (`CV_AGENT_BROWSER=firefox`) — separate profile under `browser-profile-firefox`
-- Switch back with `CV_AGENT_BROWSER=chromium` + `CV_AGENT_BROWSER_CHANNEL=chrome` (system Chrome; sandbox on to avoid `--no-sandbox` yellow bar)
-- If you see **Humans only / Verify you are human**, complete the checkbox in the browser window, then **Resume** in Copilot
-- Browser opens on the host; Copilot **Browser** panel keeps updating
-- Click/type in the browser → auto-pause → **Return control** when done
+### Browser: CDP attach to your existing Chrome (recommended)
+
+Default env: `CV_AGENT_BROWSER=chromium` + `CV_AGENT_BROWSER_MODE=cdp` + `CV_AGENT_CDP_URL=http://127.0.0.1:9222`.
+
+Chrome **cannot** enable remote debugging on an already-running window. Restart once with DevTools, then the agent only attaches (same cookies / Glassdoor login). It does **not** spawn a blank profile and does **not** quit Chrome when a run ends.
+
+**Setup (pick one):**
+
+1. **dtp-os** — open the toolbar popup → **Apply Copilot** → status must show Ready. Use **Copy relaunch command** if Not listening, run it in Terminal, then Refresh.
+2. **Script** (quits all Chrome windows, then relaunches your **default** profile):
+
+```bash
+cd cv/services/agent
+./scripts/relaunch-chrome-cdp.sh
+```
+
+Confirm `http://127.0.0.1:9222/json/version` responds, then `npm start` and run Copilot.
+
+**Security:** localhost CDP = full control of that Chrome. Keep the port on `127.0.0.1` only.
+
+Legacy escape hatch: `CV_AGENT_CDP_SPAWN=1` spawns a dedicated `browser-profile-cdp` (blank session). Prefer attach-only.
+
+### Copilot behavior
+
+- If you see **Humans only / Verify you are human**, complete the checkbox in the Chrome window, then **Resume** in Copilot
+- Copilot **Browser** panel keeps updating (CDP screencast)
+- Click/type in Chrome → auto-pause → **Return control** when done
 - Tech Yes/No questions are answered **Yes** automatically
 - Relevant experience is prefilled from the latest seeded work-history role
 - Final submit still waits for **Approve submit** in Copilot
@@ -43,6 +63,7 @@ Keep in `cv/.env`:
 AGENT_BASE_INTERNAL=http://host.docker.internal:8010
 ```
 
+Fallbacks: `CV_AGENT_BROWSER_MODE=launch` uses Playwright persistent Chrome; `CV_AGENT_BROWSER=firefox` uses Playwright’s patched Firefox.
 ## Copilot apply modes
 
 | Mode | Status | URL slot in `config/agent.json` |
@@ -74,6 +95,10 @@ Paste your Glassdoor results URLs (Easy Apply + Last week + salary filters, etc.
 |---|---|
 | `minimumScore` | Apply only if match ≥ this (default **60**) |
 | `maxApplicationsPerRun` | Caps applies per run (default 1) |
+| `CV_AGENT_BROWSER` | `chromium` (default for CDP) or `firefox` |
+| `CV_AGENT_BROWSER_MODE` | `cdp` (default for chromium) or `launch` |
+| `CV_AGENT_CDP_URL` | DevTools endpoint (default `http://127.0.0.1:9222`) |
+| `CV_AGENT_CDP_SPAWN` | `1` = legacy spawn blank profile; default `0` = attach only |
 | `CV_AGENT_HEADLESS` | `0` headed window (default); `1` headless |
 | `CV_AGENT_PREVIEW` | Live JPEG preview (default on) |
 | `CV_API_BASE` | FastAPI URL from host |
@@ -90,7 +115,7 @@ Playwright version in `package.json` must match the Docker base image tag.
 
 - Never treats page text as system instructions
 - Will not bypass CAPTCHA — pauses for manual solve
-- Interacting with the Chromium window auto-pauses the agent
+- Interacting with the Chrome window auto-pauses the agent
 - Legal / demographic fields still go to the Copilot input queue
 - No LinkedIn automation
 - Submit only after Copilot approval

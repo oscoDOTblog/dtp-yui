@@ -1,5 +1,7 @@
 node_modules/
 browser-profile/
+browser-profile-cdp/
+browser-profile-firefox/
 browser-profile-docker/
 screenshots/
 .env

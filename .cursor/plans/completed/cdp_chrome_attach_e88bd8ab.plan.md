@@ -4,19 +4,19 @@ overview: Attach the Apply Copilot agent to system Google Chrome over CDP instea
 todos:
   - id: browser-cdp-api
     content: Add CDP spawn/connect/close handle in browser.js (mode cdp|launch)
-    status: pending
+    status: completed
   - id: runner-lifecycle
     content: Wire runner to CDP handle; disconnect vs kill ownership; status fields
-    status: pending
+    status: completed
   - id: env-health
     content: Update .env / .env.example and /health with browserMode + CDP settings
-    status: pending
+    status: completed
   - id: takeover-preview
     content: Verify humanTakeover + preview on CDP default context; fix page binding if needed
-    status: pending
+    status: completed
   - id: docs-cdp
     content: Document agent-managed CDP and attach-only flows in AGENT_SETUP / ARCHITECTURE
-    status: pending
+    status: completed
 isProject: false
 ---
 
