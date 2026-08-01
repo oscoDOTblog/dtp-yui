@@ -4,7 +4,54 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+export const APPLY_MODES = {
+  EASY_APPLY_LOCAL: "easyApplyLocal",
+  EASY_APPLY_REMOTE: "easyApplyRemote",
+  COMPANY_APPLY_LOCAL: "companyApplyLocal",
+  COMPANY_APPLY_REMOTE: "companyApplyRemote",
+};
+
+export const APPLY_MODE_META = {
+  [APPLY_MODES.EASY_APPLY_LOCAL]: {
+    id: APPLY_MODES.EASY_APPLY_LOCAL,
+    label: "Easy Apply (Local)",
+    shortLabel: "Easy Apply · Local",
+    enabled: true,
+    kind: "easyApply",
+  },
+  [APPLY_MODES.EASY_APPLY_REMOTE]: {
+    id: APPLY_MODES.EASY_APPLY_REMOTE,
+    label: "Easy Apply (Remote)",
+    shortLabel: "Easy Apply · Remote",
+    enabled: true,
+    kind: "easyApply",
+  },
+  [APPLY_MODES.COMPANY_APPLY_LOCAL]: {
+    id: APPLY_MODES.COMPANY_APPLY_LOCAL,
+    label: "Company Apply (Local)",
+    shortLabel: "Company Apply · Local",
+    enabled: false,
+    kind: "companyApply",
+  },
+  [APPLY_MODES.COMPANY_APPLY_REMOTE]: {
+    id: APPLY_MODES.COMPANY_APPLY_REMOTE,
+    label: "Company Apply (Remote)",
+    shortLabel: "Company Apply · Remote",
+    enabled: false,
+    kind: "companyApply",
+  },
+};
+
+const DEFAULT_SEARCH_URLS = {
+  easyApplyLocal: "",
+  easyApplyRemote: "",
+  companyApplyLocal: "",
+  companyApplyRemote: "",
+};
+
 const DEFAULTS = {
+  applyMode: APPLY_MODES.EASY_APPLY_LOCAL,
+  searchUrls: { ...DEFAULT_SEARCH_URLS },
   searchUrl: "",
   searchUrlRemote: "",
   preferRemote: false,
@@ -12,22 +59,56 @@ const DEFAULTS = {
   location: "Oakland, CA",
   maxResultsPerRun: 10,
   maxApplicationsPerRun: 1,
-  minimumScore: 72,
+  minimumScore: 60,
   maxRuntimeMinutes: 90,
   requireApprovalBeforeSubmit: true,
   slowMoMs: 100,
   humanDelayMs: { min: 800, max: 2200 },
 };
 
+export function isEasyApplyMode(mode) {
+  return (
+    mode === APPLY_MODES.EASY_APPLY_LOCAL ||
+    mode === APPLY_MODES.EASY_APPLY_REMOTE
+  );
+}
+
+export function isCompanyApplyMode(mode) {
+  return (
+    mode === APPLY_MODES.COMPANY_APPLY_LOCAL ||
+    mode === APPLY_MODES.COMPANY_APPLY_REMOTE
+  );
+}
+
+export function normalizeApplyMode(raw) {
+  const mode = String(raw || "").trim();
+  if (APPLY_MODE_META[mode]) return mode;
+  return APPLY_MODES.EASY_APPLY_LOCAL;
+}
+
 /**
- * Resolve which Glassdoor results URL to open.
- * preferRemote → searchUrlRemote (fallback searchUrl);
- * otherwise searchUrl (fallback searchUrlRemote).
+ * Resolve which Glassdoor results URL to open from applyMode + searchUrls.
+ * Legacy fallback: preferRemote / searchUrl / searchUrlRemote.
  */
 export function resolveSearchUrl(cfg = {}) {
-  const local = (cfg.searchUrl || "").trim();
-  const remote = (cfg.searchUrlRemote || "").trim();
-  if (cfg.preferRemote) {
+  const mode = normalizeApplyMode(cfg.applyMode);
+  const urls = { ...DEFAULT_SEARCH_URLS, ...(cfg.searchUrls || {}) };
+
+  // Migrate legacy dual-URL fields into slots when slots empty.
+  if (!urls.easyApplyLocal && cfg.searchUrl) {
+    urls.easyApplyLocal = String(cfg.searchUrl).trim();
+  }
+  if (!urls.easyApplyRemote && cfg.searchUrlRemote) {
+    urls.easyApplyRemote = String(cfg.searchUrlRemote).trim();
+  }
+
+  const fromMode = (urls[mode] || "").trim();
+  if (fromMode) return fromMode;
+
+  // Legacy preferRemote path when mode slots empty.
+  const local = (cfg.searchUrl || urls.easyApplyLocal || "").trim();
+  const remote = (cfg.searchUrlRemote || urls.easyApplyRemote || "").trim();
+  if (cfg.preferRemote || mode === APPLY_MODES.EASY_APPLY_REMOTE) {
     return remote || local || "";
   }
   return local || remote || "";
@@ -107,7 +188,16 @@ export async function loadAgentConfig() {
       file = {};
     }
   }
-  return { ...DEFAULTS, ...file };
+  const merged = {
+    ...DEFAULTS,
+    ...file,
+    searchUrls: {
+      ...DEFAULT_SEARCH_URLS,
+      ...(file.searchUrls || {}),
+    },
+  };
+  merged.applyMode = normalizeApplyMode(merged.applyMode);
+  return merged;
 }
 
 export function sleep(ms) {

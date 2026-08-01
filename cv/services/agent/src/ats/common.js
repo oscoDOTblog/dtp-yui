@@ -1,5 +1,8 @@
 import path from "path";
-import { classifyQuestionRisk, RISK } from "../policy.js";
+import {
+  classifyQuestionRisk,
+  resolveQuestionAction,
+} from "../policy.js";
 import { humanDelay } from "../config.js";
 
 const CONTACT_FIELD_MAP = [
@@ -93,11 +96,18 @@ export async function uploadResume(page, resumePath, events) {
 export async function collectUnknownQuestions(page) {
   const unknowns = await page.evaluate(() => {
     const out = [];
+    const seen = new Set();
     const fields = document.querySelectorAll(
       "input, select, textarea, [role='radiogroup']"
     );
     for (const el of fields) {
       if (el.type === "hidden" || el.type === "file" || el.type === "submit") continue;
+      // Dedupe radio groups by name
+      if (el.type === "radio") {
+        const key = `radio:${el.name || el.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
       const id = el.id;
       let label = "";
       if (id) {
@@ -105,7 +115,7 @@ export async function collectUnknownQuestions(page) {
         label = lab ? lab.textContent.trim() : "";
       }
       if (!label) {
-        const wrap = el.closest("label, .field, .form-group, [class*='question']");
+        const wrap = el.closest("label, .field, .form-group, [class*='question'], fieldset, [role='radiogroup']");
         label = wrap ? wrap.textContent.trim().slice(0, 240) : "";
       }
       if (!label) {
@@ -116,12 +126,31 @@ export async function collectUnknownQuestions(page) {
           "";
       }
       const options = [];
+      let fieldType =
+        el.tagName.toLowerCase() === "select" ? "select" : el.type || "text";
       if (el.tagName === "SELECT") {
         for (const opt of el.options) options.push(opt.textContent.trim());
       }
+      if (el.type === "radio" || el.getAttribute("role") === "radiogroup") {
+        fieldType = "radiogroup";
+        const name = el.name;
+        const radios = name
+          ? document.querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`)
+          : el.querySelectorAll?.('input[type="radio"]') || [];
+        for (const r of radios) {
+          const rid = r.id;
+          let l = "";
+          if (rid) {
+            const lab = document.querySelector(`label[for="${CSS.escape(rid)}"]`);
+            l = lab ? lab.textContent.trim() : "";
+          }
+          if (!l) l = r.value || "";
+          if (l) options.push(l);
+        }
+      }
       out.push({
         question: label.slice(0, 300),
-        fieldType: el.tagName.toLowerCase() === "select" ? "select" : el.type || "text",
+        fieldType,
         name: el.name || el.id || "",
         options,
       });
@@ -135,16 +164,15 @@ export async function collectUnknownQuestions(page) {
       /first.?name|last.?name|e-?mail|phone|linkedin|github|full.?name/i.test(
         q.question
       );
+    const { action, confidence } = resolveQuestionAction(
+      { ...q, risk },
+      { knownContact }
+    );
     return {
       ...q,
       risk,
-      confidence: knownContact ? 0.95 : risk === RISK.LOW ? 0.4 : 0.15,
-      action:
-        knownContact
-          ? "AUTOFILL"
-          : risk === RISK.LEGAL || risk === RISK.HIGH
-            ? "ASK_USER"
-            : "ASK_USER",
+      confidence,
+      action,
     };
   });
 }

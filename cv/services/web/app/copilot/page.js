@@ -9,6 +9,9 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { agentEventSource, agentGet, agentPost } from "../../lib/agentApi";
 import BrowserPreview from "../components/BrowserPreview";
+import CopilotSettings, {
+  applyModeShortLabel,
+} from "../components/CopilotSettings";
 
 function formatTime(iso) {
   if (!iso) return "";
@@ -22,7 +25,9 @@ function formatTime(iso) {
 function eventLine(ev) {
   if (ev.message) return ev.message;
   if (ev.type === "DECISION_MADE") {
-    return `Decision: ${ev.decision}${ev.reason ? ` — ${ev.reason}` : ""}`;
+    const score =
+      ev.score != null ? ` (score ${ev.score})` : "";
+    return `Decision: ${ev.decision}${ev.reason ? ` — ${ev.reason}` : ""}${score}`;
   }
   if (ev.type === "STATE_CHANGED") return `State → ${ev.state}`;
   if (ev.type === "USER_INPUT_REQUIRED") return `Needs input: ${ev.question}`;
@@ -40,6 +45,7 @@ export default function CopilotPage() {
   const [reusePolicy, setReusePolicy] = useState("ONCE");
   const [starting, setStarting] = useState(false);
   const [showBrowserWindow, setShowBrowserWindow] = useState(true);
+  const [applyMode, setApplyMode] = useState("easyApplyLocal");
   const feedRef = useRef(null);
 
   const refreshStatus = useCallback(async () => {
@@ -54,7 +60,10 @@ export default function CopilotPage() {
 
   useEffect(() => {
     agentGet("/config")
-      .then(setConfig)
+      .then((cfg) => {
+        setConfig(cfg);
+        if (cfg?.applyMode) setApplyMode(cfg.applyMode);
+      })
       .catch(() => setConfig(null));
     agentGet("/health")
       .then((h) => {
@@ -110,12 +119,18 @@ export default function CopilotPage() {
     .reverse()
     .find((e) => e.kind === "SUBMISSION_APPROVAL" || e.reviewSummary);
   const isHeaded = Boolean(status?.running ? status?.headed : showBrowserWindow);
+  const activeApplyMode = status?.running
+    ? status?.applyMode || applyMode
+    : applyMode;
 
   async function startRun() {
     setStarting(true);
     setError(null);
     try {
-      await agentPost("/runs/start", { headed: showBrowserWindow });
+      await agentPost("/runs/start", {
+        headed: showBrowserWindow,
+        applyMode,
+      });
       setEvents([]);
       await refreshStatus();
     } catch (err) {
@@ -157,8 +172,8 @@ export default function CopilotPage() {
             Apply Copilot
           </h1>
           <p className="m-0 text-muted-foreground">
-            Glassdoor-first Stage 6 runner — live preview below, optional Chromium
-            window for manual takeover. Human approval required before submit.
+            Easy Apply–first Stage 6 runner — pick a mode, watch the preview, approve
+            submit. Uncertain answers land in the input queue.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-4">
@@ -180,6 +195,12 @@ export default function CopilotPage() {
           </Button>
         </div>
       </div>
+
+      <CopilotSettings
+        applyMode={applyMode}
+        onApplyModeChange={setApplyMode}
+        disabled={Boolean(status?.running) || starting}
+      />
 
       {error ? (
         <Alert variant="error">
@@ -214,12 +235,23 @@ export default function CopilotPage() {
       <div className="flex flex-wrap gap-2">
         <Badge variant="outline">state: {status?.state || "—"}</Badge>
         <Badge variant="outline">mode: {status?.uiMode || "—"}</Badge>
+        <Badge variant="outline">
+          {applyModeShortLabel(activeApplyMode)}
+        </Badge>
         <Badge variant={status?.running ? "default" : "secondary"}>
           {status?.running ? "running" : "idle"}
         </Badge>
         {status?.running ? (
           <Badge variant="outline">
             {status?.headed ? "headed window" : "headless"}
+          </Badge>
+        ) : null}
+        {currentJob?.easyApply ? (
+          <Badge variant="outline">Easy Apply path</Badge>
+        ) : null}
+        {currentJob?.applicationStatus ? (
+          <Badge variant="secondary">
+            job: {currentJob.applicationStatus}
           </Badge>
         ) : null}
         {status?.runId ? (
@@ -336,24 +368,26 @@ export default function CopilotPage() {
             {config ? (
               <div className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
                 <p className="m-0">
-                  Search: {config.query} @ {config.location}
-                  {config.preferRemote ? " · prefer remote" : ""}
+                  Mode: {applyModeShortLabel(config.applyMode || applyMode)} ·{" "}
+                  {config.query} @ {config.location}
                 </p>
                 <p className="m-0">
                   Caps: {config.maxResultsPerRun} results /{" "}
                   {config.maxApplicationsPerRun} applies · min score{" "}
                   {config.minimumScore}
                 </p>
-                {(config.preferRemote
-                  ? config.searchUrlRemote || config.searchUrl
-                  : config.searchUrl || config.searchUrlRemote) ? (
-                  <p className="m-0 break-all">
-                    URL ({config.preferRemote ? "remote" : "local"}):{" "}
-                    {config.preferRemote
-                      ? config.searchUrlRemote || config.searchUrl
-                      : config.searchUrl || config.searchUrlRemote}
-                  </p>
-                ) : null}
+                {(() => {
+                  const urls = config.searchUrls || {};
+                  const mode = config.applyMode || applyMode;
+                  const url =
+                    urls[mode] ||
+                    config.searchUrl ||
+                    config.searchUrlRemote ||
+                    "";
+                  return url ? (
+                    <p className="m-0 break-all">URL: {url}</p>
+                  ) : null;
+                })()}
               </div>
             ) : null}
           </CardPanel>

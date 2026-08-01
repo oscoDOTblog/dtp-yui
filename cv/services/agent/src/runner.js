@@ -11,11 +11,25 @@ import {
   listResultCards,
   openResultCard,
   extractJobFromPage,
+  scrollJobDescription,
   clickApply,
 } from "./glassdoor/search.js";
 import { resolveAdapter, AtsType } from "./ats/index.js";
-import { RISK } from "./policy.js";
-import { humanDelay, loadAgentConfig, envConfig, resolveSearchUrl } from "./config.js";
+import {
+  RISK,
+  QUESTION_ACTION,
+  isAlreadyAppliedStatus,
+} from "./policy.js";
+import {
+  humanDelay,
+  loadAgentConfig,
+  envConfig,
+  resolveSearchUrl,
+  normalizeApplyMode,
+  isCompanyApplyMode,
+  isEasyApplyMode,
+  APPLY_MODE_META,
+} from "./config.js";
 import { createHumanTakeover } from "./humanTakeover.js";
 
 function splitName(fullName = "") {
@@ -61,6 +75,7 @@ export function createRunner({ api, events, inputBroker, preview }) {
   let activePageUrl = null;
   let headed = !envConfig().headless;
   let activePage = null;
+  let applyMode = "easyApplyLocal";
 
   const humanTakeover = createHumanTakeover({
     getUiMode: () => uiMode,
@@ -238,6 +253,7 @@ export function createRunner({ api, events, inputBroker, preview }) {
     await setUiMode(AgentUiMode.ACTING);
     await openResultCard(page, card, cfg);
     await focusPreview(page);
+    await scrollJobDescription(page);
     await screenshot(page, "job_opened");
 
     await setUiMode(AgentUiMode.OBSERVING);
@@ -247,8 +263,13 @@ export function createRunner({ api, events, inputBroker, preview }) {
       company: extracted.company,
       location: extracted.location,
       sourceUrl: extracted.sourceUrl,
+      easyApply: Boolean(extracted.easyApply),
+      applicationStatus: null,
     };
-    await setState(ApplicationState.JOB_EXTRACTED, `Found: ${extracted.title} — ${extracted.company}`);
+    await setState(
+      ApplicationState.JOB_EXTRACTED,
+      `Found: ${extracted.title} — ${extracted.company}`
+    );
 
     stats.resultsViewed += 1;
 
@@ -267,10 +288,12 @@ export function createRunner({ api, events, inputBroker, preview }) {
 
     const job = ingest.job;
     const created = ingest.created;
+    const priorStatus = job.applicationStatus || null;
     currentJob = {
       ...currentJob,
       jobId: job._id,
       match: ingest.match || null,
+      applicationStatus: priorStatus,
     };
 
     await setState(
@@ -280,11 +303,13 @@ export function createRunner({ api, events, inputBroker, preview }) {
         : `Duplicate / existing (${ingest.reason || "existing"})`
     );
 
-    if (job.applicationStatus === "pending" || job.applicationStatus === "apply") {
+    if (isAlreadyAppliedStatus(priorStatus)) {
       await events.emit("DECISION_MADE", {
         decision: "SKIP",
-        reason: `Already tracked as ${job.applicationStatus}`,
+        reason: "already_applied",
+        message: `Already applied / tracked as ${priorStatus}`,
         confidence: 1,
+        applicationStatus: priorStatus,
       });
       return;
     }
@@ -320,8 +345,15 @@ export function createRunner({ api, events, inputBroker, preview }) {
       score: overall,
     });
 
-    if (overall < cfg.minimumScore || recommendation === "reject" || recommendation === "skip") {
-      await setState(ApplicationState.REJECTED_BY_POLICY, "Below apply threshold");
+    if (
+      overall < cfg.minimumScore ||
+      recommendation === "reject" ||
+      recommendation === "skip"
+    ) {
+      await setState(
+        ApplicationState.REJECTED_BY_POLICY,
+        "Below apply threshold"
+      );
       return;
     }
 
@@ -334,7 +366,10 @@ export function createRunner({ api, events, inputBroker, preview }) {
       return;
     }
 
-    await setState(ApplicationState.DOCUMENTS_GENERATING, "Generating application package");
+    await setState(
+      ApplicationState.DOCUMENTS_GENERATING,
+      "Generating application package"
+    );
     await setUiMode(AgentUiMode.ACTING);
     let pkg;
     try {
@@ -351,12 +386,11 @@ export function createRunner({ api, events, inputBroker, preview }) {
     const resumePath = packageResumePath(pkg);
     stats.applicationsStarted += 1;
 
-    await setState(ApplicationState.APPLICATION_STARTED, "Clicking Apply");
+    await setState(ApplicationState.APPLICATION_STARTED, "Clicking Easy Apply");
     let applyPage;
     try {
       applyPage = await clickApply(page, context, cfg, events);
     } catch (err) {
-      // Try direct application URL if Glassdoor apply failed.
       if (extracted.applicationUrl) {
         applyPage = await context.newPage();
         await applyPage.goto(extracted.applicationUrl, {
@@ -374,12 +408,15 @@ export function createRunner({ api, events, inputBroker, preview }) {
     }
     await focusPreview(applyPage);
 
-    // CAPTCHA / challenge pause
     const bodyText = await applyPage.locator("body").innerText().catch(() => "");
     if (/captcha|verify you are human|unusual traffic/i.test(bodyText)) {
-      await setState(ApplicationState.BLOCKED, "CAPTCHA requires manual completion");
+      await setState(
+        ApplicationState.BLOCKED,
+        "CAPTCHA requires manual completion"
+      );
       await askUser({
-        question: "A CAPTCHA requires manual completion. Complete it in the browser, then Resume.",
+        question:
+          "A CAPTCHA requires manual completion. Complete it in the browser, then Resume.",
         options: ["Resume", "Skip application"],
         riskLevel: RISK.HIGH,
         kind: "CAPTCHA",
@@ -419,16 +456,37 @@ export function createRunner({ api, events, inputBroker, preview }) {
     };
     const { unknowns } = await adapter.fill(applyPage, fillCtx);
 
+    // Auto-Yes tech questions that adapters surfaced (non-Indeed paths)
+    for (const q of unknowns || []) {
+      if (q.action !== QUESTION_ACTION.AUTO_YES) continue;
+      await events.emit("DECISION_MADE", {
+        decision: "AUTO_YES",
+        reason: "tech_default_yes",
+        message: `Answered Yes: ${(q.question || "").slice(0, 120)}`,
+        confidence: q.confidence ?? 0.9,
+      });
+      try {
+        if (q.name) {
+          const safeName = String(q.name).replace(/"/g, '\\"');
+          const loc = applyPage.locator(
+            `[name="${safeName}"][value="Yes"], [name="${safeName}"][value="yes"]`
+          );
+          if ((await loc.count()) > 0) await loc.first().check({ force: true });
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
     const toAsk = (unknowns || []).filter(
       (u) =>
-        u.action === "ASK_USER" &&
+        u.action === QUESTION_ACTION.ASK_USER &&
         (u.risk === RISK.LEGAL ||
           u.risk === RISK.HIGH ||
           u.risk === RISK.MEDIUM ||
           (u.confidence ?? 0) < 0.7)
     );
 
-    // Cap interactive prompts per job for MVP.
     for (const q of toAsk.slice(0, 5)) {
       const answer = await askUser({
         question: q.question,
@@ -437,7 +495,6 @@ export function createRunner({ api, events, inputBroker, preview }) {
         fieldType: q.fieldType,
       });
       if (answer?.value && q.name) {
-        // Best-effort: fill by name if still on page.
         try {
           const safeName = String(q.name).replace(/"/g, '\\"');
           const loc = applyPage.locator(`[name="${safeName}"]`);
@@ -473,6 +530,11 @@ export function createRunner({ api, events, inputBroker, preview }) {
       role: extracted.title,
       score: overall,
       atsType,
+      applyMode: cfg.applyMode,
+      easyApply: Boolean(extracted.easyApply),
+      latestRole: profile.latestRole
+        ? `${profile.latestRole.title} @ ${profile.latestRole.company}`
+        : null,
       resumePath: resumePath ? path.basename(resumePath) : null,
       pageUrl: applyPage.url(),
       unknownCount: toAsk.length,
@@ -490,7 +552,10 @@ export function createRunner({ api, events, inputBroker, preview }) {
       });
       if (applyPage !== page) await applyPage.close().catch(() => {});
       await focusPreview(page);
-      await setState(ApplicationState.RETURNING_TO_RESULTS, "Returning to results");
+      await setState(
+        ApplicationState.RETURNING_TO_RESULTS,
+        "Returning to results"
+      );
       return;
     }
 
@@ -509,8 +574,16 @@ export function createRunner({ api, events, inputBroker, preview }) {
     }
 
     if (confirmation.submissionStatus === "CONFIRMED") {
-      await setState(ApplicationState.SUBMISSION_CONFIRMED, "Submission confirmed");
-      await api.setApplicationStatus(job._id, "pending", "Submitted via apply agent");
+      await setState(
+        ApplicationState.SUBMISSION_CONFIRMED,
+        "Submission confirmed"
+      );
+      await api.setApplicationStatus(
+        job._id,
+        "pending",
+        "Submitted via apply agent"
+      );
+      currentJob = { ...currentJob, applicationStatus: "pending" };
       stats.applicationsSubmitted += 1;
     } else {
       await setState(
@@ -522,6 +595,7 @@ export function createRunner({ api, events, inputBroker, preview }) {
         "pending",
         "Submit clicked; confirmation uncertain"
       );
+      currentJob = { ...currentJob, applicationStatus: "pending" };
     }
 
     await events.emit("ACTION_COMPLETED", {
@@ -532,8 +606,15 @@ export function createRunner({ api, events, inputBroker, preview }) {
     if (applyPage !== page) {
       await applyPage.close().catch(() => {});
       await focusPreview(page);
+    } else if (/smartapply\.indeed|indeed\.com/i.test(applyPage.url())) {
+      // Return to Glassdoor results after same-tab Easy Apply
+      await openGlassdoorSearch(page, cfg, events);
+      await focusPreview(page);
     }
-    await setState(ApplicationState.RETURNING_TO_RESULTS, "Returning to Glassdoor results");
+    await setState(
+      ApplicationState.RETURNING_TO_RESULTS,
+      "Returning to Glassdoor results"
+    );
   }
 
   async function start(overrides = {}) {
@@ -547,6 +628,20 @@ export function createRunner({ api, events, inputBroker, preview }) {
     humanTakeover.reset();
 
     const cfg = { ...(await loadAgentConfig()), ...overrides };
+    if (overrides.applyMode) {
+      cfg.applyMode = normalizeApplyMode(overrides.applyMode);
+    } else {
+      cfg.applyMode = normalizeApplyMode(cfg.applyMode);
+    }
+    applyMode = cfg.applyMode;
+
+    if (isCompanyApplyMode(cfg.applyMode)) {
+      running = false;
+      throw new Error(
+        "Company Apply modes are not implemented yet — choose Easy Apply (Local) or Easy Apply (Remote)"
+      );
+    }
+
     const env = envConfig();
     // Per-run override: overrides.headed ?? !env.headless
     let wantHeaded =
@@ -567,15 +662,26 @@ export function createRunner({ api, events, inputBroker, preview }) {
 
     try {
       await setUiMode(AgentUiMode.ACTING);
-      const candidate = await api.getCandidate();
-      const names = splitName(candidate.name || "");
+      let agentProfile = null;
+      try {
+        agentProfile = await api.getAgentProfile();
+      } catch {
+        agentProfile = null;
+      }
+      const candidate = agentProfile
+        ? null
+        : await api.getCandidate().catch(() => ({}));
+      const names = splitName(
+        agentProfile?.fullName || candidate?.name || ""
+      );
       const profile = {
         ...names,
-        email: candidate.email || "",
-        phone: candidate.phone || "",
-        location: candidate.location || "",
-        linkedin: candidate.linkedin || "",
-        github: candidate.github || "",
+        email: agentProfile?.email || candidate?.email || "",
+        phone: agentProfile?.phone || candidate?.phone || "",
+        location: agentProfile?.location || candidate?.location || "",
+        linkedin: agentProfile?.linkedin || candidate?.linkedin || "",
+        github: agentProfile?.github || candidate?.github || "",
+        latestRole: agentProfile?.latestRole || null,
       };
 
       const run = await api.createRun({
@@ -584,14 +690,14 @@ export function createRunner({ api, events, inputBroker, preview }) {
         location: cfg.location,
         searchUrl: resolveSearchUrl(cfg) || null,
         config: {
+          applyMode: cfg.applyMode,
           maxResultsPerRun: cfg.maxResultsPerRun,
           maxApplicationsPerRun: cfg.maxApplicationsPerRun,
           minimumScore: cfg.minimumScore,
           requireApprovalBeforeSubmit: cfg.requireApprovalBeforeSubmit,
-          preferRemote: Boolean(cfg.preferRemote),
-          searchUrl: cfg.searchUrl || null,
-          searchUrlRemote: cfg.searchUrlRemote || null,
+          searchUrls: cfg.searchUrls || null,
           headed,
+          easyApply: isEasyApplyMode(cfg.applyMode),
         },
         state: ApplicationState.GLASSDOOR_SEARCHING,
       });
@@ -612,12 +718,15 @@ export function createRunner({ api, events, inputBroker, preview }) {
       }
       await focusPreview(page);
 
-      await setState(ApplicationState.GLASSDOOR_SEARCHING, "Opening Glassdoor search");
+      await setState(
+        ApplicationState.GLASSDOOR_SEARCHING,
+        `Opening Glassdoor (${APPLY_MODE_META[cfg.applyMode]?.shortLabel || cfg.applyMode})`
+      );
       await openGlassdoorSearch(page, cfg, events);
       await focusPreview(page);
       await screenshot(page, "search_results");
 
-      const cards = await listResultCards(page, cfg.maxResultsPerRun);
+      const cards = await listResultCards(page, cfg.maxResultsPerRun, cfg);
       await events.emit("ACTION_COMPLETED", {
         message: `Found ${cards.length} result card(s)`,
       });
@@ -703,6 +812,8 @@ export function createRunner({ api, events, inputBroker, preview }) {
       userControl,
       abortRequested,
       headed,
+      applyMode,
+      applyModeLabel: APPLY_MODE_META[applyMode]?.shortLabel || applyMode,
       preview: preview ? preview.getMeta() : { enabled: false },
       pageUrl: activePageUrl || preview?.getMeta?.()?.pageUrl || null,
     };

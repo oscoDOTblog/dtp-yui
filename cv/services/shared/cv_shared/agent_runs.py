@@ -214,6 +214,24 @@ def candidate_agent_profile() -> dict[str, Any]:
     cand = db[C.CANDIDATES].find_one({"_id": "primary-candidate"}) or {}
     name = (cand.get("name") or "").strip()
     parts = name.split()
+
+    # Latest role by startDate (seeded Capital One principal, etc.)
+    roles = list(db[C.WORK_HISTORY].find({"candidateId": "primary-candidate"}))
+    if not roles:
+        roles = list(db[C.WORK_HISTORY].find({}))
+    roles.sort(key=lambda r: str(r.get("startDate") or ""), reverse=True)
+    latest = roles[0] if roles else None
+    latest_role = None
+    if latest:
+        latest_role = {
+            "title": latest.get("title"),
+            "company": latest.get("company"),
+            "startDate": latest.get("startDate"),
+            "endDate": latest.get("endDate"),
+            "companyLocation": latest.get("companyLocation"),
+            "id": latest.get("_id"),
+        }
+
     return {
         "fullName": name,
         "firstName": parts[0] if parts else "",
@@ -226,4 +244,5 @@ def candidate_agent_profile() -> dict[str, Any]:
         "minimumSalary": cand.get("minimumSalary"),
         "preferredLocations": cand.get("preferredLocations") or [],
         "remotePreference": cand.get("remotePreference"),
+        "latestRole": latest_role,
     }

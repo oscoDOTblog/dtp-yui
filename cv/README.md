@@ -45,9 +45,9 @@ The worker auto-seeds MongoDB from `seed/` on first start (profile + Greenhouse 
 
 ## Apply agent (Stage 6)
 
-Glassdoor-first Playwright runner with human approval before submit. See **[docs/AGENT_SETUP.md](docs/AGENT_SETUP.md)**.
+Glassdoor Easy Apply → Indeed Smart Apply with human approval before submit. See **[docs/AGENT_SETUP.md](docs/AGENT_SETUP.md)**.
 
-Short version (host agent — Chromium window + Copilot preview):
+Short version:
 
 ```bash
 cd cv && docker compose up -d          # agent service is opt-in (profile)
@@ -55,11 +55,10 @@ cd services/agent
 cp .env.example .env                   # once — HEADLESS=0, PREVIEW=1
 npm install && npx playwright install chromium
 npm start
-# Start a run from /copilot with "Show browser window" on
-# Click in Chromium to auto-pause; preview stays in the dashboard
+# /copilot → pick Easy Apply Local/Remote → Start Glassdoor run
 ```
 
-Keep `AGENT_BASE_INTERNAL=http://host.docker.internal:8010` in `cv/.env` when web is in Docker. Opt-in container agent: `docker compose --profile headless-agent up -d agent`.
+Paste filtered Glassdoor URLs into `config/agent.json` → `searchUrls.easyApplyLocal` / `easyApplyRemote`. Keep `AGENT_BASE_INTERNAL=http://host.docker.internal:8010` when web is in Docker.
 
 ### Laptop vs remote processor (shared Mongo)
 

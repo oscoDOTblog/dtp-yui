@@ -1,4 +1,11 @@
 {
+  "applyMode": "easyApplyLocal",
+  "searchUrls": {
+    "easyApplyLocal": "",
+    "easyApplyRemote": "",
+    "companyApplyLocal": "",
+    "companyApplyRemote": ""
+  },
   "searchUrl": "",
   "searchUrlRemote": "",
   "preferRemote": false,
@@ -6,7 +13,7 @@
   "location": "Oakland, CA",
   "maxResultsPerRun": 10,
   "maxApplicationsPerRun": 1,
-  "minimumScore": 72,
+  "minimumScore": 60,
   "maxRuntimeMinutes": 90,
   "requireApprovalBeforeSubmit": true,
   "slowMoMs": 100,

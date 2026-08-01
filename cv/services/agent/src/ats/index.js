@@ -2,6 +2,7 @@ import { detectAts, AtsType } from "./detect.js";
 import * as greenhouse from "./greenhouse.js";
 import * as lever from "./lever.js";
 import * as generic from "./generic.js";
+import * as indeedSmartApply from "./indeedSmartApply.js";
 
 export function getAdapter(atsType) {
   switch (atsType) {
@@ -16,6 +17,12 @@ export function getAdapter(atsType) {
         begin: lever.beginLever,
         fill: lever.fillLever,
         submit: lever.submitLever,
+      };
+    case AtsType.INDEED_SMARTAPPLY:
+      return {
+        begin: indeedSmartApply.beginIndeedSmartApply,
+        fill: indeedSmartApply.fillIndeedSmartApply,
+        submit: indeedSmartApply.submitIndeedSmartApply,
       };
     default:
       return {

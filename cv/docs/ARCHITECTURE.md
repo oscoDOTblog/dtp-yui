@@ -85,21 +85,21 @@ Analyze queues one or more job URLs into `cv_intakeQueue`. `POST /ingest/queue` 
 
 ## Stage 6 apply agent
 
-Long-running Node service (`cv/services/agent`) drives a **persistent Chromium profile** with Playwright. MVP entry is a configured **Glassdoor saved search / results inbox** (not CV Inbox — that becomes an upstream first step later).
+Long-running Node service (`cv/services/agent`) drives a **persistent Chromium profile** with Playwright. MVP entry is a configured **Glassdoor Easy Apply search** (Indeed Smart Apply wizard). CV Inbox becomes an upstream first step later.
 
 ```text
-Glassdoor search → extract card → POST /agent/jobs/ingest → score/package
-  → Apply → Greenhouse|Lever|generic fill → AWAITING_REVIEW → human submit
-  → confirmation signals → return to results
+Copilot mode (Easy Apply Local|Remote) → Glassdoor URL → extract → ingest/score
+  → Easy Apply → Indeed Smart Apply (tech Yes, resume, latest role) → human Approve submit
+  → applicationStatus=pending → skip on later runs
 ```
 
-- Control plane: HTTP + SSE/WebSocket on `:8010` (proxied as `/agent-api` from the web UI)
-- **Default topology**: host `npm start` owns `:8010` (headed window + preview). Compose `agent` is opt-in via profile `headless-agent`
-- Live browser preview: `GET /preview/latest` JPEG polled by Apply Copilot (Expand for fullscreen); works with headed or headless
-- Human takeover: click/type in the Chromium window auto-pauses (`HUMAN_TAKEOVER`); Copilot **Return control** resumes
-- Persistence: `cv_applicationRuns`, `cv_applicationEvents`, `cv_applicationAnswers`
-- Policy: allowed browser actions only; Level-C / legal questions ask the user; no CAPTCHA bypass; no LinkedIn
-- Per-run headed toggle from Copilot (`POST /runs/start` body `{ headed }`); env default `CV_AGENT_HEADLESS=0` on host
+- Control plane: HTTP + SSE/WebSocket on `:8010` (proxied as `/agent-api`)
+- **Default topology**: host `npm start` owns `:8010`. Compose `agent` is opt-in via profile `headless-agent`
+- Copilot **Apply mode** ToggleGroup: Easy Apply Local/Remote enabled; Company Apply stubs disabled
+- Live browser preview + optional headed Chromium window; human takeover auto-pauses on click/type
+- Tech Yes/No → `AUTO_YES`; legal/uncertain → Input queue; submit always requires approval (for now)
+- Latest work role from `cv_workHistory` via `GET /agent/profile` (`latestRole`)
+- Applied-job skip: any `apply`/`pending`/`round*`/`rejected` status
 - Setup: [AGENT_SETUP.md](AGENT_SETUP.md)
 
 ## Role families

@@ -1,17 +1,24 @@
-import { humanDelay, resolveSearchUrl } from "../config.js";
+import {
+  humanDelay,
+  resolveSearchUrl,
+  normalizeApplyMode,
+  APPLY_MODE_META,
+  isEasyApplyMode,
+} from "../config.js";
 import { sanitizePageText } from "../policy.js";
 
 /**
- * Open Glassdoor search results from config (saved URL preferred).
+ * Open Glassdoor search results from applyMode / searchUrls.
  */
 export async function openGlassdoorSearch(page, cfg, events) {
   const searchUrl = resolveSearchUrl(cfg);
-  const mode = cfg.preferRemote ? "remote" : "local";
+  const applyMode = normalizeApplyMode(cfg.applyMode);
+  const modeLabel = APPLY_MODE_META[applyMode]?.shortLabel || applyMode;
 
   await events.emit("ACTION_STARTED", {
     action: "NAVIGATE",
     target: "glassdoor_search",
-    message: `Opening Glassdoor search (${mode})`,
+    message: `Opening Glassdoor search (${modeLabel})`,
   });
 
   if (searchUrl) {
@@ -19,7 +26,9 @@ export async function openGlassdoorSearch(page, cfg, events) {
   } else {
     const q = encodeURIComponent(cfg.query || "software engineer");
     const loc = encodeURIComponent(
-      cfg.preferRemote ? "Remote" : cfg.location || "Oakland, CA"
+      applyMode === "easyApplyRemote" || applyMode === "companyApplyRemote"
+        ? "Remote"
+        : cfg.location || "Oakland, CA"
     );
     const url = `https://www.glassdoor.com/Job/jobs.htm?sc.keyword=${q}&locT=C&locKeyword=${loc}`;
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -28,21 +37,24 @@ export async function openGlassdoorSearch(page, cfg, events) {
   await humanDelay(cfg);
   await events.emit("ACTION_COMPLETED", {
     action: "NAVIGATE",
-    message: `Glassdoor search results loaded (${mode})`,
+    message: `Glassdoor search results loaded (${modeLabel})`,
     pageUrl: page.url(),
-    preferRemote: Boolean(cfg.preferRemote),
+    applyMode,
   });
 }
 
 /**
  * Collect job result card handles / metadata from the results list.
+ * When Easy Apply mode, prefer cards that show an Easy Apply badge.
  */
-export async function listResultCards(page, max = 10) {
-  // Glassdoor markup varies; try several known patterns.
+export async function listResultCards(page, max = 10, cfg = {}) {
+  const preferEasy = isEasyApplyMode(cfg.applyMode);
+  const fetchLimit = preferEasy ? Math.max(max * 2, 20) : max;
+
   const selectors = [
     'li[data-test="jobListing"]',
     "li.react-job-listing",
-    'li[data-id]',
+    "li[data-id]",
     'article[data-test="jobListing"]',
     ".JobsList_jobListItem__lqYVv",
   ];
@@ -53,7 +65,7 @@ export async function listResultCards(page, max = 10) {
     const count = await loc.count();
     if (count > 0) {
       cards = [];
-      for (let i = 0; i < Math.min(count, max); i += 1) {
+      for (let i = 0; i < Math.min(count, fetchLimit); i += 1) {
         cards.push(loc.nth(i));
       }
       break;
@@ -61,23 +73,25 @@ export async function listResultCards(page, max = 10) {
   }
 
   if (cards.length === 0) {
-    // Fallback: collect job links from the page.
-    const hrefs = await page.$$eval('a[href*="/job-listing/"], a[href*="/Job/"]', (anchors) => {
-      const seen = new Set();
-      const out = [];
-      for (const a of anchors) {
-        const href = a.href;
-        if (!href || seen.has(href)) continue;
-        if (/job-listing|JL\d+/i.test(href) || /\/Job\//.test(href)) {
-          seen.add(href);
-          out.push({
-            href,
-            title: (a.textContent || "").trim().slice(0, 200),
-          });
+    const hrefs = await page.$$eval(
+      'a[href*="/job-listing/"], a[href*="/Job/"]',
+      (anchors) => {
+        const seen = new Set();
+        const out = [];
+        for (const a of anchors) {
+          const href = a.href;
+          if (!href || seen.has(href)) continue;
+          if (/job-listing|JL\d+/i.test(href) || /\/Job\//.test(href)) {
+            seen.add(href);
+            out.push({
+              href,
+              title: (a.textContent || "").trim().slice(0, 200),
+            });
+          }
         }
+        return out.slice(0, 30);
       }
-      return out.slice(0, 30);
-    });
+    );
     return hrefs.map((h) => ({ type: "link", ...h }));
   }
 
@@ -85,14 +99,27 @@ export async function listResultCards(page, max = 10) {
   for (let i = 0; i < cards.length; i += 1) {
     const card = cards[i];
     const title =
-      (await card.locator('[data-test="job-title"], a[data-test="job-link"], a').first().textContent().catch(() => "")) ||
-      "";
+      (await card
+        .locator('[data-test="job-title"], a[data-test="job-link"], a')
+        .first()
+        .textContent()
+        .catch(() => "")) || "";
     const company =
-      (await card.locator('[data-test="employer-name"], .EmployerProfile_compactEmployerName__9MGcV').first().textContent().catch(() => "")) ||
-      "";
+      (await card
+        .locator(
+          '[data-test="employer-name"], .EmployerProfile_compactEmployerName__9MGcV'
+        )
+        .first()
+        .textContent()
+        .catch(() => "")) || "";
     const location =
-      (await card.locator('[data-test="emp-location"], [data-test="job-location"]').first().textContent().catch(() => "")) ||
-      "";
+      (await card
+        .locator('[data-test="emp-location"], [data-test="job-location"]')
+        .first()
+        .textContent()
+        .catch(() => "")) || "";
+    const cardText = (await card.innerText().catch(() => "")) || "";
+    const easyApply = /easy apply/i.test(cardText);
     let href = null;
     try {
       href = await card.locator("a").first().getAttribute("href");
@@ -109,10 +136,15 @@ export async function listResultCards(page, max = 10) {
       company: company.trim(),
       location: location.trim(),
       href,
+      easyApply,
       locator: card,
     });
   }
-  return meta;
+
+  if (preferEasy) {
+    meta.sort((a, b) => Number(b.easyApply) - Number(a.easyApply));
+  }
+  return meta.slice(0, max);
 }
 
 export async function openResultCard(page, card, cfg) {
@@ -132,6 +164,43 @@ export async function openResultCard(page, card, cfg) {
     return page;
   }
   throw new Error("Unable to open result card");
+}
+
+/**
+ * Scroll the job description pane so the full JD is in the DOM for extraction.
+ */
+export async function scrollJobDescription(page) {
+  const descSelectors = [
+    '[data-test="description"]',
+    "#JobDescriptionContainer",
+    ".JobDetails_jobDescription__",
+    '[class*="JobDetails_jobDescription"]',
+    '[class*="JobDetails"]',
+    "article",
+  ];
+  for (const sel of descSelectors) {
+    const loc = page.locator(sel).first();
+    if ((await loc.count()) === 0) continue;
+    try {
+      await loc.evaluate(async (el) => {
+        el.scrollTop = 0;
+        const step = Math.max(200, Math.floor(el.clientHeight * 0.8));
+        let guard = 0;
+        while (el.scrollTop + el.clientHeight < el.scrollHeight - 20 && guard < 25) {
+          el.scrollTop += step;
+          guard += 1;
+          await new Promise((r) => setTimeout(r, 80));
+        }
+        // Also scroll window in case description is not independently scrollable
+        window.scrollBy(0, 400);
+      });
+      return true;
+    } catch {
+      /* try next */
+    }
+  }
+  await page.evaluate(() => window.scrollBy(0, 800)).catch(() => {});
+  return false;
 }
 
 /**
@@ -191,11 +260,11 @@ export async function extractJobFromPage(page) {
   }
   description = sanitizePageText(description);
 
-  // Prefer employer apply URL when present.
   let applicationUrl = null;
+  let easyApplyButton = false;
   const applyCandidates = await page
     .$$eval(
-      'a[data-test="applyButton"], button[data-test="applyButton"], a[href*="greenhouse"], a[href*="lever"], a[href*="ashby"], a[href*="jobs."]',
+      'a[data-test="applyButton"], button[data-test="applyButton"], button, a[href*="greenhouse"], a[href*="lever"], a[href*="ashby"], a[href*="jobs."], a[href*="smartapply"]',
       (els) =>
         els.map((el) => ({
           href: el.href || null,
@@ -206,8 +275,17 @@ export async function extractJobFromPage(page) {
     .catch(() => []);
 
   for (const c of applyCandidates) {
-    if (c.href && /greenhouse|lever\.co|ashbyhq|myworkdayjobs|smartrecruiters/i.test(c.href)) {
+    if (/easy apply/i.test(c.text)) {
+      easyApplyButton = true;
+    }
+    if (
+      c.href &&
+      /greenhouse|lever\.co|ashbyhq|myworkdayjobs|smartrecruiters|smartapply\.indeed/i.test(
+        c.href
+      )
+    ) {
       applicationUrl = c.href;
+      if (/smartapply\.indeed/i.test(c.href)) easyApplyButton = true;
       break;
     }
   }
@@ -219,6 +297,11 @@ export async function extractJobFromPage(page) {
     sourceJobIdMatch?.[1] ||
     null;
 
+  const easyApply =
+    easyApplyButton ||
+    /smartapply\.indeed\.com/i.test(applicationUrl || "") ||
+    (/glassdoor\.com/i.test(url) && !applicationUrl);
+
   return {
     title,
     company,
@@ -228,27 +311,30 @@ export async function extractJobFromPage(page) {
     sourceUrl: url,
     applicationUrl,
     sourceJobId: sourceJobId ? String(sourceJobId) : null,
-    easyApply: /glassdoor\.com/i.test(applicationUrl || url),
+    easyApply,
   };
 }
 
 /**
- * Click Apply and return the page that should be filled (may be a new tab).
+ * Click Easy Apply / Apply and return the page that should be filled (may be a new tab).
  */
 export async function clickApply(page, context, cfg, events) {
   await events.emit("ACTION_STARTED", {
     action: "CLICK",
     target: "apply",
-    message: "Clicking Apply",
+    message: "Clicking Easy Apply / Apply",
   });
 
+  // Prefer Easy Apply first (Glassdoor Easy Apply → Indeed Smart Apply).
   const applySelectors = [
+    'button:has-text("Easy Apply")',
+    'a:has-text("Easy Apply")',
+    '[data-test="applyButton"]:has-text("Easy Apply")',
     '[data-test="applyButton"]',
     'button:has-text("Apply Now")',
     'a:has-text("Apply Now")',
-    'button:has-text("Easy Apply")',
-    'a:has-text("Apply")',
     'button:has-text("Apply")',
+    'a:has-text("Apply")',
   ];
 
   const pagesBefore = new Set(context.pages());
@@ -271,7 +357,6 @@ export async function clickApply(page, context, cfg, events) {
 
   await humanDelay(cfg);
 
-  // New tab?
   const fresh = context.pages().find((p) => !pagesBefore.has(p));
   if (fresh) {
     await fresh.waitForLoadState("domcontentloaded").catch(() => {});

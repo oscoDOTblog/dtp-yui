@@ -1,37 +1,37 @@
 ---
 name: Easy Apply streamline
-overview: "Optimize Stage 6 for Glassdoor Easy Apply → Indeed Smart Apply, with a Copilot mode picker (Easy Apply Local/Remote enabled; Company Apply disabled until later), score gate at 60, tech auto-Yes, latest Capital One role prefill, applied-job skip so we never re-apply, and human submit approval."
+overview: Optimize Stage 6 for Glassdoor Easy Apply → Indeed Smart Apply, with a Copilot mode picker (Easy Apply Local/Remote enabled; Company Apply disabled until later), score gate at 60, tech auto-Yes, latest Capital One role prefill, applied-job skip so we never re-apply, and human submit approval.
 todos:
   - id: config-modes
     content: "agent.json: four search URL slots + applyMode; minimumScore 60; resolveSearchUrl by mode"
-    status: pending
+    status: completed
   - id: copilot-settings
-    content: "CopilotSettings component — ToggleGroup for Easy Apply Local/Remote; Company Apply options disabled"
-    status: pending
+    content: CopilotSettings component — ToggleGroup for Easy Apply Local/Remote; Company Apply options disabled
+    status: completed
   - id: glassdoor-scroll-apply
     content: Scroll JD pane; prefer Easy Apply click; detect smartapply landing
-    status: pending
+    status: completed
   - id: indeed-adapter
     content: AtsType.INDEED_SMARTAPPLY + indeedSmartApply.js step machine (questions → resume → relevant exp → review)
-    status: pending
+    status: completed
   - id: latest-role-api
     content: Expose latest cv_workHistory role on /agent/profile; load in runner for prefill
-    status: pending
+    status: completed
   - id: policy-auto-yes
     content: AUTO_YES for tech Yes/No; legal/uncertain still ASK_USER in Copilot
-    status: pending
+    status: completed
   - id: runner-wire
     content: Wire mode→URL, score 60 gate, Indeed path, approval gate, dismiss sent modal
-    status: pending
+    status: completed
   - id: skip-applied
     content: Skip already-applied jobs by sourceJobId/applicationStatus; mark pending after confirmed submit
-    status: pending
+    status: completed
   - id: copilot-feed
     content: Surface auto-Yes + score decisions in feed; keep Input queue for uncertain only
-    status: pending
+    status: completed
   - id: docs-easy-apply
     content: Update AGENT_SETUP / Architecture for Easy Apply modes + flow
-    status: pending
+    status: completed
 isProject: false
 ---
 

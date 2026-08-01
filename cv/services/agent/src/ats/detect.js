@@ -10,6 +10,7 @@ export const AtsType = {
   ASHBY: "ASHBY",
   ICIMS: "ICIMS",
   SMARTRECRUITERS: "SMARTRECRUITERS",
+  INDEED_SMARTAPPLY: "INDEED_SMARTAPPLY",
   CUSTOM: "CUSTOM",
   UNKNOWN: "UNKNOWN",
 };
@@ -17,6 +18,13 @@ export const AtsType = {
 export function detectAts(url = "", title = "") {
   const u = String(url).toLowerCase();
   const t = String(title).toLowerCase();
+  if (
+    /smartapply\.indeed\.com/i.test(u) ||
+    /indeed\.com\/.*(indeedapply|apply)/i.test(u) ||
+    /indeed apply/i.test(t)
+  ) {
+    return AtsType.INDEED_SMARTAPPLY;
+  }
   if (/boards\.greenhouse\.io|greenhouse\.io\/embed/i.test(u)) return AtsType.GREENHOUSE;
   if (/jobs\.lever\.co|lever\.co/i.test(u)) return AtsType.LEVER;
   if (/ashbyhq\.com/i.test(u)) return AtsType.ASHBY;

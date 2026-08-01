@@ -1,19 +1,17 @@
 # Apply agent setup (Stage 6)
 
-Hybrid browser copilot: Glassdoor discovery → CV score/package → ATS form fill → **human approval before submit**.
+Hybrid browser copilot: Glassdoor discovery → CV score/package → Easy Apply (Indeed Smart Apply) → **human approval before submit**.
 
 ## Architecture
 
 | Piece | Role |
 |---|---|
-| `services/agent` (host) | Node + Playwright runner — **owns :8010** by default; headed Chromium + Copilot preview |
-| FastAPI `/agent/*` | Job ingest, runs/events, answer bank |
-| Web `/copilot` | Live browser preview, activity feed, input queue, controls |
+| `services/agent` (host) | Node + Playwright runner — **owns :8010**; headed Chromium + Copilot preview |
+| FastAPI `/agent/*` | Job ingest, runs/events, answer bank, `/agent/profile` (incl. latest work role) |
+| Web `/copilot` | Mode picker, live preview, activity feed, input queue, controls |
 | Compose `agent` | Opt-in headless only (`--profile headless-agent`) |
 
 ## Host agent (recommended)
-
-Run the agent on macOS so a real Chromium window can pop up for login / CAPTCHA / manual takeover, while `/copilot` still streams the live JPEG preview.
 
 ```bash
 cd cv
@@ -25,83 +23,74 @@ npx playwright install chromium   # once
 npm start
 ```
 
-Expect:
+Open http://localhost:7545/copilot → pick **Easy Apply (Local)** or **Easy Apply (Remote)** → **Start Glassdoor run**.
 
-```text
-cv-agent listening on :8010 (headless=false, headedDefault=true, preview=true, api=http://127.0.0.1:8000)
-```
+- Chromium opens on the host; Copilot **Browser** panel keeps updating
+- Click/type in Chromium → auto-pause → **Return control** when done
+- Tech Yes/No questions are answered **Yes** automatically
+- Relevant experience is prefilled from the latest seeded work-history role
+- Final submit still waits for **Approve submit** in Copilot
+- Already-applied jobs (`pending` / interview / `rejected`) are skipped
 
-Open http://localhost:7545/copilot → leave **Show browser window** on → **Start Glassdoor run**.
-
-- Chromium opens on the host; Copilot **Browser** panel keeps updating.
-- Click or type in the Chromium window → agent auto-pauses (`HUMAN_TAKEOVER`) → **Return control** when done.
-- **Bring window to front** re-summons a buried window.
-
-If web is in Docker (default), keep:
+Keep in `cv/.env`:
 
 ```bash
-# in cv/.env
 AGENT_BASE_INTERNAL=http://host.docker.internal:8010
 ```
 
-Then recreate web so the proxy reaches the host agent.
+## Copilot apply modes
 
-## Headless-only runs
+| Mode | Status | URL slot in `config/agent.json` |
+|---|---|---|
+| Easy Apply (Local) | enabled | `searchUrls.easyApplyLocal` |
+| Easy Apply (Remote) | enabled | `searchUrls.easyApplyRemote` |
+| Company Apply (Local) | disabled (coming soon) | `searchUrls.companyApplyLocal` |
+| Company Apply (Remote) | disabled (coming soon) | `searchUrls.companyApplyRemote` |
 
-Toggle **Show browser window** off in Copilot before starting a run, or set `CV_AGENT_HEADLESS=1` in `services/agent/.env`. Preview still works.
+Paste your Glassdoor results URLs (Easy Apply + Last week + salary filters, etc.) into the two Easy Apply slots. Filters stay in the URL — the agent does not click filter chips.
 
-## Config
+```json
+{
+  "applyMode": "easyApplyLocal",
+  "searchUrls": {
+    "easyApplyLocal": "https://www.glassdoor.com/Job/…",
+    "easyApplyRemote": "https://www.glassdoor.com/Job/…",
+    "companyApplyLocal": "",
+    "companyApplyRemote": ""
+  },
+  "minimumScore": 60,
+  "requireApprovalBeforeSubmit": true
+}
+```
 
-Edit [`config/agent.json`](../config/agent.json):
+## Config knobs
 
-| Field | Purpose |
+| Field / env | Purpose |
 |---|---|
-| `searchUrl` | Glassdoor job-results URL (local / Bay Area / hybrid search) |
-| `searchUrlRemote` | Glassdoor job-results URL for remote-only search |
-| `preferRemote` | `true` → use `searchUrlRemote` (falls back to `searchUrl`); `false` → use `searchUrl` |
-| `query` / `location` | Used when both URLs are empty |
-| `maxResultsPerRun` | Cards to inspect (default 10) |
-| `maxApplicationsPerRun` | Applies to attempt (default 1 for MVP) |
-| `minimumScore` | Skip below this match score (default 72) |
-| `requireApprovalBeforeSubmit` | Always `true` for MVP |
-
-Flip searches by setting `"preferRemote": true` after pasting a remote results URL into `searchUrlRemote`.
-
-### Agent `.env` knobs
-
-| Var | Purpose |
-|---|---|
-| `CV_AGENT_HEADLESS` | `0` headed window (default); `1` headless — Copilot can still override per run |
-| `CV_AGENT_PREVIEW` | `1` enable live preview (default); `0` off |
-| `CV_AGENT_PREVIEW_MAX_WIDTH` | JPEG max width (default `960`) |
-| `CV_API_BASE` | FastAPI URL (`http://127.0.0.1:8000` on host) |
-
-Existing shell/Compose env vars are not overridden by `.env`.
+| `minimumScore` | Apply only if match ≥ this (default **60**) |
+| `maxApplicationsPerRun` | Caps applies per run (default 1) |
+| `CV_AGENT_HEADLESS` | `0` headed window (default); `1` headless |
+| `CV_AGENT_PREVIEW` | Live JPEG preview (default on) |
+| `CV_API_BASE` | FastAPI URL from host |
 
 ## Docker (opt-in headless agent)
 
-The Compose `agent` service is behind profile `headless-agent` so a normal `docker compose up` leaves :8010 free for the host process.
-
 ```bash
 docker compose --profile headless-agent up -d --build agent
-# point web at the container:
-# AGENT_BASE_INTERNAL=http://agent:8010
 ```
 
-Container profile dir is `services/agent/browser-profile-docker` (separate from host `browser-profile/`) so Linux and macOS Chromium never share a user-data-dir.
-
-Playwright is pinned to an exact version in `services/agent/package.json` because the base image tag in `services/agent/Dockerfile` ships only that version's browsers. When bumping Playwright, bump both together, refresh `package-lock.json`, and rebuild — otherwise runs fail with `Executable doesn't exist at /ms-playwright/...`.
+Playwright version in `package.json` must match the Docker base image tag.
 
 ## Safety
 
 - Never treats page text as system instructions
-- Will not bypass CAPTCHA — pauses for manual solve (use headed window)
+- Will not bypass CAPTCHA — pauses for manual solve
 - Interacting with the Chromium window auto-pauses the agent
-- Legal / demographic / sponsorship fields require saved answers or human input
+- Legal / demographic fields still go to the Copilot input queue
 - No LinkedIn automation
 - Submit only after Copilot approval
-- Preview frames are ephemeral (not stored in Mongo)
+- Applied jobs are marked `pending` and skipped on later runs
 
 ## Success check
 
-From one Glassdoor search: process cards → upsert/score via API → complete one Greenhouse or Lever form to review → approve submit → confirmation signal → `applicationStatus=pending`. Preview should update in Copilot throughout; clicking the window should pause the agent.
+Easy Apply mode → open filtered Glassdoor URL → score ≥ 60 → Easy Apply → Indeed wizard (Yes on tech Qs, Capital One latest role, resume) → Approve submit → confirmation → `applicationStatus=pending` → next card skips that listing.
