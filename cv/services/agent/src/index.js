@@ -1,7 +1,7 @@
 import http from "http";
 import { WebSocketServer } from "ws";
 import { createApiClient } from "./apiClient.js";
-import { canUseHeadedDisplay } from "./browser.js";
+import { canUseHeadedDisplay, resolveBrowserEngine } from "./browser.js";
 import { createEventBus } from "./eventBus.js";
 import { createInputBroker } from "./inputBroker.js";
 import { createPreviewController } from "./preview.js";
@@ -109,6 +109,7 @@ async function handleRequest(req, res) {
         ok: true,
         service: "cv-agent",
         apiOk,
+        browser: resolveBrowserEngine(),
         headless: env.headless,
         headedDefault: !env.headless,
         canUseHeadedDisplay: canUseHeadedDisplay(),
@@ -273,6 +274,6 @@ wss.on("connection", (ws) => {
 
 server.listen(env.port, "0.0.0.0", () => {
   console.log(
-    `cv-agent listening on :${env.port} (headless=${env.headless}, headedDefault=${!env.headless}, preview=${env.preview}, api=${env.apiBase})`
+    `cv-agent listening on :${env.port} (browser=${resolveBrowserEngine()}, headless=${env.headless}, headedDefault=${!env.headless}, preview=${env.preview}, api=${env.apiBase})`
   );
 });

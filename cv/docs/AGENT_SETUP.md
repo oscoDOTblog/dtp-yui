@@ -6,7 +6,7 @@ Hybrid browser copilot: Glassdoor discovery → CV score/package → Easy Apply 
 
 | Piece | Role |
 |---|---|
-| `services/agent` (host) | Node + Playwright runner — **owns :8010**; headed Chromium + Copilot preview |
+| `services/agent` (host) | Node + Playwright runner — **owns :8010**; headed Firefox (default) or Chrome + Copilot preview |
 | FastAPI `/agent/*` | Job ingest, runs/events, answer bank, `/agent/profile` (incl. latest work role) |
 | Web `/copilot` | Mode picker, live preview, activity feed, input queue, controls |
 | Compose `agent` | Opt-in headless only (`--profile headless-agent`) |
@@ -17,19 +17,21 @@ Hybrid browser copilot: Glassdoor discovery → CV score/package → Easy Apply 
 cd cv
 docker compose up -d          # api, web, mongo, worker — agent is NOT started
 cd services/agent
-cp .env.example .env          # once — HEADLESS=0 + PREVIEW=1
+cp .env.example .env          # once — HEADLESS=0 + PREVIEW=1 + BROWSER=firefox
 npm install
-npx playwright install chromium   # once
+npx playwright install firefox   # once (default engine)
+# optional if you switch back to Chrome:
+# npx playwright install chromium
 npm start
 ```
 
 Open http://localhost:7545/copilot → pick **Easy Apply (Local)** or **Easy Apply (Remote)** → **Start Glassdoor run**.
 
-- Agent launches **installed Google Chrome** by default (`CV_AGENT_BROWSER_CHANNEL=chrome`) — not Playwright’s “Chrome for Testing” (Cloudflare often blocks that)
-- Chromium sandbox is **on** by default (`chromiumSandbox: true`) so Chrome is not launched with `--no-sandbox` (that yellow “unsupported command-line flag” bar is a bot fingerprint)
-- If you see **Humans only / Verify you are human**, complete the checkbox in the Chrome window, then **Resume** in Copilot
-- Chromium opens on the host; Copilot **Browser** panel keeps updating
-- Click/type in Chromium → auto-pause → **Return control** when done
+- Agent launches **Firefox** by default (`CV_AGENT_BROWSER=firefox`) — separate profile under `browser-profile-firefox`
+- Switch back with `CV_AGENT_BROWSER=chromium` + `CV_AGENT_BROWSER_CHANNEL=chrome` (system Chrome; sandbox on to avoid `--no-sandbox` yellow bar)
+- If you see **Humans only / Verify you are human**, complete the checkbox in the browser window, then **Resume** in Copilot
+- Browser opens on the host; Copilot **Browser** panel keeps updating
+- Click/type in the browser → auto-pause → **Return control** when done
 - Tech Yes/No questions are answered **Yes** automatically
 - Relevant experience is prefilled from the latest seeded work-history role
 - Final submit still waits for **Approve submit** in Copilot
