@@ -152,7 +152,7 @@ def openai_api_key_path() -> Path:
 
 def openai_admin_key_path() -> Path:
     return Path(
-        os.environ.get("OPENAI_ADMIN_KEY_FILE")
+        os.environ.get("OPENAI_ADMIN_API_KEY_FILE")
         or (secrets_dir() / "openai-admin-key")
     )
 
@@ -173,7 +173,7 @@ def openai_api_key() -> str | None:
 
 def openai_admin_key() -> str | None:
     """Admin key for the org usage API (separate from the inference key)."""
-    return _read_secret(openai_admin_key_path(), "OPENAI_ADMIN_KEY")
+    return _read_secret(openai_admin_key_path(), "OPENAI_ADMIN_API_KEY")
 
 
 def key_configured() -> bool:

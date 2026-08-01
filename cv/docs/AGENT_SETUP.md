@@ -25,6 +25,8 @@ npm start
 
 Open http://localhost:7545/copilot → pick **Easy Apply (Local)** or **Easy Apply (Remote)** → **Start Glassdoor run**.
 
+- Agent launches **installed Google Chrome** by default (`CV_AGENT_BROWSER_CHANNEL=chrome`) — not Playwright’s “Chrome for Testing” (Cloudflare often blocks that)
+- If you see **Humans only / Verify you are human**, complete the checkbox in the Chrome window, then **Resume** in Copilot
 - Chromium opens on the host; Copilot **Browser** panel keeps updating
 - Click/type in Chromium → auto-pause → **Return control** when done
 - Tech Yes/No questions are answered **Yes** automatically

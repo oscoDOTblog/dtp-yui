@@ -5,6 +5,7 @@ import {
   screenshot,
   closeExtraPages,
   canUseHeadedDisplay,
+  pageLooksLikeBotChallenge,
 } from "./browser.js";
 import {
   openGlassdoorSearch,
@@ -228,6 +229,40 @@ export function createRunner({ api, events, inputBroker, preview }) {
     return answer;
   }
 
+  async function waitForHumanChallenge(page, contextLabel = "page") {
+    if (!(await pageLooksLikeBotChallenge(page))) return false;
+    await setState(
+      ApplicationState.BLOCKED,
+      `Bot challenge on ${contextLabel} — complete Verify you are human in the browser window`
+    );
+    await events.emit("ACTION_COMPLETED", {
+      message: `Cloudflare / bot challenge detected on ${contextLabel} — waiting for you`,
+      pageUrl: page.url(),
+    });
+    const answer = await askUser({
+      question:
+        "Glassdoor/Cloudflare is asking to verify you are human. Complete the checkbox in the Chrome window (same profile as the agent), then choose Resume.",
+      options: ["Resume", "Skip / abort wait"],
+      riskLevel: RISK.HIGH,
+      kind: "CAPTCHA",
+    });
+    if (
+      answer?.action === "SKIP" ||
+      /skip|abort/i.test(String(answer?.value || ""))
+    ) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+    if (await pageLooksLikeBotChallenge(page)) {
+      await events.emit("ACTION_COMPLETED", {
+        message:
+          "Challenge may still be visible — continuing; use Take control if needed",
+        pageUrl: page.url(),
+      });
+    }
+    return false;
+  }
+
   async function awaitSubmissionApproval(summary) {
     await setUiMode(AgentUiMode.AWAITING_SUBMISSION_APPROVAL);
     await setState(ApplicationState.AWAITING_REVIEW, "Awaiting submission approval", {
@@ -253,6 +288,9 @@ export function createRunner({ api, events, inputBroker, preview }) {
     await setUiMode(AgentUiMode.ACTING);
     await openResultCard(page, card, cfg);
     await focusPreview(page);
+    if (await waitForHumanChallenge(page, "job listing")) {
+      return;
+    }
     await scrollJobDescription(page);
     await screenshot(page, "job_opened");
 
@@ -408,19 +446,10 @@ export function createRunner({ api, events, inputBroker, preview }) {
     }
     await focusPreview(applyPage);
 
-    const bodyText = await applyPage.locator("body").innerText().catch(() => "");
-    if (/captcha|verify you are human|unusual traffic/i.test(bodyText)) {
-      await setState(
-        ApplicationState.BLOCKED,
-        "CAPTCHA requires manual completion"
-      );
-      await askUser({
-        question:
-          "A CAPTCHA requires manual completion. Complete it in the browser, then Resume.",
-        options: ["Resume", "Skip application"],
-        riskLevel: RISK.HIGH,
-        kind: "CAPTCHA",
-      });
+    if (await waitForHumanChallenge(applyPage, "apply form")) {
+      if (applyPage !== page) await applyPage.close().catch(() => {});
+      await focusPreview(page);
+      return;
     }
 
     const { atsType, adapter } = await resolveAdapter(applyPage);
@@ -724,6 +753,13 @@ export function createRunner({ api, events, inputBroker, preview }) {
       );
       await openGlassdoorSearch(page, cfg, events);
       await focusPreview(page);
+      if (await waitForHumanChallenge(page, "Glassdoor search")) {
+        await setState(
+          ApplicationState.BLOCKED,
+          "Stopped — bot challenge not cleared"
+        );
+        return { runId: run._id, blocked: true };
+      }
       await screenshot(page, "search_results");
 
       const cards = await listResultCards(page, cfg.maxResultsPerRun, cfg);
