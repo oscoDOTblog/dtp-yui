@@ -51,6 +51,22 @@ One document per normalized requirement. Upserted on each successful job analyze
 | `applicationStatusAt` | When `applicationStatus` was last set |
 | `fitOverrides` | Map of normalized requirement → `strong` \| `warning` \| `gap` (user fit assessment); applied on score + Re-analyze |
 | `fitOverridesUpdatedAt` | When a fit override was last saved |
+| `titleSource` | `manual` when the title was hand-edited; absent when detected. Blocks title overwrites from re-ingest polls and Re-analyze |
+| `titleAuto` | Last detected title, kept so a manual edit can be reverted (refreshed by later polls) |
+| `titleEditedAt` | When the title was last edited or reverted |
+
+### Manual title edits
+
+`PATCH /jobs/{jobId}/title` with `{ "title": "Senior Software Engineer" }` sets a
+human title; `{ "reset": true }` reverts to `titleAuto`. Titles from alert emails
+are often wrong, and the title feeds the role gate, match scoring, and generated
+documents, so the edit persists:
+
+- Re-ingest polls keep the manual title and only refresh `titleAuto`
+- `roleAssessment` is re-graded against the manual title, so a corrected title can
+  move a listing off `wrong_role` back to `new`
+- Only jobs still on the gate (`new` / `wrong_role`) change `status`; `analyzed`
+  and `out_of_area` jobs keep theirs
 
 ### `locationAssessment`
 
@@ -86,7 +102,7 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
 | Collection | Purpose |
 |---|---|
 | `cv_gmailMessages` | Processed Gmail message ids (idempotent ingest) |
-| `cv_settings` | App settings (UI source of truth). Doc `_id: "app"` with `gmailIngest`, `atsIngest`, and `githubEvidence` master toggles |
+| `cv_settings` | App settings (UI source of truth). Doc `_id: "app"` with `gmailIngest`, `atsIngest`, `githubEvidence`, `ingestFilters`, `ollama`, `resume`, and `documentProvider` |
 | `cv_jobSources` | ATS company watchlist (Greenhouse boards) |
 | `cv_intakeQueue` | Manual job URLs queued from Analyze for intake digestion |
 
@@ -113,6 +129,11 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
     "defaultLookback": "7d",
     "discoverRepos": true
   },
+  "ingestFilters": {
+    "dropOutOfArea": true,
+    "dropWrongRole": true,
+    "greenhouseTwoPhase": true
+  },
   "ollama": {
     "think": false,
     "thinkByProcess": {
@@ -128,11 +149,33 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
     "templateId": "classic",
     "pages": 2
   },
+  "documentProvider": {
+    "provider": "ollama",
+    "model": "gpt-4o-mini"
+  },
   "updatedAt": "ISO-8601"
 }
 ```
 
 `resume.renderEngine`: `legacy` (ReportLab) or `rendercv`. See [RESUME_PIPELINE.md](RESUME_PIPELINE.md).
+
+`documentProvider.provider`: `ollama` (default) or `openai` — cover letter and resume tailor only. `documentProvider.model` is the OpenAI model id, validated against the registry in `cv_shared/openai_client.py` (falls back to `OPENAI_MODEL`, then `gpt-4o-mini`). Keys live in `secrets/openai-api-key` and `secrets/openai-admin-key` — never in Mongo. `GET`/`PATCH /settings` also return derived `openaiConfigured`, `adminKeyConfigured`, and `availableModels` (not persisted).
+
+### `cv_openaiUsage`
+
+Local ledger of OpenAI token spend, one doc per UTC day (`_id: "2026-07-31"`).
+
+| Field | Purpose |
+|---|---|
+| `date` | UTC day key, same as `_id` |
+| `inputTokens` / `outputTokens` / `totalTokens` | Day totals |
+| `requests` | Number of OpenAI calls |
+| `byTier` | Same counters split by `standard` (1M/day) and `mini` (10M/day) free-tier buckets |
+| `byModel` | Same counters per model; dots in model ids are stored as `_` because Mongo update paths treat `.` as nesting |
+| `byProcess` | Same counters per `coverLetter` / `resumeTailor` |
+| `updatedAt` | Last write |
+
+Written best-effort by `cv_shared/openai_usage.py` after each successful OpenAI call; a failure here never fails generation. Read by `GET /openai/usage`, which also merges org-wide totals when an admin key is present.
 ### `cv_jobSources`
 
 | Field | Purpose |

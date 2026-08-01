@@ -1,9 +1,11 @@
-FROM mcr.microsoft.com/playwright:v1.54.2-jammy
+# Image tag must match the pinned playwright version in package.json,
+# otherwise the bundled browsers are missing at runtime.
+FROM mcr.microsoft.com/playwright:v1.62.0-jammy
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 COPY src ./src
 COPY config.example.json ./config.example.json

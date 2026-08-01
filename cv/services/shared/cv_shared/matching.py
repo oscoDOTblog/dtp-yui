@@ -844,7 +844,8 @@ def analyze_job(job_id: str) -> dict:
         ),
     }
     extracted_title = clean_title_hint(extracted.get("title"))
-    if extracted_title and is_placeholder_title(job.get("title")):
+    title_is_manual = (job.get("titleSource") or "") == "manual"
+    if extracted_title and not title_is_manual and is_placeholder_title(job.get("title")):
         updates["title"] = extracted_title
     extracted_company = clean_company_hint(extracted.get("company"))
     if extracted_company and is_placeholder_company(job.get("company")):

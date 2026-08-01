@@ -38,9 +38,11 @@ The model must never invent an achievement without a catalog `sourceId`. Verific
 | `templateId` | RenderCV theme name | `classic` |
 | `pages` | `1` \| `2` | `2` |
 
-Ollama think flag: `ollama.thinkByProcess.resumeTailor`.
+Ollama think flag: `ollama.thinkByProcess.resumeTailor` (only when the call uses Ollama).
 
-Toggle render engine in the web Settings page. Rebuild the API image after adding `rendercv[full]` so the CLI is available inside the container.
+Document LLM provider: `documentProvider.provider` (`ollama` | `openai`) — cover letter + resume tailor. OpenAI key in `secrets/openai-api-key`.
+
+Toggle render engine and document provider in the web Settings page. Rebuild the API image after adding `rendercv[full]` so the CLI is available inside the container.
 
 ## Package artifacts
 

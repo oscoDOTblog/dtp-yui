@@ -1,6 +1,7 @@
 /**
  * Live browser preview for Apply Copilot.
  * CDP screencast when available; otherwise periodic JPEG screenshots.
+ * Watchdog falls back to poll when screencast stalls (occluded/minimized window).
  * Frames are ephemeral (not written to Mongo).
  */
 
@@ -18,6 +19,9 @@ function jpegQuality() {
   return Number.parseInt(process.env.CV_AGENT_PREVIEW_QUALITY || "55", 10);
 }
 
+const STALE_FRAME_MS = 1500;
+const WATCHDOG_INTERVAL_MS = 1000;
+
 export function createPreviewController() {
   const bus = new EventEmitter();
   bus.setMaxListeners(40);
@@ -25,15 +29,20 @@ export function createPreviewController() {
   let activePage = null;
   let cdp = null;
   let pollTimer = null;
+  let watchdogTimer = null;
   let latestJpeg = null;
   let latestAt = null;
   let latestUrl = null;
+  let lastFrameAt = 0;
   let running = false;
+  let mode = "idle"; // screencast | poll | idle
+  let preferScreencast = true;
 
   function publishFrame(buffer, meta = {}) {
     if (!Buffer.isBuffer(buffer) || buffer.length === 0) return;
     latestJpeg = buffer;
     latestAt = new Date().toISOString();
+    lastFrameAt = Date.now();
     latestUrl = meta.pageUrl || latestUrl;
     bus.emit("frame", {
       type: "PREVIEW_FRAME",
@@ -41,6 +50,7 @@ export function createPreviewController() {
       byteLength: buffer.length,
       createdAt: latestAt,
       pageUrl: latestUrl,
+      mode,
     });
   }
 
@@ -80,11 +90,23 @@ export function createPreviewController() {
     }
   }
 
+  function stopWatchdog() {
+    if (watchdogTimer) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
+    }
+  }
+
   async function startCdp(page) {
     const session = await page.context().newCDPSession(page);
     session.on("Page.screencastFrame", async (frame) => {
       try {
+        if (pollTimer) {
+          stopPoll();
+          mode = "screencast";
+        }
         const buf = Buffer.from(frame.data, "base64");
+        mode = "screencast";
         publishFrame(buf, { pageUrl: page.url() });
         await session
           .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
@@ -101,14 +123,28 @@ export function createPreviewController() {
       everyNthFrame: 1,
     });
     cdp = session;
+    mode = "screencast";
+    preferScreencast = true;
   }
 
   function startPoll(page) {
-    stopPoll();
+    if (pollTimer) return;
+    mode = "poll";
     pollTimer = setInterval(() => {
       captureOnce(page);
     }, 450);
     captureOnce(page);
+  }
+
+  function startWatchdog() {
+    stopWatchdog();
+    watchdogTimer = setInterval(() => {
+      if (!running || !activePage || activePage.isClosed?.()) return;
+      const stale = Date.now() - lastFrameAt > STALE_FRAME_MS;
+      if (stale && !pollTimer) {
+        startPoll(activePage);
+      }
+    }, WATCHDOG_INTERVAL_MS);
   }
 
   async function setActivePage(page) {
@@ -119,15 +155,24 @@ export function createPreviewController() {
     await stopCdp();
     stopPoll();
     activePage = page;
-    if (!page || page.isClosed()) return;
+    if (!page || page.isClosed()) {
+      mode = "idle";
+      return;
+    }
 
-    try {
-      await startCdp(page);
-    } catch (err) {
-      console.warn(
-        "CDP screencast unavailable, falling back to poll:",
-        err.message || err
-      );
+    lastFrameAt = Date.now();
+    if (preferScreencast) {
+      try {
+        await startCdp(page);
+      } catch (err) {
+        console.warn(
+          "CDP screencast unavailable, falling back to poll:",
+          err.message || err
+        );
+        preferScreencast = false;
+        startPoll(page);
+      }
+    } else {
       startPoll(page);
     }
   }
@@ -135,18 +180,22 @@ export function createPreviewController() {
   async function start(page) {
     if (!previewEnabled()) {
       running = false;
+      mode = "idle";
       return;
     }
     running = true;
+    lastFrameAt = Date.now();
     await setActivePage(page);
+    startWatchdog();
   }
 
   async function stop() {
     running = false;
+    stopWatchdog();
     await stopCdp();
     stopPoll();
     activePage = null;
-    // Keep last frame briefly so UI can show final state; clear after stop
+    mode = "idle";
   }
 
   function getLatestJpeg() {
@@ -160,6 +209,7 @@ export function createPreviewController() {
       latestAt,
       pageUrl: latestUrl,
       hasFrame: Boolean(latestJpeg),
+      mode,
     };
   }
 

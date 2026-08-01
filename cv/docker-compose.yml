@@ -24,6 +24,9 @@ services:
       MONGO_DB: ${MONGO_DB:-DTP}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_ADMIN_KEY: ${OPENAI_ADMIN_KEY:-}
       GENERATED_APPLICATIONS_DIR: /app/generated-applications
       SEED_DIR: /app/seed
       SECRETS_DIR: /app/secrets
@@ -63,6 +66,9 @@ services:
       MONGO_DB: ${MONGO_DB:-DTP}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_ADMIN_KEY: ${OPENAI_ADMIN_KEY:-}
       GENERATED_APPLICATIONS_DIR: /app/generated-applications
       SEED_DIR: /app/seed
       SECRETS_DIR: /app/secrets
@@ -108,6 +114,8 @@ services:
       - "${WEB_HOST_PORT:-7545}:3000"
 
   agent:
+    profiles:
+      - headless-agent
     build:
       context: ./services/agent
       dockerfile: Dockerfile
@@ -119,8 +127,8 @@ services:
     environment:
       CV_API_BASE: ${CV_API_BASE:-http://api:8000}
       CV_AGENT_PORT: "8010"
-      # Headed browser needs a display; default headless in Compose.
-      # For interactive Glassdoor login: run agent on the host with CV_AGENT_HEADLESS=0.
+      # Opt-in headless agent (no display). Default day-to-day: host `npm start` with headed window.
+      # Start with: docker compose --profile headless-agent up -d agent
       CV_AGENT_HEADLESS: ${CV_AGENT_HEADLESS:-1}
       CV_AGENT_PROFILE_DIR: /app/browser-profile
       CV_AGENT_SCREENSHOT_DIR: /app/screenshots
@@ -129,7 +137,8 @@ services:
     ports:
       - "127.0.0.1:8010:8010"
     volumes:
-      - ./services/agent/browser-profile:/app/browser-profile
+      # Separate from host browser-profile so Linux/macOS Chromium never share a user-data-dir.
+      - ./services/agent/browser-profile-docker:/app/browser-profile
       - ./services/agent/screenshots:/app/screenshots
       - ./generated-applications:/app/generated-applications:ro
       - ./config:/app/config:ro

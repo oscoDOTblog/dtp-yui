@@ -1,16 +1,108 @@
-"""Job lifecycle helpers (delete + cascade)."""
+"""Job lifecycle helpers (delete + cascade, manual title edits)."""
 
 from __future__ import annotations
 
 import logging
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from . import collections as C
 from .db import get_db
 from .gap_insights import remove_job_from_gap_insights
 
 logger = logging.getLogger(__name__)
+
+MAX_MANUAL_TITLE_LENGTH = 160
+
+
+def clean_manual_title(value: str | None) -> str:
+    """Collapse whitespace and cap length for a human-entered title."""
+    return " ".join((value or "").split())[:MAX_MANUAL_TITLE_LENGTH]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _role_gate_updates(job: dict, title: str) -> dict[str, Any]:
+    """Re-run the SWE title gate for a new title.
+
+    Only jobs still sitting on the gate (`new` / `wrong_role`) change status, so a
+    correction can rescue a mis-parsed listing without discarding existing analysis
+    or overriding the location gate.
+    """
+    from .intake.role_filter import assess_role_fit
+
+    assessment = assess_role_fit(
+        title=title,
+        description=job.get("descriptionRaw") or "",
+    )
+    updates: dict[str, Any] = {"roleAssessment": assessment}
+    status = (job.get("status") or "").strip()
+    if assessment.get("roleEligible"):
+        if status == "wrong_role":
+            updates["status"] = "new"
+    elif status == "new":
+        updates["status"] = "wrong_role"
+    return updates
+
+
+def set_job_title(job_id: str, title: str | None) -> dict:
+    """Apply a human-edited title. Survives re-ingest polls and re-analyze."""
+    from .matching import is_placeholder_title
+
+    db = get_db()
+    job = db[C.JOBS].find_one({"_id": job_id})
+    if not job:
+        raise KeyError(f"job not found: {job_id}")
+
+    cleaned = clean_manual_title(title)
+    if not cleaned:
+        raise ValueError("title is required")
+    if is_placeholder_title(cleaned):
+        raise ValueError(f"'{cleaned}' is a placeholder, not a job title")
+
+    now = _now()
+    updates: dict[str, Any] = {
+        "title": cleaned,
+        "titleSource": "manual",
+        "titleEditedAt": now,
+        "updatedAt": now,
+    }
+    # Keep the detected title once so the edit can be reverted later
+    if job.get("titleSource") != "manual":
+        updates["titleAuto"] = job.get("title") or ""
+    updates.update(_role_gate_updates(job, cleaned))
+
+    db[C.JOBS].update_one({"_id": job_id}, {"$set": updates})
+    return db[C.JOBS].find_one({"_id": job_id})
+
+
+def clear_job_title_override(job_id: str) -> dict:
+    """Drop a manual title and fall back to the last detected one."""
+    db = get_db()
+    job = db[C.JOBS].find_one({"_id": job_id})
+    if not job:
+        raise KeyError(f"job not found: {job_id}")
+    if job.get("titleSource") != "manual":
+        return job
+
+    detected = clean_manual_title(job.get("titleAuto")) or "Untitled"
+    now = _now()
+    updates: dict[str, Any] = {
+        "title": detected,
+        "titleEditedAt": now,
+        "updatedAt": now,
+    }
+    updates.update(_role_gate_updates(job, detected))
+
+    db[C.JOBS].update_one(
+        {"_id": job_id},
+        {"$set": updates, "$unset": {"titleSource": "", "titleAuto": ""}},
+    )
+    return db[C.JOBS].find_one({"_id": job_id})
 
 
 def delete_job(job_id: str) -> dict:

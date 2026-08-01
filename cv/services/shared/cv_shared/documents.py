@@ -11,7 +11,7 @@ from pathlib import Path
 from . import collections as C
 from .db import get_db
 from .matching import slugify
-from .ollama_client import chat
+from .llm import generate
 from .resume.achievements import build_achievement_catalog
 from .resume.legacy import (
     build_resume_lines,
@@ -93,12 +93,13 @@ Today's date: {datetime.now(timezone.utc).strftime('%B %d, %Y')}
 Sign as {candidate.get('name')}.
 """
     try:
-        return chat(
+        result = generate(
             prompt,
             system=COVER_SYSTEM,
             temperature=0.3,
-            think_process="coverLetter",
-        ).strip()
+            process="coverLetter",
+        )
+        return result.text.strip()
     except Exception as exc:
         logger.warning("Cover letter LLM failed, using template: %s", exc)
         return _fallback_cover(candidate, job, match, evidence_used)

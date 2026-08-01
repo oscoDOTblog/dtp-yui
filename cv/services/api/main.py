@@ -64,6 +64,7 @@ class SettingsPatchBody(BaseModel):
     ingestFilters: Optional[dict[str, bool]] = None
     ollama: Optional[dict[str, Any]] = None
     resume: Optional[dict[str, Any]] = None
+    documentProvider: Optional[dict[str, Any]] = None
 
 
 class SourceCreateBody(BaseModel):
@@ -205,6 +206,13 @@ class FitOverrideBody(BaseModel):
         ...,
         description="strong | warning | gap (aliases: strength)",
     )
+
+
+class JobTitleBody(BaseModel):
+    """Set a human-edited job title, or reset back to the detected one."""
+
+    title: Optional[str] = None
+    reset: Optional[bool] = False
 
 
 class IntakeQueueBody(BaseModel):
@@ -385,11 +393,28 @@ def run_seed(force: bool = False) -> dict:
     return seed_all(force=force)
 
 
+def _settings_response(doc: dict) -> dict:
+    """Serialize settings and inject derived OpenAI status (never persisted)."""
+    from cv_shared.openai_client import (
+        admin_key_configured,
+        available_models,
+        key_configured,
+    )
+
+    out = _serialize(doc)
+    provider = dict(out.get("documentProvider") or {"provider": "ollama"})
+    provider["openaiConfigured"] = key_configured()
+    provider["adminKeyConfigured"] = admin_key_configured()
+    provider["availableModels"] = available_models()
+    out["documentProvider"] = provider
+    return out
+
+
 @app.get("/settings")
 def get_settings() -> dict:
     from cv_shared.settings import get_app_settings
 
-    return _serialize(get_app_settings())
+    return _settings_response(get_app_settings())
 
 
 @app.patch("/settings")
@@ -397,7 +422,49 @@ def patch_settings(body: SettingsPatchBody) -> dict:
     from cv_shared.settings import patch_app_settings
 
     payload = body.model_dump(exclude_none=True)
-    return _serialize(patch_app_settings(payload))
+    return _settings_response(patch_app_settings(payload))
+
+
+@app.get("/openai/usage")
+def get_openai_usage(refresh: bool = False) -> dict:
+    """Today's OpenAI token spend against the free daily allowance."""
+    from cv_shared.openai_client import (
+        admin_key_configured,
+        daily_token_limit,
+        fetch_org_usage_today,
+        key_configured,
+        model_tier,
+        next_utc_reset,
+        utc_day_key,
+    )
+    from cv_shared.openai_usage import get_local_usage
+    from cv_shared.settings import get_document_provider_settings
+
+    config = get_document_provider_settings()
+    model = config["model"]
+    tier = model_tier(model)
+
+    local = get_local_usage()
+    org = fetch_org_usage_today(force=refresh)
+
+    local_tier_tokens = int((local["byTier"].get(tier) or {}).get("totalTokens") or 0)
+    org_tier_tokens = int((org["byTier"] or {}).get(tier) or 0)
+
+    return {
+        "date": utc_day_key(),
+        "resetsAt": next_utc_reset(),
+        "provider": config["provider"],
+        "model": model,
+        "tier": tier,
+        "limit": daily_token_limit(model),
+        "keyConfigured": key_configured(),
+        "adminKeyConfigured": admin_key_configured(),
+        "local": {**local, "tierTokens": local_tier_tokens},
+        "org": {**org, "tierTokens": org_tier_tokens},
+        # Org totals cover all traffic sharing the allowance; local is this app only
+        "usedTokens": org_tier_tokens if org["available"] else local_tier_tokens,
+        "source": "org" if org["available"] else "local",
+    }
 
 
 class CandidateUpdateBody(BaseModel):
@@ -693,6 +760,33 @@ def delete_job_endpoint(job_id: str) -> dict:
         logger.exception("delete job failed")
         raise HTTPException(500, str(exc)) from exc
     return result
+
+
+@app.patch("/jobs/{job_id}/title")
+def patch_job_title(job_id: str, body: JobTitleBody) -> dict:
+    """Edit the job title by hand. Survives re-ingest polls and re-analyze."""
+    from cv_shared.application_status import resolve_application_status
+    from cv_shared.jobs import clear_job_title_override, set_job_title
+
+    try:
+        job = (
+            clear_job_title_override(job_id)
+            if body.reset
+            else set_job_title(job_id, body.title)
+        )
+    except KeyError:
+        raise HTTPException(404, "Job not found") from None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("job title update failed")
+        raise HTTPException(500, str(exc)) from exc
+
+    item = _serialize(job)
+    resolved = resolve_application_status(job)
+    if resolved:
+        item["applicationStatus"] = resolved
+    return item
 
 
 @app.get("/jobs/{job_id}/match")

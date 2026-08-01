@@ -1,6 +1,7 @@
 import http from "http";
 import { WebSocketServer } from "ws";
 import { createApiClient } from "./apiClient.js";
+import { canUseHeadedDisplay } from "./browser.js";
 import { createEventBus } from "./eventBus.js";
 import { createInputBroker } from "./inputBroker.js";
 import { createPreviewController } from "./preview.js";
@@ -109,6 +110,8 @@ async function handleRequest(req, res) {
         service: "cv-agent",
         apiOk,
         headless: env.headless,
+        headedDefault: !env.headless,
+        canUseHeadedDisplay: canUseHeadedDisplay(),
         preview: preview.getMeta(),
         status: runner.getStatus(),
       });
@@ -196,6 +199,17 @@ async function handleRequest(req, res) {
       await runner.controls.returnControl();
       return sendJson(res, 200, runner.getStatus());
     }
+    if (req.method === "POST" && pathname === "/control/focus-window") {
+      try {
+        await runner.controls.focusWindow();
+        return sendJson(res, 200, runner.getStatus());
+      } catch (err) {
+        return sendJson(res, 409, {
+          detail: err.message || String(err),
+          status: runner.getStatus(),
+        });
+      }
+    }
     if (req.method === "POST" && pathname === "/control/abort") {
       await runner.controls.abort();
       return sendJson(res, 200, runner.getStatus());
@@ -259,6 +273,6 @@ wss.on("connection", (ws) => {
 
 server.listen(env.port, "0.0.0.0", () => {
   console.log(
-    `cv-agent listening on :${env.port} (headless=${env.headless}, preview=${env.preview}, api=${env.apiBase})`
+    `cv-agent listening on :${env.port} (headless=${env.headless}, headedDefault=${!env.headless}, preview=${env.preview}, api=${env.apiBase})`
   );
 });

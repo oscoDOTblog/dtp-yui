@@ -9,7 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from ..ollama_client import chat, extract_json
+from ..llm import generate
+from ..ollama_client import extract_json
 from .achievements import Achievement, catalog_by_id
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ class TailorPayload(BaseModel):
     sectionOrder: list[str] = Field(default_factory=lambda: list(DEFAULT_SECTION_ORDER))
     usedLlm: bool = False
     fallbackReason: str | None = None
+    provider: str | None = None  # "openai" | "ollama" when usedLlm
 
     def rewrite_map(self) -> dict[str, str]:
         return {r.sourceId: r.text for r in self.rewrittenAchievements}
@@ -107,6 +109,7 @@ class TailorPayload(BaseModel):
             "sectionOrder": list(self.sectionOrder),
             "usedLlm": self.usedLlm,
             "fallbackReason": self.fallbackReason,
+            "provider": self.provider,
             "bulletCount": len(self.selectedAchievementIds),
         }
 
@@ -129,7 +132,7 @@ def tailor_resume(
     }
 
     try:
-        raw = _call_ollama_tailor(
+        raw, provider = _call_llm_tailor(
             candidate=candidate,
             job=job,
             match=match,
@@ -143,6 +146,7 @@ def tailor_resume(
             approved_skill_ids=approved_skill_ids,
             max_bullets=max_bullets,
             used_llm=True,
+            provider=provider,
         )
         if payload.selectedAchievementIds:
             return payload
@@ -176,6 +180,7 @@ def verify_tailor_payload(
     approved_skill_ids: set[str],
     max_bullets: int,
     used_llm: bool,
+    provider: str | None = None,
 ) -> TailorPayload:
     if isinstance(raw, TailorPayload):
         data = raw.model_dump()
@@ -263,6 +268,7 @@ def verify_tailor_payload(
         sectionOrder=section_order,
         usedLlm=used_llm,
         fallbackReason=None,
+        provider=provider if used_llm else None,
     )
 
 
@@ -368,12 +374,14 @@ def gaps_markdown(match: dict, payload: TailorPayload) -> str:
         "",
         f"Tailor used LLM: **{payload.usedLlm}**",
     ]
+    if payload.provider:
+        lines.append(f"Provider: **{payload.provider}**")
     if payload.fallbackReason:
         lines.append(f"Fallback reason: {payload.fallbackReason}")
     return "\n".join(lines) + "\n"
 
 
-def _call_ollama_tailor(
+def _call_llm_tailor(
     *,
     candidate: dict,
     job: dict,
@@ -381,7 +389,7 @@ def _call_ollama_tailor(
     catalog: list[Achievement],
     skills: list[dict],
     max_bullets: int,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], str]:
     role_family = match.get("roleFamily") or "product"
     positioning = (candidate.get("positioningSummaries") or {}).get(
         role_family
@@ -431,17 +439,17 @@ Approved skills:
 Return JSON with targetRole, summary, selectedAchievementIds, rewrittenAchievements
 (sourceId+text), selectedSkillIds, selectedProjectIds, omittedRequirements, sectionOrder.
 """
-    text = chat(
+    result = generate(
         prompt,
         system=RESUME_TAILOR_SYSTEM,
         temperature=0.2,
-        think_process="resumeTailor",
+        process="resumeTailor",
         response_format=TAILOR_JSON_SCHEMA,
     )
-    parsed = extract_json(text)
+    parsed = extract_json(result.text)
     if not isinstance(parsed, dict):
         raise ValueError("tailor response was not a JSON object")
-    return parsed
+    return parsed, result.provider
 
 
 def _rewrite_is_safe(

@@ -33,6 +33,7 @@ REPOSITORY_SCANS = f"{PREFIX}repositoryScans"
 APPLICATION_RUNS = f"{PREFIX}applicationRuns"
 APPLICATION_EVENTS = f"{PREFIX}applicationEvents"
 APPLICATION_ANSWERS = f"{PREFIX}applicationAnswers"
+OPENAI_USAGE = f"{PREFIX}openaiUsage"
 
 # Logical seed key -> actual Mongo collection name
 SEED_COLLECTIONS = {

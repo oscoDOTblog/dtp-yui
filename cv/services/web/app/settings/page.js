@@ -3,7 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPatch } from "../../lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardPanel } from "@/components/ui/card";
+import { Progress, ProgressLabel } from "@/components/ui/progress";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
 const PROVIDERS = [
@@ -98,6 +107,29 @@ const DEFAULT_RESUME = {
   pages: 2,
 };
 
+const DEFAULT_DOCUMENT_PROVIDER = {
+  provider: "ollama",
+  model: "gpt-4o-mini",
+  openaiConfigured: false,
+  adminKeyConfigured: false,
+  availableModels: [],
+};
+
+function formatTokens(value) {
+  const n = Number(value) || 0;
+  if (n >= 1_000_000) {
+    const millions = n / 1_000_000;
+    return `${millions >= 10 ? Math.round(millions) : millions.toFixed(1)}M`;
+  }
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
+function usagePercent(used, limit) {
+  if (!limit) return 0;
+  return Math.min(100, (Number(used) || 0) / limit * 100);
+}
+
 const DEFAULT_INGEST_FILTERS = {
   dropOutOfArea: true,
   dropWrongRole: true,
@@ -111,6 +143,8 @@ export default function SettingsPage() {
   const [ingestFilters, setIngestFilters] = useState(null);
   const [ollama, setOllama] = useState(null);
   const [resume, setResume] = useState(null);
+  const [documentProvider, setDocumentProvider] = useState(null);
+  const [openaiUsage, setOpenaiUsage] = useState(null);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(true);
@@ -128,6 +162,7 @@ export default function SettingsPage() {
       setIngestFilters(data.ingestFilters || DEFAULT_INGEST_FILTERS);
       setOllama(data.ollama || DEFAULT_OLLAMA);
       setResume(data.resume || DEFAULT_RESUME);
+      setDocumentProvider(data.documentProvider || DEFAULT_DOCUMENT_PROVIDER);
     } catch (err) {
       setError(err.message || "Failed to load settings");
       setGmailIngest(null);
@@ -136,14 +171,28 @@ export default function SettingsPage() {
       setIngestFilters(null);
       setOllama(null);
       setResume(null);
+      setDocumentProvider(null);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadUsage = useCallback(async () => {
+    try {
+      setOpenaiUsage(await apiGet("/openai/usage"));
+    } catch {
+      // Usage is informational — never block the settings page on it
+      setOpenaiUsage(null);
     }
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (documentProvider?.openaiConfigured) loadUsage();
+  }, [documentProvider?.openaiConfigured, loadUsage]);
 
   function syncFromResponse(data, previousSlices) {
     if (data.gmailIngest) setGmailIngest(data.gmailIngest);
@@ -159,6 +208,9 @@ export default function SettingsPage() {
     else if (previousSlices?.ollama) setOllama(previousSlices.ollama);
     if (data.resume) setResume(data.resume);
     else if (previousSlices?.resume) setResume(previousSlices.resume);
+    if (data.documentProvider) setDocumentProvider(data.documentProvider);
+    else if (previousSlices?.documentProvider)
+      setDocumentProvider(previousSlices.documentProvider);
   }
 
   async function toggleGmail(key) {
@@ -362,6 +414,69 @@ export default function SettingsPage() {
     }
   }
 
+  async function setDocProvider(provider) {
+    if (!documentProvider || savingKey) return;
+    if (provider !== "ollama" && provider !== "openai") return;
+    if (documentProvider.provider === provider) return;
+    if (provider === "openai" && !documentProvider.openaiConfigured) return;
+    const previous = { ...documentProvider };
+    const next = { ...documentProvider, provider };
+    setDocumentProvider(next);
+    setSavingKey("documentProvider:provider");
+    setError("");
+    setInfo("");
+    try {
+      const data = await apiPatch("/settings", {
+        documentProvider: { provider },
+      });
+      syncFromResponse(data, { documentProvider: next });
+      setInfo(
+        provider === "openai"
+          ? "Saved. Cover letters and resume tailor use OpenAI (falls back to Ollama on failure)."
+          : "Saved. Cover letters and resume tailor use local Ollama.",
+      );
+      loadUsage();
+    } catch (err) {
+      setDocumentProvider(previous);
+      setError(err.message || "Failed to save settings");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  async function setDocModel(model) {
+    if (!documentProvider || savingKey) return;
+    if (!model || documentProvider.model === model) return;
+    const previous = { ...documentProvider };
+    const next = { ...documentProvider, model };
+    setDocumentProvider(next);
+    setSavingKey("documentProvider:model");
+    setError("");
+    setInfo("");
+    try {
+      const data = await apiPatch("/settings", {
+        documentProvider: { model },
+      });
+      syncFromResponse(data, { documentProvider: next });
+      setInfo(`Saved. New packages use ${model}.`);
+      loadUsage();
+    } catch (err) {
+      setDocumentProvider(previous);
+      setError(err.message || "Failed to save settings");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  const availableModels = documentProvider?.availableModels || [];
+  const modelOptions = availableModels.map((m) => ({
+    value: m.id,
+    label: `${m.label} · ${m.tier === "mini" ? "10M" : "1M"}/day`,
+  }));
+  const selectedModel = availableModels.find(
+    (m) => m.id === documentProvider?.model,
+  );
+
   return (
     <div>
       <h1 className="m-0 mb-1.5 text-3xl font-semibold tracking-tight max-sm:text-2xl">
@@ -373,9 +488,10 @@ export default function SettingsPage() {
         board polling (companies still managed on{" "}
         <a href="/sources">Sources</a>). Ingest filters drop out-of-area and
         wrong-role listings before they are saved or analyzed. GitHub evidence
-        is managed on <a href="/repositories">Repositories</a>. Ollama thinking
-        can be set per process. Resume render engine chooses PDF typography.
-        Changes apply on the next call — no restart.
+        is managed on <a href="/repositories">Repositories</a>. Document
+        generation can use local Ollama or OpenAI for cover letters and resume
+        tailor. Ollama thinking can be set per process. Resume render engine
+        chooses PDF typography. Changes apply on the next call — no restart.
       </p>
 
       {error ? (
@@ -393,8 +509,146 @@ export default function SettingsPage() {
         <p className="py-8 text-muted-foreground">Loading…</p>
       ) : null}
 
-      {!loading && ollama ? (
+      {!loading && documentProvider ? (
         <section className="mt-7">
+          <h2 className="mb-3 text-lg font-semibold">Document generation</h2>
+          <p className="mb-3 m-0 text-sm text-muted-foreground">
+            Choose the LLM for cover letters and resume tailor only. Job
+            extract, profile update, and GitHub classify stay on Ollama. OpenAI
+            failures fall back to Ollama, then the deterministic template.
+          </p>
+          <div className="grid gap-3">
+            <Card>
+              <CardPanel className="flex items-start gap-4 p-4">
+                <Switch
+                  className="mt-0.5 shrink-0"
+                  checked={documentProvider.provider === "openai"}
+                  disabled={
+                    !!savingKey || !documentProvider.openaiConfigured
+                  }
+                  onCheckedChange={(on) =>
+                    setDocProvider(on ? "openai" : "ollama")
+                  }
+                  aria-label={`OpenAI for cover letter and resume ${
+                    documentProvider.provider === "openai" ? "on" : "off"
+                  }`}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="m-0 font-semibold">
+                    Use OpenAI for cover letter and resume
+                  </p>
+                  <p className="mt-1 m-0 text-sm text-muted-foreground">
+                    {documentProvider.openaiConfigured ? (
+                      <>
+                        When on, packages call{" "}
+                        <code>{documentProvider.model}</code> via the OpenAI
+                        API. Ollama thinking toggles below only apply when
+                        falling back to Ollama.
+                      </>
+                    ) : (
+                      <>
+                        Add an API key at{" "}
+                        <code>secrets/openai-api-key</code> (or set{" "}
+                        <code>OPENAI_API_KEY</code>), then restart the API
+                        container. Until then this switch stays off and
+                        packages use local Ollama.
+                      </>
+                    )}
+                  </p>
+                </div>
+              </CardPanel>
+            </Card>
+
+            {documentProvider.openaiConfigured ? (
+              <Card>
+                <CardPanel className="grid gap-3 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="m-0 font-semibold">Model</p>
+                      <p className="mt-1 m-0 text-sm text-muted-foreground">
+                        {selectedModel?.description ||
+                          "Model used for both document calls."}{" "}
+                        {selectedModel &&
+                        selectedModel.supportsTemperature === false
+                          ? "Reasoning model — temperature is not sent."
+                          : null}
+                      </p>
+                    </div>
+                    <Select
+                      value={documentProvider.model}
+                      onValueChange={setDocModel}
+                      disabled={!!savingKey}
+                      items={modelOptions}
+                    >
+                      <SelectTrigger
+                        className="w-56 shrink-0"
+                        aria-label="OpenAI model"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectPopup>
+                        {modelOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  </div>
+
+                  {openaiUsage ? (
+                    <div className="grid gap-2 border-t border-border pt-3">
+                      <Progress
+                        value={usagePercent(
+                          openaiUsage.usedTokens,
+                          openaiUsage.limit,
+                        )}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <ProgressLabel>
+                            Free daily tokens
+                            <Badge variant="outline" className="ms-2">
+                              {openaiUsage.tier === "mini"
+                                ? "mini / nano tier"
+                                : "standard tier"}
+                            </Badge>
+                          </ProgressLabel>
+                          <span className="text-sm text-muted-foreground tabular-nums">
+                            {formatTokens(openaiUsage.usedTokens)} /{" "}
+                            {formatTokens(openaiUsage.limit)}
+                          </span>
+                        </div>
+                      </Progress>
+                      <p className="m-0 text-xs text-muted-foreground">
+                        {openaiUsage.source === "org" ? (
+                          <>
+                            Org-wide usage across all traffic sharing this
+                            allowance. This app spent{" "}
+                            {formatTokens(openaiUsage.local.totalTokens)} today
+                            over {openaiUsage.local.requests} calls.
+                          </>
+                        ) : (
+                          <>
+                            Counts only this app (
+                            {formatTokens(openaiUsage.local.totalTokens)} over{" "}
+                            {openaiUsage.local.requests} calls). For the real
+                            shared total, add an admin key at{" "}
+                            <code>secrets/openai-admin-key</code>.
+                          </>
+                        )}{" "}
+                        Resets at UTC midnight.
+                      </p>
+                    </div>
+                  ) : null}
+                </CardPanel>
+              </Card>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {!loading && ollama ? (
+        <section className="mt-10">
           <h2 className="mb-3 text-lg font-semibold">Ollama thinking</h2>
           <p className="mb-3 m-0 text-sm text-muted-foreground">
             When on for a process, models like qwen3 spend tokens on internal

@@ -8,6 +8,7 @@ from typing import Any
 
 from .. import collections as C
 from ..db import get_db
+from .role_filter import assess_role_fit
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +42,21 @@ def upsert_normalized_job(normalized: dict[str, Any]) -> dict[str, Any]:
             reason = "fingerprintFuzzy"
 
     if existing:
+        title_is_manual = existing.get("titleSource") == "manual"
+        if title_is_manual:
+            # The source title would re-gate the listing; grade the human title
+            role_assessment = assess_role_fit(
+                title=existing.get("title") or "",
+                description=normalized.get("descriptionRaw")
+                or existing.get("descriptionRaw")
+                or "",
+            )
+        else:
+            role_assessment = normalized.get("roleAssessment")
         updates = {
             "lastSeenAt": now,
             "locationAssessment": normalized.get("locationAssessment"),
-            "roleAssessment": normalized.get("roleAssessment"),
+            "roleAssessment": role_assessment,
             "discoveredBy": normalized.get("discoveredBy") or existing.get("discoveredBy"),
         }
         # Always refresh URLs when present; never clear existing URL fields
@@ -62,7 +74,11 @@ def upsert_normalized_job(normalized: dict[str, Any]) -> dict[str, Any]:
         if normalized.get("fetchStatus"):
             updates["fetchStatus"] = normalized["fetchStatus"]
         if normalized.get("title") and normalized["title"] not in ("Untitled",):
-            updates["title"] = normalized["title"]
+            if title_is_manual:
+                # Keep the human title; track the newest detected one for revert
+                updates["titleAuto"] = normalized["title"]
+            else:
+                updates["title"] = normalized["title"]
         if normalized.get("company") and normalized["company"] not in ("Unknown",):
             updates["company"] = normalized["company"]
         if normalized.get("location"):
@@ -76,7 +92,14 @@ def upsert_normalized_job(normalized: dict[str, Any]) -> dict[str, Any]:
         if incoming_md and len(incoming_md) > len(existing.get("descriptionMarkdown") or ""):
             updates["descriptionMarkdown"] = incoming_md
         if existing.get("status") in (None, "new", "out_of_area", "wrong_role"):
-            updates["status"] = normalized.get("status") or existing.get("status")
+            next_status = normalized.get("status") or existing.get("status")
+            if (
+                title_is_manual
+                and next_status == "wrong_role"
+                and (role_assessment or {}).get("roleEligible")
+            ):
+                next_status = "new"
+            updates["status"] = next_status
         db[C.JOBS].update_one({"_id": existing["_id"]}, {"$set": updates})
         job = db[C.JOBS].find_one({"_id": existing["_id"]})
         return {"job": job, "created": False, "reason": reason or "existing"}

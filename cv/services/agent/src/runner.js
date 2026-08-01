@@ -1,6 +1,11 @@
 import path from "path";
 import { ApplicationState, AgentUiMode } from "./states.js";
-import { launchBrowser, screenshot, closeExtraPages } from "./browser.js";
+import {
+  launchBrowser,
+  screenshot,
+  closeExtraPages,
+  canUseHeadedDisplay,
+} from "./browser.js";
 import {
   openGlassdoorSearch,
   listResultCards,
@@ -11,6 +16,7 @@ import {
 import { resolveAdapter, AtsType } from "./ats/index.js";
 import { RISK } from "./policy.js";
 import { humanDelay, loadAgentConfig, envConfig, resolveSearchUrl } from "./config.js";
+import { createHumanTakeover } from "./humanTakeover.js";
 
 function splitName(fullName = "") {
   const parts = String(fullName).trim().split(/\s+/);
@@ -53,9 +59,31 @@ export function createRunner({ api, events, inputBroker, preview }) {
   let currentJob = null;
   let currentRun = null;
   let activePageUrl = null;
+  let headed = !envConfig().headless;
+  let activePage = null;
+
+  const humanTakeover = createHumanTakeover({
+    getUiMode: () => uiMode,
+    getUserControl: () => userControl,
+    onTakeover: async (payload) => {
+      if (userControl) return;
+      userControl = true;
+      pauseRequested = true;
+      await setUiMode(AgentUiMode.PAUSED_BY_USER);
+      await setState(
+        ApplicationState.PAUSED_BY_USER,
+        "You took control — agent paused"
+      );
+      await events.emit("HUMAN_TAKEOVER", {
+        message: "You took control — agent paused",
+        kind: payload?.kind || "interaction",
+      });
+    },
+  });
 
   async function focusPreview(page) {
     if (!page) return;
+    activePage = page;
     try {
       activePageUrl = page.url();
     } catch {
@@ -88,6 +116,7 @@ export function createRunner({ api, events, inputBroker, preview }) {
 
   async function setUiMode(mode) {
     uiMode = mode;
+    humanTakeover.noteUiMode(mode);
   }
 
   function resolveSubmissionPending(action) {
@@ -121,6 +150,10 @@ export function createRunner({ api, events, inputBroker, preview }) {
         pauseRequested = true;
         await setUiMode(AgentUiMode.PAUSED_BY_USER);
         await setState(ApplicationState.PAUSED_BY_USER, "User took browser control");
+        await events.emit("HUMAN_TAKEOVER", {
+          message: "You took control — agent paused",
+          kind: "button",
+        });
       },
       returnControl: async () => {
         userControl = false;
@@ -129,6 +162,14 @@ export function createRunner({ api, events, inputBroker, preview }) {
         await events.emit("ACTION_COMPLETED", {
           message: "Control returned to agent — rescanning page",
         });
+      },
+      focusWindow: async () => {
+        const page = activePage;
+        if (!page || page.isClosed()) {
+          throw new Error("No active browser page to focus");
+        }
+        await page.bringToFront();
+        return { ok: true, headed };
       },
       abort: async () => {
         abortRequested = true;
@@ -502,8 +543,25 @@ export function createRunner({ api, events, inputBroker, preview }) {
     pauseRequested = false;
     userControl = false;
     currentJob = null;
+    activePage = null;
+    humanTakeover.reset();
 
     const cfg = { ...(await loadAgentConfig()), ...overrides };
+    const env = envConfig();
+    // Per-run override: overrides.headed ?? !env.headless
+    let wantHeaded =
+      overrides.headed !== undefined
+        ? Boolean(overrides.headed)
+        : !env.headless;
+    if (wantHeaded && !canUseHeadedDisplay()) {
+      wantHeaded = false;
+      await events.emit("ACTION_COMPLETED", {
+        message:
+          "Headed display unavailable (no DISPLAY) — falling back to headless",
+      });
+    }
+    headed = wantHeaded;
+
     const startedAt = Date.now();
     const deadline = startedAt + cfg.maxRuntimeMinutes * 60 * 1000;
 
@@ -533,6 +591,7 @@ export function createRunner({ api, events, inputBroker, preview }) {
           preferRemote: Boolean(cfg.preferRemote),
           searchUrl: cfg.searchUrl || null,
           searchUrlRemote: cfg.searchUrlRemote || null,
+          headed,
         },
         state: ApplicationState.GLASSDOOR_SEARCHING,
       });
@@ -540,10 +599,11 @@ export function createRunner({ api, events, inputBroker, preview }) {
       events.setRunId(run._id);
 
       context = await launchBrowser({
-        headless: envConfig().headless,
+        headless: !headed,
         slowMoMs: cfg.slowMoMs,
-        profileDir: envConfig().profileDir,
+        profileDir: env.profileDir,
       });
+      await humanTakeover.install(context);
       const page = context.pages()[0] || (await context.newPage());
       if (preview) {
         await preview.start(page).catch((err) => {
@@ -621,6 +681,8 @@ export function createRunner({ api, events, inputBroker, preview }) {
         await preview.stop().catch(() => {});
       }
       activePageUrl = null;
+      activePage = null;
+      humanTakeover.reset();
       if (context) {
         // Keep persistent profile; close browser to free resources after run.
         await context.close().catch(() => {});
@@ -640,6 +702,7 @@ export function createRunner({ api, events, inputBroker, preview }) {
       pauseRequested,
       userControl,
       abortRequested,
+      headed,
       preview: preview ? preview.getMeta() : { enabled: false },
       pageUrl: activePageUrl || preview?.getMeta?.()?.pageUrl || null,
     };

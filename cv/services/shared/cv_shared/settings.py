@@ -67,6 +67,13 @@ DEFAULT_RESUME = {
     "pages": 2,
 }
 
+DOCUMENT_PROVIDERS = ("ollama", "openai")
+DEFAULT_DOCUMENT_PROVIDER = {
+    "provider": "ollama",
+    # Empty means "use the OPENAI_MODEL env default" (resolved on read)
+    "model": "",
+}
+
 ALERT_SOURCE_TO_KEY = {
     "linkedin-email": "linkedinEmail",
     "indeed-email": "indeedEmail",
@@ -91,6 +98,7 @@ def default_app_settings() -> dict[str, Any]:
             "thinkByProcess": {key: False for key in OLLAMA_THINK_PROCESSES},
         },
         "resume": dict(DEFAULT_RESUME),
+        "documentProvider": dict(DEFAULT_DOCUMENT_PROVIDER),
         "updatedAt": _now(),
     }
 
@@ -202,6 +210,22 @@ def _normalize_resume(raw: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+def _normalize_document_provider(raw: dict[str, Any] | None) -> dict[str, Any]:
+    from .openai_client import default_model, is_known_model
+
+    out = dict(DEFAULT_DOCUMENT_PROVIDER)
+    out["model"] = default_model()
+    if not isinstance(raw, dict):
+        return out
+    provider = str(raw.get("provider") or "").strip().lower()
+    if provider in DOCUMENT_PROVIDERS:
+        out["provider"] = provider
+    model = str(raw.get("model") or "").strip()
+    if model and is_known_model(model):
+        out["model"] = model
+    return out
+
+
 def get_app_settings() -> dict[str, Any]:
     """Return app settings, creating defaults if missing."""
     db = get_db()
@@ -217,6 +241,7 @@ def get_app_settings() -> dict[str, Any]:
     ingest_filters = _normalize_ingest_filters(doc.get("ingestFilters"))
     ollama = _normalize_ollama(doc.get("ollama"))
     resume = _normalize_resume(doc.get("resume"))
+    document_provider = _normalize_document_provider(doc.get("documentProvider"))
     needs_fix = (
         gmail != doc.get("gmailIngest")
         or ats != doc.get("atsIngest")
@@ -224,6 +249,7 @@ def get_app_settings() -> dict[str, Any]:
         or ingest_filters != doc.get("ingestFilters")
         or ollama != doc.get("ollama")
         or resume != doc.get("resume")
+        or document_provider != doc.get("documentProvider")
     )
     if needs_fix:
         db[C.SETTINGS].update_one(
@@ -236,6 +262,7 @@ def get_app_settings() -> dict[str, Any]:
                     "ingestFilters": ingest_filters,
                     "ollama": ollama,
                     "resume": resume,
+                    "documentProvider": document_provider,
                     "updatedAt": _now(),
                 }
             },
@@ -247,6 +274,7 @@ def get_app_settings() -> dict[str, Any]:
     doc["ingestFilters"] = ingest_filters
     doc["ollama"] = ollama
     doc["resume"] = resume
+    doc["documentProvider"] = document_provider
     return doc
 
 
@@ -260,6 +288,7 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
     ingest_filters = _normalize_ingest_filters(current.get("ingestFilters"))
     ollama = _normalize_ollama(current.get("ollama"))
     resume = _normalize_resume(current.get("resume"))
+    document_provider = _normalize_document_provider(current.get("documentProvider"))
 
     incoming_gmail = partial.get("gmailIngest") if isinstance(partial, dict) else None
     if isinstance(incoming_gmail, dict):
@@ -335,6 +364,17 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
             merged_resume["pages"] = incoming_resume["pages"]
         resume = _normalize_resume(merged_resume)
 
+    incoming_doc_provider = (
+        partial.get("documentProvider") if isinstance(partial, dict) else None
+    )
+    if isinstance(incoming_doc_provider, dict):
+        merged_doc = dict(document_provider)
+        if "provider" in incoming_doc_provider:
+            merged_doc["provider"] = incoming_doc_provider["provider"]
+        if "model" in incoming_doc_provider:
+            merged_doc["model"] = incoming_doc_provider["model"]
+        document_provider = _normalize_document_provider(merged_doc)
+
     updated_at = _now()
     db[C.SETTINGS].update_one(
         {"_id": APP_SETTINGS_ID},
@@ -346,6 +386,7 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
                 "ingestFilters": ingest_filters,
                 "ollama": ollama,
                 "resume": resume,
+                "documentProvider": document_provider,
                 "updatedAt": updated_at,
             }
         },
@@ -359,6 +400,7 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
         "ingestFilters": ingest_filters,
         "ollama": ollama,
         "resume": resume,
+        "documentProvider": document_provider,
         "updatedAt": updated_at,
     }
 
@@ -441,3 +483,16 @@ def get_resume_settings(settings: dict[str, Any] | None = None) -> dict[str, Any
     """Normalized resume render settings (engine, template, pages)."""
     doc = settings if settings is not None else get_app_settings()
     return _normalize_resume(doc.get("resume"))
+
+
+def get_document_provider_settings(
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Normalized {provider, model} for cover letter / resume tailor."""
+    doc = settings if settings is not None else get_app_settings()
+    return _normalize_document_provider(doc.get("documentProvider"))
+
+
+def get_document_provider(settings: dict[str, Any] | None = None) -> str:
+    """Return 'ollama' or 'openai' for cover letter / resume tailor."""
+    return get_document_provider_settings(settings)["provider"]

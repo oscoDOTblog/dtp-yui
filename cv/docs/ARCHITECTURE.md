@@ -11,7 +11,8 @@ Local job-search copilot: score jobs against a grounded candidate knowledge base
 | Worker | Python + APScheduler |
 | Apply agent | Node + Playwright (Stage 6) |
 | Database | MongoDB 8 |
-| Local AI | Ollama on host |
+| Local AI | Ollama on host (default for all LLM calls) |
+| Optional cloud AI | OpenAI Chat Completions for cover letter + resume tailor |
 | Deploy | Docker Compose on Legion Slim 5 |
 
 ## Ports
@@ -36,6 +37,16 @@ ollama pull qwen3:8b
 
 Containers reach it via `host.docker.internal:11434`.
 
+### Document generation provider
+
+Cover letters and resume tailor go through `cv_shared/llm.py`, which reads `cv_settings.documentProvider` (`provider`: `ollama` | `openai`, plus `model`). When set to OpenAI and `secrets/openai-api-key` (or `OPENAI_API_KEY`) is present, those two processes call the OpenAI API; on failure they fall back to Ollama, then the existing deterministic templates. Job extract, profile update, and GitHub classify always use Ollama. Toggle and pick the model in Settings → Document generation.
+
+The model registry lives in `cv_shared/openai_client.py`. Each entry records its free-tier bucket (`standard` = 1M tokens/day, `mini` = 10M tokens/day, both resetting at UTC midnight) and whether the model accepts `temperature` — GPT-5 reasoning models reject it, so the parameter is omitted for those.
+
+### OpenAI token usage
+
+Every successful OpenAI call appends to `cv_openaiUsage` (see [COLLECTIONS.md](COLLECTIONS.md)). `GET /openai/usage` returns today's spend against the selected model's daily allowance and powers the Settings progress bar. With an optional admin key in `secrets/openai-admin-key`, it also queries `/v1/organization/usage/completions` (60s cache) for the org-wide total, which is the number the shared free allowance actually applies to; without it the bar shows this app's spend only.
+
 ## Remote access
 
 No public inbound. Use WireGuard + SSH port forward:
@@ -50,7 +61,7 @@ Then open `http://localhost:7545`.
 
 Every resume claim must cite an `evidence` document linked to `workHistory` and/or `projects`. The matcher and document generator must not invent experience.
 
-Resume packages go through an explicit **tailor** step: achievements are addressed as `work:{id}:b{i}` / `project:{id}:b{i}`, Ollama may only select and lightly rewrite with a `sourceId`, and the app verifies every claim against the approved catalog before RenderCV or legacy PDF rendering. See [RESUME_PIPELINE.md](RESUME_PIPELINE.md).
+Resume packages go through an explicit **tailor** step: achievements are addressed as `work:{id}:b{i}` / `project:{id}:b{i}`, the LLM (Ollama or OpenAI per Settings) may only select and lightly rewrite with a `sourceId`, and the app verifies every claim against the approved catalog before RenderCV or legacy PDF rendering. See [RESUME_PIPELINE.md](RESUME_PIPELINE.md).
 
 ## Stage 2A intake
 
@@ -83,10 +94,12 @@ Glassdoor search → extract card → POST /agent/jobs/ingest → score/package
 ```
 
 - Control plane: HTTP + SSE/WebSocket on `:8010` (proxied as `/agent-api` from the web UI)
-- Live browser preview: `GET /preview/latest` JPEG polled by Apply Copilot (Expand for fullscreen); prefer headless + preview day-to-day
+- **Default topology**: host `npm start` owns `:8010` (headed window + preview). Compose `agent` is opt-in via profile `headless-agent`
+- Live browser preview: `GET /preview/latest` JPEG polled by Apply Copilot (Expand for fullscreen); works with headed or headless
+- Human takeover: click/type in the Chromium window auto-pauses (`HUMAN_TAKEOVER`); Copilot **Return control** resumes
 - Persistence: `cv_applicationRuns`, `cv_applicationEvents`, `cv_applicationAnswers`
 - Policy: allowed browser actions only; Level-C / legal questions ask the user; no CAPTCHA bypass; no LinkedIn
-- Headed mode: `CV_AGENT_HEADLESS=0` for first Glassdoor login / CAPTCHA / Take control
+- Per-run headed toggle from Copilot (`POST /runs/start` body `{ headed }`); env default `CV_AGENT_HEADLESS=0` on host
 - Setup: [AGENT_SETUP.md](AGENT_SETUP.md)
 
 ## Role families

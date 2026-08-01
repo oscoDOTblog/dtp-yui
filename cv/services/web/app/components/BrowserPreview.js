@@ -5,6 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { getAgentApiBase } from "../../lib/agentApi";
 
+function streamLabel(previewMode) {
+  if (previewMode === "screencast") return "live";
+  if (previewMode === "poll") return "screenshot";
+  return null;
+}
+
 /**
  * Live JPEG preview from the apply agent (polls /preview/latest).
  */
@@ -12,6 +18,8 @@ export default function BrowserPreview({
   active = false,
   pageUrl = null,
   uiMode = null,
+  previewMode = null,
+  headed = false,
 }) {
   const [src, setSrc] = useState(null);
   const [expanded, setExpanded] = useState(false);
@@ -74,8 +82,11 @@ export default function BrowserPreview({
     return () => window.removeEventListener("keydown", onKey);
   }, [expanded]);
 
+  const stream = streamLabel(previewMode);
   const caption =
-    [uiMode, pageUrl].filter(Boolean).join(" · ") ||
+    [uiMode, headed ? "window" : null, stream, pageUrl]
+      .filter(Boolean)
+      .join(" · ") ||
     (active ? "Waiting for first frame…" : "Start a run to see the browser");
 
   return (
@@ -109,7 +120,10 @@ export default function BrowserPreview({
               </div>
             )}
           </div>
-          <p className="m-0 truncate text-xs text-muted-foreground" title={caption}>
+          <p
+            className="m-0 truncate text-xs text-muted-foreground"
+            title={caption}
+          >
             {caption}
           </p>
         </CardPanel>
@@ -126,7 +140,11 @@ export default function BrowserPreview({
             <p className="m-0 max-w-[80%] truncate text-sm text-muted-foreground">
               {caption}
             </p>
-            <Button size="sm" variant="secondary" onClick={() => setExpanded(false)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setExpanded(false)}
+            >
               Close
             </Button>
           </div>

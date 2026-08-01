@@ -5,6 +5,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { agentEventSource, agentGet, agentPost } from "../../lib/agentApi";
 import BrowserPreview from "../components/BrowserPreview";
@@ -25,6 +26,7 @@ function eventLine(ev) {
   }
   if (ev.type === "STATE_CHANGED") return `State → ${ev.state}`;
   if (ev.type === "USER_INPUT_REQUIRED") return `Needs input: ${ev.question}`;
+  if (ev.type === "HUMAN_TAKEOVER") return ev.message || "You took control";
   if (ev.type === "ERROR") return `Error: ${ev.message || "unknown"}`;
   return ev.type || "event";
 }
@@ -37,6 +39,7 @@ export default function CopilotPage() {
   const [answerDraft, setAnswerDraft] = useState("");
   const [reusePolicy, setReusePolicy] = useState("ONCE");
   const [starting, setStarting] = useState(false);
+  const [showBrowserWindow, setShowBrowserWindow] = useState(true);
   const feedRef = useRef(null);
 
   const refreshStatus = useCallback(async () => {
@@ -53,6 +56,13 @@ export default function CopilotPage() {
     agentGet("/config")
       .then(setConfig)
       .catch(() => setConfig(null));
+    agentGet("/health")
+      .then((h) => {
+        if (typeof h?.headedDefault === "boolean") {
+          setShowBrowserWindow(h.headedDefault);
+        }
+      })
+      .catch(() => {});
     refreshStatus();
     const poll = setInterval(refreshStatus, 3000);
     return () => clearInterval(poll);
@@ -70,7 +80,11 @@ export default function CopilotPage() {
       try {
         const data = JSON.parse(msg.data);
         setEvents((prev) => [...prev.slice(-199), data]);
-        if (data.type === "STATE_CHANGED" || data.type === "USER_INPUT_REQUIRED") {
+        if (
+          data.type === "STATE_CHANGED" ||
+          data.type === "USER_INPUT_REQUIRED" ||
+          data.type === "HUMAN_TAKEOVER"
+        ) {
           refreshStatus();
         }
       } catch {
@@ -95,12 +109,13 @@ export default function CopilotPage() {
   const reviewFromEvents = [...events]
     .reverse()
     .find((e) => e.kind === "SUBMISSION_APPROVAL" || e.reviewSummary);
+  const isHeaded = Boolean(status?.running ? status?.headed : showBrowserWindow);
 
   async function startRun() {
     setStarting(true);
     setError(null);
     try {
-      await agentPost("/runs/start", {});
+      await agentPost("/runs/start", { headed: showBrowserWindow });
       setEvents([]);
       await refreshStatus();
     } catch (err) {
@@ -142,11 +157,20 @@ export default function CopilotPage() {
             Apply Copilot
           </h1>
           <p className="m-0 text-muted-foreground">
-            Glassdoor-first Stage 6 runner — live browser preview below (Expand
-            for fullscreen). Human approval required before submit.
+            Glassdoor-first Stage 6 runner — live preview below, optional Chromium
+            window for manual takeover. Human approval required before submit.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <Switch
+              checked={showBrowserWindow}
+              disabled={Boolean(status?.running) || starting}
+              onCheckedChange={setShowBrowserWindow}
+              aria-label="Show browser window"
+            />
+            <span className="text-muted-foreground">Show browser window</span>
+          </label>
           <Button
             onClick={startRun}
             disabled={starting || status?.running}
@@ -162,9 +186,27 @@ export default function CopilotPage() {
           <AlertDescription>
             {error}
             <span className="mt-1 block text-xs opacity-80">
-              Start the agent (`cd services/agent && CV_AGENT_HEADLESS=0 npm start`)
-              or Compose service on :8010.
+              Start the host agent (`cd services/agent && npm start`) on :8010.
+              Compose agent is opt-in: `docker compose --profile headless-agent up -d agent`.
             </span>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {status?.userControl ? (
+        <Alert>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              You have control — agent paused. Click or type in the Chromium
+              window, then return control when done.
+            </span>
+            <Button
+              size="sm"
+              onClick={() => control("/control/return-control")}
+              disabled={!status?.running}
+            >
+              Return control
+            </Button>
           </AlertDescription>
         </Alert>
       ) : null}
@@ -175,6 +217,11 @@ export default function CopilotPage() {
         <Badge variant={status?.running ? "default" : "secondary"}>
           {status?.running ? "running" : "idle"}
         </Badge>
+        {status?.running ? (
+          <Badge variant="outline">
+            {status?.headed ? "headed window" : "headless"}
+          </Badge>
+        ) : null}
         {status?.runId ? (
           <Badge variant="outline">run: {status.runId}</Badge>
         ) : null}
@@ -207,11 +254,19 @@ export default function CopilotPage() {
         </Button>
         <Button
           size="sm"
-          variant="secondary"
+          variant={status?.userControl ? "default" : "secondary"}
           onClick={() => control("/control/return-control")}
           disabled={!status?.running}
         >
           Return control
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => control("/control/focus-window")}
+          disabled={!status?.running || !status?.headed}
+        >
+          Bring window to front
         </Button>
         <Button
           size="sm"
@@ -235,6 +290,8 @@ export default function CopilotPage() {
         active={Boolean(status?.running)}
         pageUrl={status?.pageUrl || status?.preview?.pageUrl || null}
         uiMode={status?.uiMode || null}
+        previewMode={status?.preview?.mode || null}
+        headed={isHeaded}
       />
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -426,7 +483,10 @@ export default function CopilotPage() {
               </p>
             ) : (
               events.map((ev, idx) => (
-                <div key={`${ev.sequence || idx}-${ev.createdAt || idx}`} className="mb-2">
+                <div
+                  key={`${ev.sequence || idx}-${ev.createdAt || idx}`}
+                  className="mb-2"
+                >
                   <span className="text-muted-foreground">
                     {formatTime(ev.createdAt)}
                   </span>{" "}

@@ -9,6 +9,7 @@ import DocumentPackagePanel, {
 } from "../../components/DocumentPackagePanel";
 import ApplicationStatusTracker from "../../components/ApplicationStatusTracker";
 import FitAssessmentTable from "../../components/FitAssessmentTable";
+import JobTitleEditor from "../../components/JobTitleEditor";
 import MarkdownContent from "../../components/MarkdownContent";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardPanel } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import { jobHeadline, jobMetaLine } from "../../../lib/jobDisplay";
+import { jobMetaLine } from "../../../lib/jobDisplay";
 import {
   applicationStatusLabel,
   resolveApplicationStatus,
@@ -224,6 +225,27 @@ export default function JobDetailPage() {
     }
   }
 
+  /** Save (or reset) the job title. Returns false so the editor stays open on error. */
+  async function saveTitle(body, successMessage) {
+    if (busy) return false;
+    setBusy("title");
+    setMessage("");
+    setError("");
+    try {
+      const updated = await apiPatch(`/jobs/${jobId}/title`, body);
+      // Replace rather than merge: a reset unsets titleSource/titleAuto
+      setJob((cur) => ({ ...updated, match: cur?.match ?? updated.match }));
+      setMessage(successMessage);
+      return true;
+    } catch (err) {
+      setError(err.message || "Failed to update title");
+      return false;
+    } finally {
+      setBusy("");
+      setStatusText("");
+    }
+  }
+
   async function deleteJob() {
     const label = `${job?.title || "this job"} — ${job?.company || ""}`.trim();
     const ok = window.confirm(
@@ -283,11 +305,19 @@ export default function JobDetailPage() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-4">
-        <div>
-          <h1 className="m-0 mb-1.5 text-3xl font-semibold tracking-tight max-sm:text-2xl">
-            {jobHeadline(job)}
-          </h1>
-          <p className="m-0 text-muted-foreground">{jobMetaLine(job)}</p>
+        <div className="min-w-0 flex-1">
+          <JobTitleEditor
+            job={job}
+            disabled={!!busy}
+            saving={busy === "title"}
+            onSave={(title) =>
+              saveTitle({ title }, `Title updated to “${title}”.`)
+            }
+            onReset={() =>
+              saveTitle({ reset: true }, "Reverted to the detected title.")
+            }
+          />
+          <p className="m-0 mt-1.5 text-muted-foreground">{jobMetaLine(job)}</p>
         </div>
         {openHref ? (
           <Button
