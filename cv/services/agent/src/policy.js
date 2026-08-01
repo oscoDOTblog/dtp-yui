@@ -64,15 +64,20 @@ const TECH_YES_NO_PATTERNS = [
   /\b(selenium|python|java|javascript|typescript|react|aws|docker|kubernetes|sql|jira|agile|ci\/?cd|testing|automation)\b/i,
 ];
 
+export function isCoverLetterQuestion(questionText = "") {
+  return /cover\s*letter/i.test(String(questionText || ""));
+}
+
 export function classifyQuestionRisk(questionText = "") {
   const q = String(questionText);
   for (const re of HIGH_RISK_PATTERNS) {
     if (re.test(q)) return RISK.LEGAL;
   }
   if (/salary|compensation|expect/i.test(q)) return RISK.MEDIUM;
-  if (/why (are you|do you)|cover letter/i.test(q)) {
-    return RISK.MEDIUM;
-  }
+  // Cover letter is autofilled from the generated package when available;
+  // without a package it stays MEDIUM so Copilot Input can supply text.
+  if (/why (are you|do you)/i.test(q)) return RISK.MEDIUM;
+  if (isCoverLetterQuestion(q)) return RISK.MEDIUM;
   return RISK.LOW;
 }
 
@@ -100,9 +105,15 @@ export function isTechYesNoQuestion(questionText = "", options = []) {
 /**
  * Decide autofill policy for a collected form question.
  */
-export function resolveQuestionAction(question = {}, { knownContact = false } = {}) {
+export function resolveQuestionAction(
+  question = {},
+  { knownContact = false, hasCoverLetter = false } = {}
+) {
   if (knownContact) {
     return { action: QUESTION_ACTION.AUTOFILL, confidence: 0.95 };
+  }
+  if (hasCoverLetter && isCoverLetterQuestion(question.question)) {
+    return { action: QUESTION_ACTION.AUTOFILL, confidence: 0.92 };
   }
   const risk = question.risk || classifyQuestionRisk(question.question);
   if (risk === RISK.LEGAL || risk === RISK.HIGH) {

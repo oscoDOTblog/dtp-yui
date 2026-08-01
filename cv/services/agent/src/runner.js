@@ -1,3 +1,4 @@
+import fs from "fs";
 import path from "path";
 import { ApplicationState, AgentUiMode } from "./states.js";
 import {
@@ -42,22 +43,59 @@ function splitName(fullName = "") {
   };
 }
 
+function packageFolder(pkg) {
+  if (!pkg) return null;
+  if (pkg.folder || pkg.folderPath || pkg.absolutePath) {
+    return pkg.folder || pkg.folderPath || pkg.absolutePath;
+  }
+  if (pkg.folderName) {
+    const root =
+      process.env.GENERATED_APPLICATIONS_DIR ||
+      path.join(envConfig().profileDir, "..", "..", "..", "generated-applications");
+    return path.join(root, pkg.folderName);
+  }
+  return null;
+}
+
 function packageResumePath(pkg) {
   if (!pkg) return null;
-  const folder = pkg.folder || pkg.folderPath || pkg.absolutePath || null;
+  const folder = packageFolder(pkg);
   const files = pkg.files || [];
   const hasPdf = files.includes("resume.pdf");
   const hasDocx = files.includes("resume.docx");
   const name = hasPdf ? "resume.pdf" : hasDocx ? "resume.docx" : null;
   if (folder && name) return path.join(folder, name);
   if (pkg.resumePdfPath) return pkg.resumePdfPath;
-  if (pkg.folderName) {
-    const root =
-      process.env.GENERATED_APPLICATIONS_DIR ||
-      path.join(envConfig().profileDir, "..", "..", "..", "generated-applications");
-    return path.join(root, pkg.folderName, "resume.pdf");
-  }
   return null;
+}
+
+/**
+ * Cover letter artifacts from generate-package (Ollama or OpenAI via documentProvider).
+ */
+function packageCoverLetter(pkg) {
+  if (!pkg) return { pdfPath: null, docxPath: null, text: "" };
+  const folder = packageFolder(pkg);
+  const files = pkg.files || [];
+  const pdfPath =
+    folder && files.includes("cover-letter.pdf")
+      ? path.join(folder, "cover-letter.pdf")
+      : null;
+  const docxPath =
+    folder && files.includes("cover-letter.docx")
+      ? path.join(folder, "cover-letter.docx")
+      : null;
+  let text = String(pkg.previews?.coverLetter?.content || "").trim();
+  if (!text && folder) {
+    const txtPath = path.join(folder, "cover-letter.txt");
+    try {
+      if (fs.existsSync(txtPath)) {
+        text = fs.readFileSync(txtPath, "utf8").trim();
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return { pdfPath, docxPath, text };
 }
 
 /**
@@ -422,6 +460,7 @@ export function createRunner({ api, events, inputBroker, preview }) {
     }
 
     const resumePath = packageResumePath(pkg);
+    const coverLetter = packageCoverLetter(pkg);
     stats.applicationsStarted += 1;
 
     await setState(ApplicationState.APPLICATION_STARTED, "Clicking Easy Apply");
@@ -480,6 +519,7 @@ export function createRunner({ api, events, inputBroker, preview }) {
     const fillCtx = {
       profile,
       resumePath,
+      coverLetter,
       events,
       cfg,
     };
@@ -565,6 +605,7 @@ export function createRunner({ api, events, inputBroker, preview }) {
         ? `${profile.latestRole.title} @ ${profile.latestRole.company}`
         : null,
       resumePath: resumePath ? path.basename(resumePath) : null,
+      coverLetter: Boolean(coverLetter?.text || coverLetter?.pdfPath),
       pageUrl: applyPage.url(),
       unknownCount: toAsk.length,
     };

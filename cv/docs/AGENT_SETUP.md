@@ -26,6 +26,7 @@ npm start
 Open http://localhost:7545/copilot → pick **Easy Apply (Local)** or **Easy Apply (Remote)** → **Start Glassdoor run**.
 
 - Agent launches **installed Google Chrome** by default (`CV_AGENT_BROWSER_CHANNEL=chrome`) — not Playwright’s “Chrome for Testing” (Cloudflare often blocks that)
+- Chromium sandbox is **on** by default (`chromiumSandbox: true`) so Chrome is not launched with `--no-sandbox` (that yellow “unsupported command-line flag” bar is a bot fingerprint)
 - If you see **Humans only / Verify you are human**, complete the checkbox in the Chrome window, then **Resume** in Copilot
 - Chromium opens on the host; Copilot **Browser** panel keeps updating
 - Click/type in Chromium → auto-pause → **Return control** when done
@@ -95,4 +96,4 @@ Playwright version in `package.json` must match the Docker base image tag.
 
 ## Success check
 
-Easy Apply mode → open filtered Glassdoor URL → score ≥ 60 → Easy Apply → Indeed wizard (Yes on tech Qs, Capital One latest role, resume) → Approve submit → confirmation → `applicationStatus=pending` → next card skips that listing.
+Easy Apply mode → open filtered Glassdoor URL → score ≥ 60 → generate package (resume + cover letter via Settings `documentProvider`: Ollama or OpenAI) → Easy Apply → Indeed wizard (Yes on tech Qs, latest role, resume; attach cover letter when the form asks) → Approve submit → confirmation → `applicationStatus=pending` → next card skips that listing.

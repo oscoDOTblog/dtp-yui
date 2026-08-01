@@ -89,7 +89,8 @@ Long-running Node service (`cv/services/agent`) drives a **persistent Chromium p
 
 ```text
 Copilot mode (Easy Apply Local|Remote) → Glassdoor URL → extract → ingest/score
-  → Easy Apply → Indeed Smart Apply (tech Yes, resume, latest role) → human Approve submit
+  → package (resume + cover letter via documentProvider) → Easy Apply
+  → Indeed Smart Apply (tech Yes, resume, latest role; cover letter when requested) → human Approve submit
   → applicationStatus=pending → skip on later runs
 ```
 

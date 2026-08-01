@@ -4,6 +4,7 @@
  */
 
 import {
+  attachCoverLetterIfNeeded,
   clickContinueIfPresent,
   confirmSubmissionSignals,
   findSubmitButton,
@@ -12,6 +13,7 @@ import {
 import { AtsType } from "./detect.js";
 import {
   classifyQuestionRisk,
+  isCoverLetterQuestion,
   isTechYesNoQuestion,
   QUESTION_ACTION,
   resolveQuestionAction,
@@ -22,6 +24,7 @@ import { humanDelay, sleep } from "../config.js";
 function moduleFromUrl(url = "") {
   const u = String(url).toLowerCase();
   if (/qualification-questions/.test(u)) return "questions";
+  if (/cover[-_]?letter|supporting[-_]?doc/.test(u)) return "coverLetter";
   if (/resume-selection|resume-module/.test(u) && !/relevant-experience/.test(u)) {
     return "resume";
   }
@@ -103,7 +106,10 @@ async function answerTechQuestionsYes(page, events) {
 /**
  * Collect remaining questions that need human input on the current page.
  */
-async function collectAskUserQuestions(page) {
+async function collectAskUserQuestions(
+  page,
+  { hasCoverLetter = false, coverAttached = false } = {}
+) {
   const raw = await page.evaluate(() => {
     const out = [];
     const fields = document.querySelectorAll(
@@ -168,10 +174,20 @@ async function collectAskUserQuestions(page) {
   return raw
     .map((q) => {
       const risk = classifyQuestionRisk(q.question);
-      const { action, confidence } = resolveQuestionAction({ ...q, risk });
+      const { action, confidence } = resolveQuestionAction(
+        { ...q, risk },
+        { hasCoverLetter: coverAttached || hasCoverLetter }
+      );
       return { ...q, risk, action, confidence };
     })
-    .filter((q) => q.action === QUESTION_ACTION.ASK_USER);
+    .filter((q) => {
+      if (q.action !== QUESTION_ACTION.ASK_USER) return false;
+      if (isCoverLetterQuestion(q.question)) {
+        if (coverAttached) return false;
+        if (String(q.value || "").trim().length > 40) return false;
+      }
+      return true;
+    });
 }
 
 async function fillRelevantExperience(page, latestRole, events) {
@@ -244,8 +260,9 @@ export async function beginIndeedSmartApply(page, ctx) {
  * Drive Smart Apply modules until review (or ask-user unknowns remain).
  */
 export async function fillIndeedSmartApply(page, ctx) {
-  const { profile, resumePath, events, cfg } = ctx;
+  const { profile, resumePath, coverLetter, events, cfg } = ctx;
   const latestRole = profile?.latestRole || null;
+  let coverAttached = false;
   const unknowns = [];
   const maxSteps = 12;
 
@@ -261,12 +278,43 @@ export async function fillIndeedSmartApply(page, ctx) {
     });
 
     if (mod === "review") {
+      // Optional supporting documents / Add cover letter on review
+      const attach = await attachCoverLetterIfNeeded(
+        page,
+        coverLetter,
+        events,
+        cfg
+      );
+      if (attach?.attached) coverAttached = true;
       break;
+    }
+
+    if (mod === "coverLetter") {
+      const attach = await attachCoverLetterIfNeeded(
+        page,
+        coverLetter,
+        events,
+        cfg
+      );
+      if (attach?.attached) coverAttached = true;
+      await humanDelay(cfg);
+      await clickContinue(page, cfg);
+      continue;
     }
 
     if (mod === "questions" || mod === "form" || mod === "unknown") {
       await answerTechQuestionsYes(page, events);
-      const ask = await collectAskUserQuestions(page);
+      const attach = await attachCoverLetterIfNeeded(
+        page,
+        coverLetter,
+        events,
+        cfg
+      );
+      if (attach?.attached) coverAttached = true;
+      const ask = await collectAskUserQuestions(page, {
+        hasCoverLetter: coverAttached,
+        coverAttached,
+      });
       // Only surface legal / unanswered non-auto fields
       for (const q of ask) {
         if (q.risk === RISK.LEGAL || q.risk === RISK.HIGH || q.risk === RISK.MEDIUM) {
@@ -316,6 +364,14 @@ export async function fillIndeedSmartApply(page, ctx) {
             : "No resume file to upload",
         });
       }
+      // Some resume steps also expose cover letter upload
+      const attach = await attachCoverLetterIfNeeded(
+        page,
+        coverLetter,
+        events,
+        cfg
+      );
+      if (attach?.attached) coverAttached = true;
       await clickContinue(page, cfg);
       continue;
     }

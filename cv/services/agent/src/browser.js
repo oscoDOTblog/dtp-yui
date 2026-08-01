@@ -31,6 +31,23 @@ export function resolveBrowserChannel() {
 }
 
 /**
+ * Playwright adds --no-sandbox unless chromiumSandbox === true.
+ * That flag shows the yellow "unsupported command-line flag" bar and is a
+ * strong Cloudflare fingerprint. Keep sandbox on for host Chrome; allow
+ * opt-out for Linux containers that cannot use a sandbox.
+ */
+export function resolveChromiumSandbox(channel) {
+  const raw = (process.env.CV_AGENT_CHROMIUM_SANDBOX || "").trim().toLowerCase();
+  if (raw === "0" || raw === "false" || raw === "off") return false;
+  if (raw === "1" || raw === "true" || raw === "on") return true;
+  // Docker / root Linux often cannot use the Chromium sandbox.
+  if (process.platform === "linux" && (!channel || process.getuid?.() === 0)) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Headed Chromium needs a real display. Linux containers without DISPLAY
  * cannot show a window — callers should fall back to headless.
  */
@@ -55,6 +72,7 @@ export async function launchBrowser({ headless, slowMoMs, profileDir } = {}) {
   const wantHeadless = headless ?? env.headless;
   const useHeadless = wantHeadless || !canUseHeadedDisplay();
   const channel = resolveBrowserChannel();
+  const chromiumSandbox = resolveChromiumSandbox(channel);
 
   const args = [...ANTI_THROTTLE_ARGS];
   /** @type {import('playwright').LaunchPersistentContextOptions} */
@@ -62,6 +80,9 @@ export async function launchBrowser({ headless, slowMoMs, profileDir } = {}) {
     headless: useHeadless,
     slowMo: slowMoMs ?? 0,
     args,
+    chromiumSandbox,
+    // Drop Playwright's automation banner / navigator.webdriver kickers.
+    ignoreDefaultArgs: ["--enable-automation"],
     // Do not set userAgent — spoofed UA vs real Chrome binary triggers bot checks.
   };
 
@@ -79,9 +100,13 @@ export async function launchBrowser({ headless, slowMoMs, profileDir } = {}) {
   try {
     const context = await chromium.launchPersistentContext(userDataDir, options);
     if (channel) {
-      console.log(`cv-agent browser: system ${channel} (persistent profile)`);
+      console.log(
+        `cv-agent browser: system ${channel} (persistent profile, sandbox=${chromiumSandbox})`
+      );
     } else {
-      console.log("cv-agent browser: bundled Chromium (persistent profile)");
+      console.log(
+        `cv-agent browser: bundled Chromium (persistent profile, sandbox=${chromiumSandbox})`
+      );
     }
     return context;
   } catch (err) {
@@ -90,6 +115,10 @@ export async function launchBrowser({ headless, slowMoMs, profileDir } = {}) {
       `cv-agent: channel=${channel} failed (${err.message || err}); falling back to bundled Chromium`
     );
     delete options.channel;
+    // Bundled Chromium on Linux may still need no-sandbox
+    if (process.platform === "linux") {
+      options.chromiumSandbox = false;
+    }
     return chromium.launchPersistentContext(userDataDir, options);
   }
 }

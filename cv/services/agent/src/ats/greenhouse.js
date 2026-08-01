@@ -1,4 +1,5 @@
 import {
+  attachCoverLetterIfNeeded,
   collectUnknownQuestions,
   confirmSubmissionSignals,
   fillKnownContactFields,
@@ -14,7 +15,7 @@ export async function beginGreenhouse(page, ctx) {
 }
 
 export async function fillGreenhouse(page, ctx) {
-  const { profile, resumePath, events, cfg } = ctx;
+  const { profile, resumePath, coverLetter, events, cfg } = ctx;
   await fillKnownContactFields(page, profile, events);
   if (resumePath) {
     await uploadResume(page, resumePath, events).catch((err) =>
@@ -24,8 +25,11 @@ export async function fillGreenhouse(page, ctx) {
       })
     );
   }
+  const attach = await attachCoverLetterIfNeeded(page, coverLetter, events, cfg);
   await clickContinueIfPresent(page, cfg);
-  const unknowns = await collectUnknownQuestions(page);
+  const unknowns = await collectUnknownQuestions(page, {
+    hasCoverLetter: Boolean(attach?.attached),
+  });
   return { unknowns };
 }
 
