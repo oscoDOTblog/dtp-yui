@@ -208,7 +208,7 @@ def _truncate_listings(
         if raw_jobs:
             msg = (
                 f"Skipped {len(raw_jobs)} {label} listings "
-                f"(INGEST_MAX_LISTINGS={max_listings} exhausted)"
+                f"(source budget/INGEST_MAX_LISTINGS={max_listings} exhausted)"
             )
             summary.setdefault("errors", []).append(msg)
             summary["listingsTruncated"] = (
@@ -220,12 +220,52 @@ def _truncate_listings(
     truncated = len(raw_jobs) - remaining
     msg = (
         f"Truncated {label} listings from {len(raw_jobs)} to {remaining} "
-        f"(INGEST_MAX_LISTINGS={max_listings})"
+        f"(fair-split budget; total INGEST_MAX_LISTINGS={max_listings})"
     )
     summary.setdefault("errors", []).append(msg)
     summary["listingsTruncated"] = summary.get("listingsTruncated", 0) + truncated
     logger.warning(msg)
     return raw_jobs[:remaining], 0
+
+
+def split_listing_budgets(total: int, active_sources: list[str]) -> dict[str, int]:
+    """Evenly divide ``total`` listings across active sources (no redistribution).
+
+    Remainder from integer division goes to the first sources in list order.
+    Empty ``active_sources`` → empty map.
+    """
+    total = max(0, int(total))
+    if not active_sources:
+        return {}
+    n = len(active_sources)
+    base = total // n
+    extra = total % n
+    budgets: dict[str, int] = {}
+    for i, key in enumerate(active_sources):
+        budgets[key] = base + (1 if i < extra else 0)
+    return budgets
+
+
+def _active_inbox_sources(
+    *,
+    sources_mode: str,
+    app_settings: dict[str, Any],
+) -> list[str]:
+    """Sources that will actually fetch this run (enabled settings only)."""
+    active: list[str] = []
+    if sources_mode in ("all", "gmail"):
+        if is_gmail_ingest_enabled(app_settings) and credentials_available():
+            active.append("gmail")
+    if sources_mode in ("all", "greenhouse"):
+        if is_ats_source_enabled("greenhouse", app_settings):
+            active.append("greenhouse")
+    if sources_mode in ("all", "ashby"):
+        if is_ats_source_enabled("ashby", app_settings):
+            active.append("ashby")
+    if sources_mode in ("all", "remotive"):
+        if is_ats_source_enabled("remotive", app_settings):
+            active.append("remotive")
+    return active
 
 
 def _mark_gmail_processed(service, message_id: str) -> None:
@@ -954,7 +994,21 @@ def run_ingest(
         max_listings = ingest_max_listings()
     else:
         max_listings = int(max_listings)
-    remaining = max_listings
+
+    # Fair split of listing budget across sources that will actually fetch
+    # (no leftover redistribution if one source underfills its share).
+    if run_manual:
+        listing_budgets: dict[str, int] = {"manual": max_listings}
+    else:
+        listing_budgets = split_listing_budgets(
+            max_listings,
+            _active_inbox_sources(
+                sources_mode=sources_mode, app_settings=app_settings
+            ),
+        )
+    summary["listingBudgets"] = dict(listing_budgets)
+    summary["maxListings"] = max_listings
+    publish()
 
     # --- Gmail ---
     message_ids: list[str] = []
@@ -973,6 +1027,7 @@ def run_ingest(
             summary["skippedNoCreds"] = True
             publish()
         else:
+            gmail_budget = int(listing_budgets.get("gmail") or 0)
             try:
                 raw_jobs, message_ids = fetch_gmail_raw_jobs(max_messages=max_messages)
             except Exception as exc:
@@ -981,9 +1036,9 @@ def run_ingest(
                 raw_jobs, message_ids = [], []
 
             summary["messagesSeen"] = len(message_ids)
-            raw_jobs, remaining = _truncate_listings(
+            raw_jobs, _ = _truncate_listings(
                 raw_jobs,
-                remaining=remaining,
+                remaining=gmail_budget,
                 label="Gmail",
                 max_listings=max_listings,
                 summary=summary,
@@ -1059,6 +1114,7 @@ def run_ingest(
             }
             publish()
         else:
+            gh_budget = int(listing_budgets.get("greenhouse") or 0)
             try:
                 gh_raw, gh_stats = fetch_greenhouse_raw_jobs(
                     source_ids=greenhouse_source_ids,
@@ -1089,9 +1145,9 @@ def run_ingest(
             summary["skippedSourceLocation"] = int(
                 gh_stats.get("skippedSourceLocation") or 0
             )
-            gh_raw, remaining = _truncate_listings(
+            gh_raw, _ = _truncate_listings(
                 gh_raw,
-                remaining=remaining,
+                remaining=gh_budget,
                 label="Greenhouse",
                 max_listings=max_listings,
                 summary=summary,
@@ -1119,6 +1175,7 @@ def run_ingest(
             }
             publish()
         else:
+            ashby_budget = int(listing_budgets.get("ashby") or 0)
             try:
                 ashby_raw, ashby_stats = fetch_ashby_raw_jobs(
                     source_ids=ashby_source_ids,
@@ -1150,9 +1207,9 @@ def run_ingest(
             summary["skippedSourceLocation"] = summary.get(
                 "skippedSourceLocation", 0
             ) + int(ashby_stats.get("skippedSourceLocation") or 0)
-            ashby_raw, remaining = _truncate_listings(
+            ashby_raw, _ = _truncate_listings(
                 ashby_raw,
-                remaining=remaining,
+                remaining=ashby_budget,
                 label="Ashby",
                 max_listings=max_listings,
                 summary=summary,
@@ -1180,10 +1237,11 @@ def run_ingest(
             }
             publish()
         else:
+            remotive_budget = int(listing_budgets.get("remotive") or 0)
             try:
                 remotive_raw, remotive_stats = fetch_remotive_raw_jobs(
                     app_settings=app_settings,
-                    limit=remaining if remaining > 0 else None,
+                    limit=remotive_budget if remotive_budget > 0 else None,
                 )
             except Exception as exc:
                 logger.exception("Remotive fetch failed")
@@ -1210,9 +1268,9 @@ def run_ingest(
             summary["skippedWrongRole"] = summary.get("skippedWrongRole", 0) + int(
                 remotive_stats.get("skippedWrongRole") or 0
             )
-            remotive_raw, remaining = _truncate_listings(
+            remotive_raw, _ = _truncate_listings(
                 remotive_raw,
-                remaining=remaining,
+                remaining=remotive_budget,
                 label="Remotive",
                 max_listings=max_listings,
                 summary=summary,
@@ -1236,11 +1294,12 @@ def run_ingest(
     # --- Manual URL queue ---
     if run_manual and not was_cancelled():
         try:
+            manual_budget = int(listing_budgets.get("manual") or max_listings)
             _drain_manual_queue(
                 summary,
                 analyze=analyze,
                 publish=publish,
-                limit=remaining if remaining > 0 else 0,
+                limit=manual_budget if manual_budget > 0 else 0,
                 run_id=run_id,
             )
         except Exception as exc:
