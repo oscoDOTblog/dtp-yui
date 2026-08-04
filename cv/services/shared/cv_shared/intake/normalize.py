@@ -6,7 +6,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
-from .fingerprints import build_fingerprints
+from .fingerprints import build_fingerprints, build_url_key
 from .location import assess_location
 from .role_filter import assess_role_fit
 
@@ -47,6 +47,7 @@ def normalize_raw_job(raw: dict[str, Any]) -> dict[str, Any]:
     work_mode = raw.get("workMode") or location_assessment.get("workArrangement") or "unknown"
     fingerprints = build_fingerprints(company, title, location)
     digest = _content_hash(description or f"{company}|{title}|{source_url or ''}")
+    url_key = build_url_key(apply_url) or build_url_key(source_url)
 
     # Location gate wins, then role gate.
     status = "new"
@@ -61,6 +62,7 @@ def normalize_raw_job(raw: dict[str, Any]) -> dict[str, Any]:
         "sourceUrl": source_url,
         "canonicalApplyUrl": apply_url,
         "url": apply_url or source_url,
+        "urlKey": url_key,
         "fetchStatus": raw.get("fetchStatus"),
         "title": title,
         "company": company,

@@ -75,6 +75,10 @@ Same ingest run also polls enabled Greenhouse boards from `cv_jobSources` when `
 
 Same ingest also polls enabled Ashby boards (`ats: "ashby"`) when `cv_settings.atsIngest.ashby` is true. Public posting API (`api.ashbyhq.com/posting-api/job-board/{slug}`) — no API key; descriptions included in the list response. Setup: [ASHBY_SETUP.md](ASHBY_SETUP.md).
 
+## Remotive remote-jobs API
+
+When `cv_settings.atsIngest.remotive` is true (opt-in in Settings → ATS board ingest), the same ingest run polls Remotive’s public API (`GET https://remotive.com/api/remote-jobs?category=software-dev`). No API key; full descriptions come in the list response. Same location + role gates as other sources. Public results are typically ~24h delayed — supplementary intake only, not primary “apply immediately”. Subject to Remotive API terms.
+
 ## Stage 4 GitHub evidence
 
 Worker cron at `:30` UTC (and manual Sync on Repositories) polls enabled repos in `cv_repositories` when `cv_settings.githubEvidence.enabled` is true. PAT in `secrets/github-token`. Commits by configured author logins are classified (Ollama + heuristics) into `cv_evidence` / skill ladder upgrades; `profileVersion` bumps trigger rescore of stale matches. Setup: [GITHUB_SETUP.md](GITHUB_SETUP.md).

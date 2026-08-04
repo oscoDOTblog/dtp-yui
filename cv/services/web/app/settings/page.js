@@ -57,7 +57,19 @@ const ATS_PROVIDERS = [
     description:
       "Poll curated Ashby job boards from the Sources watchlist. Board slug is the last path segment of jobs.ashbyhq.com/{slug}.",
   },
+  {
+    key: "remotive",
+    label: "Remotive",
+    description:
+      "Poll Remotive’s public remote-jobs API (category software-dev). Public results are ~24 hours delayed — useful as a supplementary source, not for apply-immediately. Subject to Remotive API terms.",
+  },
 ];
+
+const DEFAULT_ATS_INGEST = {
+  greenhouse: true,
+  ashby: true,
+  remotive: false,
+};
 
 const OLLAMA_THINK_PROCESSES = [
   {
@@ -155,7 +167,7 @@ export default function SettingsPage() {
     try {
       const data = await apiGet("/settings");
       setGmailIngest(data.gmailIngest || {});
-      setAtsIngest(data.atsIngest || { greenhouse: true, ashby: true });
+      setAtsIngest(data.atsIngest || DEFAULT_ATS_INGEST);
       setGithubEvidence(
         data.githubEvidence || { enabled: true, defaultLookback: "7d" }
       );

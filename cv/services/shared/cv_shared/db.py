@@ -40,6 +40,8 @@ def ensure_indexes(db: Database | None = None) -> None:
     db[C.JOBS].create_index("externalId", unique=True, sparse=True)
     db[C.JOBS].create_index("fingerprints.exact")
     db[C.JOBS].create_index("fingerprints.fuzzy")
+    db[C.JOBS].create_index("urlKey", sparse=True)
+    db[C.JOBS].create_index("altExternalIds", sparse=True)
     db[C.JOBS].create_index("source")
     db[C.JOBS].create_index("locationAssessment.bayAreaEligible")
     db[C.JOBS].create_index("roleAssessment.roleEligible")

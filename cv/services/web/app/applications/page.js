@@ -2,6 +2,20 @@ import { apiGet } from "../../lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardPanel } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Green <7d, yellow 7–14d, red 14d+. */
+function updatedAtToneClass(value) {
+  if (!value) return "text-muted-foreground";
+  const then = new Date(value).getTime();
+  if (Number.isNaN(then)) return "text-muted-foreground";
+  const ageDays = (Date.now() - then) / MS_PER_DAY;
+  if (ageDays < 7) return "text-success-foreground";
+  if (ageDays < 14) return "text-warning-foreground";
+  return "text-destructive-foreground";
+}
 
 export default async function ApplicationsPage() {
   let apps = [];
@@ -47,7 +61,12 @@ export default async function ApplicationsPage() {
               <p className="mt-1.5 m-0 text-sm text-muted-foreground">
                 Package: {app.package?.folderName || app.packageId}
               </p>
-              <p className="m-0 text-sm text-muted-foreground">
+              <p
+                className={cn(
+                  "m-0 text-sm font-medium",
+                  updatedAtToneClass(app.updatedAt),
+                )}
+              >
                 Updated: {app.updatedAt}
               </p>
               {app.job?._id ? (

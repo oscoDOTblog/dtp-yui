@@ -31,19 +31,22 @@ function NavMenu({ label, items }) {
   );
 }
 
+const INBOX_LINKS = [
+  { href: "/", label: "Inbox" },
+  { href: "/analyze", label: "Analyze" },
+  { href: "/applications", label: "Applications" },
+  { href: "/copilot", label: "Apply Copilot" },
+];
+
 export default function HeaderNav() {
   return (
     <div className="flex flex-1 flex-wrap items-center justify-end gap-x-4 gap-y-2 max-sm:justify-start">
       <nav className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <NavMenu
-          label="Inbox"
-          items={[
-            { href: "/", label: "Inbox" },
-            { href: "/analyze", label: "Analyze" },
-            { href: "/applications", label: "Applications" },
-            { href: "/copilot", label: "Apply Copilot" },
-          ]}
-        />
+        {INBOX_LINKS.map((item) => (
+          <a key={item.href} href={item.href} className={linkClass}>
+            {item.label}
+          </a>
+        ))}
         <NavMenu
           label="Profile"
           items={[

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import os
 import threading
@@ -30,6 +31,7 @@ from .gmail_client import (
 from .gmail_source import message_to_raw_jobs
 from .ashby_source import fetch_ashby_raw_jobs
 from .greenhouse_source import fetch_greenhouse_raw_jobs
+from .remotive_source import fetch_remotive_raw_jobs
 from .location import assess_location
 from .manual_queue import (
     claim_pending,
@@ -46,6 +48,51 @@ from .url_to_raw import is_enrich_blocked_or_empty, queue_item_to_raw
 logger = logging.getLogger(__name__)
 
 _ingest_lock = threading.Lock()
+
+# Per-listing wall clock (enrich + normalize + upsert + analyze). Hung Ollama /
+# network calls abandon after this so the run can continue. Env override supported.
+DEFAULT_JOB_TIMEOUT_SEC = 300
+
+
+class JobProcessTimeout(TimeoutError):
+    """Raised when a single listing exceeds INGEST_JOB_TIMEOUT_SEC."""
+
+
+def ingest_job_timeout_sec() -> float:
+    try:
+        return max(0.0, float(os.environ.get("INGEST_JOB_TIMEOUT_SEC", DEFAULT_JOB_TIMEOUT_SEC)))
+    except ValueError:
+        return float(DEFAULT_JOB_TIMEOUT_SEC)
+
+
+def _call_with_timeout(
+    fn: Callable[[], Any],
+    *,
+    timeout_sec: float,
+    label: str,
+) -> Any:
+    """Run ``fn``; if it exceeds ``timeout_sec``, abandon and raise JobProcessTimeout.
+
+    Uses a short-lived worker thread. On timeout the worker is not joined so the
+    ingest loop can move on (background work may still finish or hang).
+    """
+    if timeout_sec <= 0:
+        return fn()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(fn)
+    try:
+        return future.result(timeout=timeout_sec)
+    except concurrent.futures.TimeoutError as exc:
+        logger.error(
+            "Job process timed out after %.0fs (%s); skipping to next listing",
+            timeout_sec,
+            label,
+        )
+        raise JobProcessTimeout(
+            f"timed out after {int(timeout_sec)}s: {label}"
+        ) from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 # Inbox (Gmail/ATS) and Analyze (manual URL queue) run on separate lanes so
 # Fetch and /analyze can proceed independently.
@@ -312,6 +359,7 @@ def _ingest_raw_jobs(
 
     created_key = f"{count_prefix}JobsCreated" if count_prefix else None
     updated_key = f"{count_prefix}JobsUpdated" if count_prefix else None
+    timeout_sec = ingest_job_timeout_sec()
 
     for raw in raw_jobs:
         if run_id and _is_cancel_requested(run_id):
@@ -340,16 +388,16 @@ def _ingest_raw_jobs(
                 publish()
                 continue
 
-        try:
+        def _process_one(raw_job: dict = raw) -> dict[str, Any]:
             # ATS boards / pre-fetched content — skip URL enrich.
-            src = (raw.get("source") or "").strip().lower()
-            if src in ("greenhouse", "ashby") or (
-                raw.get("_queueMeta") or {}
+            src = (raw_job.get("source") or "").strip().lower()
+            if src in ("greenhouse", "ashby", "remotive") or (
+                raw_job.get("_queueMeta") or {}
             ).get("skipEnrich"):
-                enriched = {k: v for k, v in raw.items() if k != "_queueMeta"}
+                enriched = {k: v for k, v in raw_job.items() if k != "_queueMeta"}
             else:
                 enriched = enrich_raw_job(
-                    {k: v for k, v in raw.items() if k != "_queueMeta"}
+                    {k: v for k, v in raw_job.items() if k != "_queueMeta"}
                 )
             enriched = seed_placeholders_from_description(enriched)
             normalized = normalize_raw_job(enriched)
@@ -358,6 +406,45 @@ def _ingest_raw_jobs(
 
             drop = ingest_drop_reason(normalized, app_settings)
             if drop:
+                return {"kind": "drop", "drop": drop, "mid": mid}
+
+            result = upsert_normalized_job(normalized)
+            job = result["job"]
+            local: dict[str, Any] = {
+                "kind": "upserted",
+                "created": result["created"],
+                "job": job,
+                "analyzed": 0,
+                "telegramSent": 0,
+                "errors": [],
+                "outOfArea": 0,
+                "wrongRole": 0,
+            }
+            # Local summary slice so concurrent timeout workers don't share
+            # the mutable top-level summary (timeout abandons mid-flight).
+            sub = {
+                "analyzed": 0,
+                "telegramSent": 0,
+                "outOfArea": 0,
+                "wrongRole": 0,
+                "errors": [],
+            }
+            _analyze_after_upsert(
+                job, created=result["created"], analyze=analyze, summary=sub
+            )
+            local["analyzed"] = sub.get("analyzed", 0)
+            local["telegramSent"] = sub.get("telegramSent", 0)
+            local["outOfArea"] = sub.get("outOfArea", 0)
+            local["wrongRole"] = sub.get("wrongRole", 0)
+            local["errors"] = list(sub.get("errors") or [])
+            return local
+
+        try:
+            outcome = _call_with_timeout(
+                _process_one, timeout_sec=timeout_sec, label=title_label
+            )
+            if outcome.get("kind") == "drop":
+                drop = outcome["drop"]
                 if drop == "outOfArea":
                     summary["outOfArea"] = summary.get("outOfArea", 0) + 1
                     summary["skippedOutOfArea"] = (
@@ -371,27 +458,37 @@ def _ingest_raw_jobs(
                 if mid:
                     succeeded_messages.add(mid)
                     skipped_only_messages.discard(mid)
-                summary["listingsProcessed"] = summary.get("listingsProcessed", 0) + 1
-                publish()
-                continue
-
-            result = upsert_normalized_job(normalized)
-            job = result["job"]
-            if mid:
-                succeeded_messages.add(mid)
-                skipped_only_messages.discard(mid)
-            if result["created"]:
-                summary["jobsCreated"] += 1
-                if created_key:
-                    summary[created_key] = summary.get(created_key, 0) + 1
             else:
-                summary["jobsUpdated"] += 1
-                if updated_key:
-                    summary[updated_key] = summary.get(updated_key, 0) + 1
-
-            _analyze_after_upsert(
-                job, created=result["created"], analyze=analyze, summary=summary
-            )
+                if mid:
+                    succeeded_messages.add(mid)
+                    skipped_only_messages.discard(mid)
+                if outcome.get("created"):
+                    summary["jobsCreated"] += 1
+                    if created_key:
+                        summary[created_key] = summary.get(created_key, 0) + 1
+                else:
+                    summary["jobsUpdated"] += 1
+                    if updated_key:
+                        summary[updated_key] = summary.get(updated_key, 0) + 1
+                summary["analyzed"] = summary.get("analyzed", 0) + int(
+                    outcome.get("analyzed") or 0
+                )
+                summary["telegramSent"] = summary.get("telegramSent", 0) + int(
+                    outcome.get("telegramSent") or 0
+                )
+                summary["outOfArea"] = summary.get("outOfArea", 0) + int(
+                    outcome.get("outOfArea") or 0
+                )
+                summary["wrongRole"] = summary.get("wrongRole", 0) + int(
+                    outcome.get("wrongRole") or 0
+                )
+                for err in outcome.get("errors") or []:
+                    summary["errors"].append(err)
+        except JobProcessTimeout as exc:
+            summary["skippedTimedOut"] = summary.get("skippedTimedOut", 0) + 1
+            summary["errors"].append(str(exc))
+            if mid:
+                failed_messages.add(mid)
         except Exception as exc:
             logger.exception("listing ingest failed")
             summary["errors"].append(str(exc))
@@ -454,6 +551,9 @@ def _analyze_after_upsert(
     ``force=True`` (manual URL queue): always run the same ``analyze_job`` path as
     the job-page Re-analyze button. Early Bay Area / role gates often fire while
     title/location are still placeholders, and existing matches skip re-analyze.
+
+    Cross-source reposts merge onto one job row; once analyzed we never re-run
+    automatic scoring for that row (skip match / status checks below).
     """
     if not force:
         if job.get("status") == "out_of_area":
@@ -465,12 +565,13 @@ def _analyze_after_upsert(
     if not analyze:
         return
     db = get_db()
+    job_id = job["_id"]
 
     if force:
         try:
-            match = analyze_job(job["_id"])
+            match = analyze_job(job_id)
             summary["analyzed"] = summary.get("analyzed", 0) + 1
-            refreshed = _refresh_job_assessments(job["_id"]) or job
+            refreshed = _refresh_job_assessments(job_id) or job
             loc_ok = bool(
                 refreshed.get("locationAssessment", {}).get("bayAreaEligible")
             )
@@ -482,8 +583,18 @@ def _analyze_after_upsert(
             elif notify_apply_match(refreshed, match):
                 summary["telegramSent"] = summary.get("telegramSent", 0) + 1
         except Exception as exc:
-            logger.exception("analyze failed for %s", job["_id"])
-            summary["errors"].append(f"analyze {job['_id']}: {exc}")
+            logger.exception("analyze failed for %s", job_id)
+            summary["errors"].append(f"analyze {job_id}: {exc}")
+        return
+
+    # Already scored / packaged — cross-board repost or re-poll. Do not re-LLM.
+    already_analyzed = job.get("status") in ("analyzed", "drafted")
+    if not already_analyzed and db[C.JOB_MATCHES].find_one({"jobId": job_id}):
+        already_analyzed = True
+    if already_analyzed:
+        summary["skippedAlreadyAnalyzed"] = (
+            summary.get("skippedAlreadyAnalyzed", 0) + 1
+        )
         return
 
     eligible = bool(
@@ -497,30 +608,17 @@ def _analyze_after_upsert(
     ):
         eligible = bool(job.get("locationAssessment", {}).get("bayAreaEligible"))
 
-    if created and eligible:
-        try:
-            match = analyze_job(job["_id"])
-            summary["analyzed"] += 1
-            if notify_apply_match(job, match):
-                summary["telegramSent"] += 1
-        except Exception as exc:
-            logger.exception("analyze failed for %s", job["_id"])
-            summary["errors"].append(f"analyze {job['_id']}: {exc}")
+    if not eligible:
         return
-    if not created and eligible and job.get("status") not in (
-        "out_of_area",
-        "wrong_role",
-    ):
-        existing_match = db[C.JOB_MATCHES].find_one({"jobId": job["_id"]})
-        if not existing_match:
-            try:
-                match = analyze_job(job["_id"])
-                summary["analyzed"] += 1
-                if notify_apply_match(job, match):
-                    summary["telegramSent"] += 1
-            except Exception as exc:
-                summary["errors"].append(f"analyze {job['_id']}: {exc}")
 
+    try:
+        match = analyze_job(job_id)
+        summary["analyzed"] = summary.get("analyzed", 0) + 1
+        if notify_apply_match(job, match):
+            summary["telegramSent"] = summary.get("telegramSent", 0) + 1
+    except Exception as exc:
+        logger.exception("analyze failed for %s", job_id)
+        summary["errors"].append(f"analyze {job_id}: {exc}")
 
 def _drain_manual_queue(
     summary: dict[str, Any],
@@ -540,6 +638,7 @@ def _drain_manual_queue(
         return
 
     total_claimed = 0
+    timeout_sec = ingest_job_timeout_sec()
     while claim_budget > 0:
         if run_id and _is_cancel_requested(run_id):
             summary["status"] = "cancelled"
@@ -571,17 +670,22 @@ def _drain_manual_queue(
             title_label = item.get("url") or queue_id
             summary["currentTitle"] = f"Queue: {title_label}"
             publish()
-            try:
-                raw = queue_item_to_raw(item)
+
+            def _process_queue_item(queue_item: dict = item) -> dict[str, Any]:
+                raw = queue_item_to_raw(queue_item)
                 queue_meta = raw.pop("_queueMeta", {}) or {}
                 raw_title = (raw.get("title") or "").strip()
                 raw_company = (raw.get("company") or "").strip()
+                progress_label = title_label
                 if raw_title and raw_title not in ("Untitled", "Untitled role"):
-                    title_label = f"{raw_title} @ {raw_company or '?'}"
-                    summary["currentTitle"] = f"Queue: {title_label}"
-                    publish()
+                    progress_label = f"{raw_title} @ {raw_company or '?'}"
+
                 src = (raw.get("source") or "").strip().lower()
-                if queue_meta.get("skipEnrich") or src in ("greenhouse", "ashby"):
+                if queue_meta.get("skipEnrich") or src in (
+                    "greenhouse",
+                    "ashby",
+                    "remotive",
+                ):
                     enriched = raw
                 else:
                     enriched = enrich_raw_job(raw)
@@ -589,17 +693,11 @@ def _drain_manual_queue(
                 if queue_meta.get("needsPasteIfBlocked") and is_enrich_blocked_or_empty(
                     enriched
                 ):
-                    mark_needs_paste(
-                        queue_id,
-                        error="Could not read that page. Paste the job description.",
-                        fetch_status=enriched.get("fetchStatus") or "blocked",
-                    )
-                    summary["queueNeedsPaste"] = summary.get("queueNeedsPaste", 0) + 1
-                    summary["listingsProcessed"] = (
-                        summary.get("listingsProcessed", 0) + 1
-                    )
-                    publish()
-                    continue
+                    return {
+                        "kind": "needsPaste",
+                        "progressLabel": progress_label,
+                        "fetchStatus": enriched.get("fetchStatus") or "blocked",
+                    }
 
                 # Fill placeholders from description before Bay Area / role gates
                 enriched = seed_placeholders_from_description(enriched)
@@ -612,44 +710,95 @@ def _drain_manual_queue(
                 # wrong-role filters (still store assessments + status on the job).
                 result = upsert_normalized_job(normalized)
                 job = result["job"]
-                if result["created"]:
-                    summary["jobsCreated"] += 1
-                    summary["manualJobsCreated"] = (
-                        summary.get("manualJobsCreated", 0) + 1
-                    )
-                else:
-                    summary["jobsUpdated"] += 1
-                    summary["manualJobsUpdated"] = (
-                        summary.get("manualJobsUpdated", 0) + 1
-                    )
-
-                progress_title = (job.get("title") or "").strip()
-                progress_company = (job.get("company") or "").strip()
-                if progress_title and progress_title not in (
-                    "Untitled",
-                    "Untitled role",
-                ):
-                    summary["currentTitle"] = (
-                        f"Analyzing: {progress_title} @ {progress_company or '?'}"
-                    )
-                    publish()
-
+                sub: dict[str, Any] = {
+                    "analyzed": 0,
+                    "telegramSent": 0,
+                    "outOfArea": 0,
+                    "wrongRole": 0,
+                    "errors": [],
+                }
                 # Same path as job-page Re-analyze — do not skip on early gates
                 _analyze_after_upsert(
                     job,
                     created=result["created"],
                     analyze=analyze,
-                    summary=summary,
+                    summary=sub,
                     force=True,
                 )
                 job = get_db()[C.JOBS].find_one({"_id": job["_id"]}) or job
-                mark_done(
-                    queue_id,
-                    job_id=job.get("_id"),
-                    fetch_status=enriched.get("fetchStatus"),
-                    job_title=job.get("title"),
-                    job_company=job.get("company"),
+                return {
+                    "kind": "done",
+                    "created": result["created"],
+                    "job": job,
+                    "enriched": enriched,
+                    "progressLabel": progress_label,
+                    "sub": sub,
+                }
+
+            try:
+                outcome = _call_with_timeout(
+                    _process_queue_item,
+                    timeout_sec=timeout_sec,
+                    label=f"queue {title_label}",
                 )
+                if outcome.get("kind") == "needsPaste":
+                    mark_needs_paste(
+                        queue_id,
+                        error="Could not read that page. Paste the job description.",
+                        fetch_status=outcome.get("fetchStatus") or "blocked",
+                    )
+                    summary["queueNeedsPaste"] = summary.get("queueNeedsPaste", 0) + 1
+                else:
+                    job = outcome["job"]
+                    enriched = outcome["enriched"]
+                    sub = outcome.get("sub") or {}
+                    if outcome.get("created"):
+                        summary["jobsCreated"] += 1
+                        summary["manualJobsCreated"] = (
+                            summary.get("manualJobsCreated", 0) + 1
+                        )
+                    else:
+                        summary["jobsUpdated"] += 1
+                        summary["manualJobsUpdated"] = (
+                            summary.get("manualJobsUpdated", 0) + 1
+                        )
+                    summary["analyzed"] = summary.get("analyzed", 0) + int(
+                        sub.get("analyzed") or 0
+                    )
+                    summary["telegramSent"] = summary.get("telegramSent", 0) + int(
+                        sub.get("telegramSent") or 0
+                    )
+                    summary["outOfArea"] = summary.get("outOfArea", 0) + int(
+                        sub.get("outOfArea") or 0
+                    )
+                    summary["wrongRole"] = summary.get("wrongRole", 0) + int(
+                        sub.get("wrongRole") or 0
+                    )
+                    for err in sub.get("errors") or []:
+                        summary["errors"].append(err)
+
+                    progress_title = (job.get("title") or "").strip()
+                    progress_company = (job.get("company") or "").strip()
+                    if progress_title and progress_title not in (
+                        "Untitled",
+                        "Untitled role",
+                    ):
+                        summary["currentTitle"] = (
+                            f"Analyzed: {progress_title} @ {progress_company or '?'}"
+                        )
+                        publish()
+
+                    mark_done(
+                        queue_id,
+                        job_id=job.get("_id"),
+                        fetch_status=enriched.get("fetchStatus"),
+                        job_title=job.get("title"),
+                        job_company=job.get("company"),
+                    )
+            except JobProcessTimeout as exc:
+                summary["skippedTimedOut"] = summary.get("skippedTimedOut", 0) + 1
+                summary["errors"].append(f"queue {queue_id}: {exc}")
+                mark_failed(queue_id, error=str(exc))
             except Exception as exc:
                 logger.exception("manual queue ingest failed for %s", queue_id)
                 summary["errors"].append(f"queue {queue_id}: {exc}")
@@ -674,13 +823,21 @@ def run_ingest(
     sources: str = "all",
     greenhouse_source_ids: list[str] | None = None,
     ashby_source_ids: list[str] | None = None,
+    max_listings: int | None = None,
 ) -> dict[str, Any]:
-    """Run one ingest cycle. sources: all | gmail | greenhouse | ashby | manual."""
+    """Run one ingest cycle. sources: all | gmail | greenhouse | ashby | remotive | manual."""
     started = _now()
     db = get_db()
     run_id = run_id or f"ingest_{uuid.uuid4().hex[:16]}"
     sources_mode = (sources or "all").strip().lower()
-    if sources_mode not in ("all", "gmail", "greenhouse", "ashby", "manual"):
+    if sources_mode not in (
+        "all",
+        "gmail",
+        "greenhouse",
+        "ashby",
+        "remotive",
+        "manual",
+    ):
         sources_mode = "all"
     lane = ingest_lane_for_sources(sources_mode)
 
@@ -695,6 +852,8 @@ def run_ingest(
         "wrongRole": 0,
         "skippedOutOfArea": 0,
         "skippedWrongRole": 0,
+        "skippedTimedOut": 0,
+        "skippedAlreadyAnalyzed": 0,
         "listingsTotal": 0,
         "listingsProcessed": 0,
         "telegramSent": 0,
@@ -709,6 +868,8 @@ def run_ingest(
         "greenhouseJobsUpdated": 0,
         "ashbyJobsCreated": 0,
         "ashbyJobsUpdated": 0,
+        "remotiveJobsCreated": 0,
+        "remotiveJobsUpdated": 0,
         "manualJobsCreated": 0,
         "manualJobsUpdated": 0,
         "queueClaimed": 0,
@@ -786,9 +947,13 @@ def run_ingest(
     run_gmail = sources_mode in ("all", "gmail")
     run_greenhouse = sources_mode in ("all", "greenhouse")
     run_ashby = sources_mode in ("all", "ashby")
+    run_remotive = sources_mode in ("all", "remotive")
     # Analyze URL queue is its own lane — never drained by Inbox/hourly sources=all
     run_manual = sources_mode == "manual"
-    max_listings = ingest_max_listings()
+    if max_listings is None or max_listings < 1:
+        max_listings = ingest_max_listings()
+    else:
+        max_listings = int(max_listings)
     remaining = max_listings
 
     # --- Gmail ---
@@ -1006,6 +1171,68 @@ def run_ingest(
                 run_id=run_id,
             )
 
+    # --- Remotive (global remote-jobs API) ---
+    if run_remotive and not was_cancelled():
+        if not is_ats_source_enabled("remotive", app_settings):
+            summary["skippedDisabledAts"] = {
+                **(summary.get("skippedDisabledAts") or {}),
+                "remotive": True,
+            }
+            publish()
+        else:
+            try:
+                remotive_raw, remotive_stats = fetch_remotive_raw_jobs(
+                    app_settings=app_settings,
+                    limit=remaining if remaining > 0 else None,
+                )
+            except Exception as exc:
+                logger.exception("Remotive fetch failed")
+                summary["errors"].append(f"remotive: {exc}")
+                remotive_raw, remotive_stats = [], {
+                    "sourcesPolled": 0,
+                    "sourcesFailed": 0,
+                    "jobsFetched": 0,
+                }
+
+            summary["sourcesPolled"] = summary.get("sourcesPolled", 0) + int(
+                remotive_stats.get("sourcesPolled") or 0
+            )
+            summary["sourcesFailed"] = summary.get("sourcesFailed", 0) + int(
+                remotive_stats.get("sourcesFailed") or 0
+            )
+            summary["remotiveJobsListed"] = remotive_stats.get("jobsListed", 0)
+            summary["remotiveJobsPrefiltered"] = remotive_stats.get(
+                "jobsPrefiltered", 0
+            )
+            summary["skippedOutOfArea"] = summary.get("skippedOutOfArea", 0) + int(
+                remotive_stats.get("skippedOutOfArea") or 0
+            )
+            summary["skippedWrongRole"] = summary.get("skippedWrongRole", 0) + int(
+                remotive_stats.get("skippedWrongRole") or 0
+            )
+            remotive_raw, remaining = _truncate_listings(
+                remotive_raw,
+                remaining=remaining,
+                label="Remotive",
+                max_listings=max_listings,
+                summary=summary,
+            )
+            summary["listingsTotal"] = summary.get("listingsTotal", 0) + len(
+                remotive_raw
+            )
+            publish()
+
+            _ingest_raw_jobs(
+                remotive_raw,
+                summary,
+                analyze=analyze,
+                app_settings=app_settings,
+                publish=publish,
+                gate_gmail=False,
+                count_prefix="remotive",
+                run_id=run_id,
+            )
+
     # --- Manual URL queue ---
     if run_manual and not was_cancelled():
         try:
@@ -1044,6 +1271,7 @@ def start_ingest_async(
     sources: str = "all",
     greenhouse_source_ids: list[str] | None = None,
     ashby_source_ids: list[str] | None = None,
+    max_listings: int | None = None,
 ) -> dict[str, Any]:
     """Background ingest. Inbox and Analyze lanes are single-flight independently."""
     sources_mode = (sources or "all").strip().lower()
@@ -1092,6 +1320,7 @@ def start_ingest_async(
                     sources=sources,
                     greenhouse_source_ids=greenhouse_source_ids,
                     ashby_source_ids=ashby_source_ids,
+                    max_listings=max_listings,
                 )
             except Exception:
                 logger.exception("background ingest failed")

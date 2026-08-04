@@ -1083,10 +1083,12 @@ def post_ingest_run(
     analyze: bool = True,
     reprocess: bool = False,
     sources: str = "all",
+    maxListings: int | None = None,
 ) -> dict:
     """Start ingest in the background. Returns immediately.
 
-    sources: all | gmail | greenhouse | ashby | manual (default all).
+    sources: all | gmail | greenhouse | ashby | remotive | manual (default all).
+    maxListings: optional cap on listings processed this run (smoke tests).
     Pass reprocess=true to clear processed-message markers first.
     Returns 409 payload (accepted=false) if an ingest is already running.
     """
@@ -1094,7 +1096,10 @@ def post_ingest_run(
 
     try:
         result = start_ingest_async(
-            analyze=analyze, reprocess=reprocess, sources=sources
+            analyze=analyze,
+            reprocess=reprocess,
+            sources=sources,
+            max_listings=maxListings if maxListings and maxListings > 0 else None,
         )
     except Exception as exc:
         logger.exception("ingest start failed")

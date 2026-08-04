@@ -85,7 +85,7 @@
 ## Explicitly deferred
 
 - LinkedIn browser automation / scraping
-- Mass remote APIs (Remotive, etc.) as primary intake
+- Mass remote APIs (Remotive, etc.) as primary intake (Remotive is available opt-in as supplementary only)
 - USAJOBS unless opted in
 - Live commute APIs
 - Fully autonomous submission without human review

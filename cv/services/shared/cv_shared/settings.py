@@ -21,7 +21,7 @@ GMAIL_INGEST_KEYS = (
 # Master switch for all Gmail API ingest (sender keys are nested filters)
 GMAIL_INGEST_MASTER_KEY = "enabled"
 
-ATS_INGEST_KEYS = ("greenhouse", "ashby")
+ATS_INGEST_KEYS = ("greenhouse", "ashby", "remotive")
 
 LOOKBACK_PRESETS = ("1d", "7d", "30d", "90d", "365d", "all")
 
@@ -29,7 +29,12 @@ DEFAULT_GMAIL_INGEST = {
     GMAIL_INGEST_MASTER_KEY: True,
     **{key: True for key in GMAIL_INGEST_KEYS},
 }
-DEFAULT_ATS_INGEST = {key: True for key in ATS_INGEST_KEYS}
+# remotive is opt-in (supplementary; public API is ~24h delayed)
+DEFAULT_ATS_INGEST = {
+    "greenhouse": True,
+    "ashby": True,
+    "remotive": False,
+}
 DEFAULT_GITHUB_EVIDENCE = {
     "enabled": True,
     "authorLogins": ["oscoDOTblog"],

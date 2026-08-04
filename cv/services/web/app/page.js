@@ -373,7 +373,10 @@ export default function HomePage() {
     setCancelStartedAt(null);
     setShowForceClear(false);
     try {
-      const path = reprocess ? "/ingest/run?reprocess=true" : "/ingest/run";
+      // Cap manual Inbox Fetch at 10 so Remotive / source toggles are easy to verify.
+      const path = reprocess
+        ? "/ingest/run?reprocess=true&maxListings=10"
+        : "/ingest/run?maxListings=10";
       const result = await apiPost(path);
       setRunId(result.runId);
       setIngestStatus({
