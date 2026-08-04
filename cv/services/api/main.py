@@ -1088,7 +1088,9 @@ def post_ingest_run(
     """Start ingest in the background. Returns immediately.
 
     sources: all | gmail | greenhouse | ashby | remotive | manual (default all).
-    maxListings: optional cap on listings processed this run (smoke tests).
+    maxListings: optional total cap (fair-split across sources). When omitted:
+      AUTO_PROCESSING_ENABLED=true  → INGEST_MAX_LISTINGS fair split
+      AUTO_PROCESSING_ENABLED=false → 10 per active source (INGEST_MANUAL_PER_SOURCE)
     Pass reprocess=true to clear processed-message markers first.
     Returns 409 payload (accepted=false) if an ingest is already running.
     """

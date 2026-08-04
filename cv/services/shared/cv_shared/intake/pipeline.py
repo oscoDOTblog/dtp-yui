@@ -13,6 +13,7 @@ from typing import Any, Callable
 from .. import collections as C
 from ..db import get_db
 from ..matching import analyze_job, seed_placeholders_from_description
+from ..runtime import auto_processing_enabled
 from ..settings import (
     get_app_settings,
     ingest_drop_reason,
@@ -114,6 +115,22 @@ def ingest_max_listings() -> int:
         return max(1, int(os.environ.get("INGEST_MAX_LISTINGS", "500")))
     except ValueError:
         return 500
+
+
+def ingest_manual_per_source() -> int:
+    """Listings allowed per source when AUTO_PROCESSING_ENABLED is off (smoke / laptop)."""
+    try:
+        return max(1, int(os.environ.get("INGEST_MANUAL_PER_SOURCE", "10")))
+    except ValueError:
+        return 10
+
+
+def split_per_source_budgets(
+    active_sources: list[str], *, per_source: int
+) -> dict[str, int]:
+    """Give each active source the same fixed cap (no shared pool)."""
+    cap = max(0, int(per_source))
+    return {key: cap for key in active_sources}
 
 
 def _is_cancel_requested(run_id: str | None) -> bool:
@@ -990,22 +1007,40 @@ def run_ingest(
     run_remotive = sources_mode in ("all", "remotive")
     # Analyze URL queue is its own lane — never drained by Inbox/hourly sources=all
     run_manual = sources_mode == "manual"
-    if max_listings is None or max_listings < 1:
-        max_listings = ingest_max_listings()
-    else:
-        max_listings = int(max_listings)
 
     # Fair split of listing budget across sources that will actually fetch
     # (no leftover redistribution if one source underfills its share).
+    #
+    # Defaults when max_listings is not passed explicitly:
+    #   AUTO_PROCESSING_ENABLED=true  → full INGEST_MAX_LISTINGS, even split
+    #   AUTO_PROCESSING_ENABLED=false → INGEST_MANUAL_PER_SOURCE (default 10)
+    #                                  listing cap *per* active source
     if run_manual:
+        if max_listings is None or max_listings < 1:
+            max_listings = ingest_max_listings()
+        else:
+            max_listings = int(max_listings)
         listing_budgets: dict[str, int] = {"manual": max_listings}
+        summary["budgetMode"] = "manual"
     else:
-        listing_budgets = split_listing_budgets(
-            max_listings,
-            _active_inbox_sources(
-                sources_mode=sources_mode, app_settings=app_settings
-            ),
+        active = _active_inbox_sources(
+            sources_mode=sources_mode, app_settings=app_settings
         )
+        if max_listings is not None and max_listings > 0:
+            max_listings = int(max_listings)
+            listing_budgets = split_listing_budgets(max_listings, active)
+            summary["budgetMode"] = "explicit"
+        elif auto_processing_enabled():
+            max_listings = ingest_max_listings()
+            listing_budgets = split_listing_budgets(max_listings, active)
+            summary["budgetMode"] = "autoFull"
+        else:
+            per = ingest_manual_per_source()
+            listing_budgets = split_per_source_budgets(active, per_source=per)
+            max_listings = per * max(len(active), 1)
+            summary["budgetMode"] = "manualPerSource"
+            summary["manualPerSource"] = per
+
     summary["listingBudgets"] = dict(listing_budgets)
     summary["maxListings"] = max_listings
     publish()

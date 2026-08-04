@@ -396,10 +396,9 @@ export default function HomePage() {
     setCancelStartedAt(null);
     setShowForceClear(false);
     try {
-      // Cap manual Inbox Fetch at 10 so Remotive / source toggles are easy to verify.
-      const path = reprocess
-        ? "/ingest/run?reprocess=true&maxListings=10"
-        : "/ingest/run?maxListings=10";
+      // Budget comes from the API: full INGEST_MAX_LISTINGS when
+      // AUTO_PROCESSING_ENABLED, else 10 listings per active source.
+      const path = reprocess ? "/ingest/run?reprocess=true" : "/ingest/run";
       const result = await apiPost(path);
       setRunId(result.runId);
       setIngestStatus({
