@@ -42,7 +42,30 @@ function sourceLabel(job) {
   if (src === "gmail" && discovered) return discovered.replace(/-email$/, "");
   if (src === "greenhouse") return "greenhouse";
   if (src === "ashby") return "ashby";
+  if (src === "remotive") return "remotive";
   return src;
+}
+
+/** When the job was first ingested into the inbox. */
+function processedAt(job) {
+  return job?.firstSeenAt || job?.discoveredAt || null;
+}
+
+function formatProcessedDate(value) {
+  if (!value) return null;
+  try {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+    return d.toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return String(value);
+  }
 }
 
 function listingUrl(job) {
@@ -697,6 +720,7 @@ export default function HomePage() {
           const appStatus = applicationStatusChip(job);
           const openHref = listingUrl(job);
           const selected = selectedIds.has(job._id);
+          const processedLabel = formatProcessedDate(processedAt(job));
           return (
             <Card
               key={job._id}
@@ -749,6 +773,11 @@ export default function HomePage() {
                     <p className="mt-1.5 m-0 text-sm text-muted-foreground">
                       {jobMetaLine(job)}
                     </p>
+                    {processedLabel ? (
+                      <p className="mt-1 m-0 text-xs text-muted-foreground">
+                        Processed: {processedLabel}
+                      </p>
+                    ) : null}
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       <Badge variant="outline">{sourceLabel(job)}</Badge>
                       {loc ? (
