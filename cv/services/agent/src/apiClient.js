@@ -41,8 +41,35 @@ export function createApiClient(apiBase) {
     ingestGlassdoorJob: (payload) =>
       request("POST", "/agent/jobs/ingest", payload),
     analyzeJob: (jobId) => request("POST", `/jobs/${jobId}/analyze`),
-    generatePackage: (jobId) => request("POST", `/jobs/${jobId}/generate`),
+    generatePackage: async (jobId) => {
+      const started = await request("POST", `/jobs/${jobId}/generate`);
+      const runId = started?.runId;
+      const deadline = Date.now() + 20 * 60 * 1000;
+      while (Date.now() < deadline) {
+        const status = await request(
+          "GET",
+          runId
+            ? `/jobs/${jobId}/generate?runId=${encodeURIComponent(runId)}`
+            : `/jobs/${jobId}/generate`
+        );
+        if (status?.status === "completed") {
+          return request("GET", `/jobs/${jobId}/package`);
+        }
+        if (status?.status === "failed") {
+          throw new Error(status.error || status.message || "Package generation failed");
+        }
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+      throw new Error("Package generation timed out waiting for API");
+    },
     getPackage: (jobId) => request("GET", `/jobs/${jobId}/package`),
+    getGenerateStatus: (jobId, runId) =>
+      request(
+        "GET",
+        runId
+          ? `/jobs/${jobId}/generate?runId=${encodeURIComponent(runId)}`
+          : `/jobs/${jobId}/generate`
+      ),
     setApplicationStatus: (jobId, applicationStatus, note) =>
       request("PATCH", `/jobs/${jobId}/application-status`, {
         applicationStatus,

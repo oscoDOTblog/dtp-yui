@@ -45,9 +45,11 @@ When set to **OpenAI** and `secrets/openai-api-key` (or `OPENAI_API_KEY`) is pre
 
 1. Job Analyzer → 2. Evidence Ranker → 3. Resume Composer → 4. Resume Critic (optional one revise) → 5. Cover Letter → 6. Consistency Review
 
+Generation is **async**: `POST /jobs/{id}/generate` returns immediately and work continues in a background thread (`cv_shared/package_runs.py`, run type `generatePackage` on `cv_systemRuns`). The UI and apply agent poll `GET /jobs/{id}/generate` until complete, so navigating away from the job page does not cancel the run. Single-flight per job; stale runs older than 45 minutes are marked failed.
+
 Those stages share process names under `DOCUMENT_PROVIDER_PROCESSES` and record usage per process in `cv_openaiUsage`. Failures degrade gracefully (match-based analyzer, deterministic ranking, etc.); if the whole pipeline throws, generation falls back to the simple tailor + cover path. Job extract, profile update, and GitHub classify always use Ollama. Toggle and pick the model in Settings → Document generation.
 
-When set to **Ollama**, packages use a simple two-step path: single resume tailor + single cover letter (still sourceId-verified).
+When set to **Ollama**, packages use a simple two-step path: single resume tailor + single cover letter (still sourceId-verified). The same background `POST`/`GET` generate protocol is used regardless of provider.
 
 The model registry lives in `cv_shared/openai_client.py`. Each entry records its free-tier bucket (`standard` = 1M tokens/day, `mini` = 10M tokens/day, both resetting at UTC midnight) and whether the model accepts `temperature` — GPT-5 reasoning models reject it, so the parameter is omitted for those.
 

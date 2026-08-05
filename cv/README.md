@@ -108,7 +108,7 @@ Short version:
 1. Open **Analyze**, paste one or more job URLs (one per line) to queue them for intake. Processing starts immediately if ingest is idle; otherwise they wait for the next hourly run. If a page is blocked, attach a pasted description on the queue row.
 2. Review score, strong evidence, and meaningful gaps on the job page (Inbox also fills from Gmail / Greenhouse).
 3. Check **Gaps** for recurring missing requirements ranked by frequency (mark Learning / Resolved as you close them).
-4. Click **Generate documents** → files land in `generated-applications/{company}-{role}/`.
+4. Click **Generate documents** → work continues on the API even if you leave the page; files land in `generated-applications/{company}-{role}/` when done. Re-open the job to see progress / package.
 5. Open the listing yourself and submit (Level 1 automation).
 
 ## Seed data

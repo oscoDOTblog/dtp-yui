@@ -154,8 +154,6 @@ def build_resume_lines(
         "EDUCATION",
         edu.get("institution") or "",
         f"{edu.get('degree') or ''} | {edu.get('school') or ''} | {edu.get('location') or ''} | {edu.get('graduatedAt') or ''}",
-        "",
-        f"Tailored for: {job.get('title')} at {job.get('company')} (role family: {role_family})",
     ]
     return lines
 
@@ -171,116 +169,17 @@ def build_tailored_resume_lines(
     job: dict | None = None,
 ) -> list[str]:
     """Plain-text resume lines from a verified TailorPayload (legacy PDF/txt)."""
-    by_id = {a.id: a for a in catalog}
-    rewrite = payload.rewrite_map()
-    skill_by_id = {s["_id"]: s for s in skills if s.get("_id")}
-    work_by_id = {w["_id"]: w for w in work_history if w.get("_id")}
-    project_by_id = {p["_id"]: p for p in projects if p.get("_id")}
+    from .layout import build_resume_layout, layout_to_plain_lines
 
-    contact = " | ".join(
-        filter(
-            None,
-            [
-                candidate.get("location"),
-                candidate.get("email"),
-                candidate.get("phone"),
-                candidate.get("linkedin"),
-                candidate.get("github"),
-            ],
-        )
+    layout = build_resume_layout(
+        candidate=candidate,
+        skills=skills,
+        work_history=work_history,
+        projects=projects,
+        catalog=catalog,
+        payload=payload,
     )
-    lines = [candidate.get("name") or "Candidate", contact, ""]
-    if getattr(payload, "targetRole", None):
-        lines += [str(payload.targetRole), ""]
-    if payload.summary:
-        lines += ["PROFESSIONAL SUMMARY", payload.summary, ""]
-
-    highlights = list(getattr(payload, "highlights", None) or [])
-    if highlights:
-        lines.append("SELECTED HIGHLIGHTS")
-        for h in highlights:
-            lines.append(f"• {h.text}")
-        lines.append("")
-
-    skill_lines = _format_skill_lines(payload, skill_by_id)
-    if skill_lines:
-        lines.append("TECHNICAL SKILLS")
-        lines.extend(skill_lines)
-        lines.append("")
-
-    work_order: list[str] = []
-    work_groups: dict[str, list[str]] = {}
-    for aid in payload.selectedAchievementIds:
-        ach = by_id.get(aid)
-        if not ach or ach.kind != "work":
-            continue
-        if ach.parentId not in work_groups:
-            work_groups[ach.parentId] = []
-            work_order.append(ach.parentId)
-        work_groups[ach.parentId].append(rewrite.get(aid) or ach.statement)
-
-    if work_order:
-        lines.append("PROFESSIONAL EXPERIENCE")
-        for wid in work_order:
-            role = work_by_id.get(wid) or {}
-            lines.append(
-                f"{role.get('company') or 'Employer'} — {role.get('title') or ''}".strip(
-                    " —"
-                )
-            )
-            lines.append(
-                f"{role.get('startDate') or ''} – {role.get('endDate') or 'Present'}"
-            )
-            for b in work_groups[wid]:
-                lines.append(f"• {b}")
-            lines.append("")
-
-    project_order: list[str] = []
-    project_groups: dict[str, list[str]] = {}
-    for aid in payload.selectedAchievementIds:
-        ach = by_id.get(aid)
-        if not ach or ach.kind != "project":
-            continue
-        if ach.parentId not in project_groups:
-            project_groups[ach.parentId] = []
-            project_order.append(ach.parentId)
-        project_groups[ach.parentId].append(rewrite.get(aid) or ach.statement)
-
-    if project_order:
-        lines.append("INDEPENDENT PROJECTS")
-        lines.append(
-            "Founder & Software Engineer | Oakland, California | November 2025 – Present"
-        )
-        for pid in project_order:
-            project = project_by_id.get(pid) or {}
-            lines.append(project.get("name") or pid)
-            for b in project_groups[pid]:
-                lines.append(f"• {b}")
-            lines.append("")
-
-    edu = (candidate.get("education") or [{}])[0]
-    if edu:
-        lines.append("EDUCATION")
-        if edu.get("institution"):
-            lines.append(str(edu.get("institution")))
-        edu_line = " | ".join(
-            filter(
-                None,
-                [
-                    edu.get("degree"),
-                    edu.get("school"),
-                    edu.get("location"),
-                    edu.get("graduatedAt"),
-                ],
-            )
-        )
-        if edu_line:
-            lines.append(edu_line)
-        lines.append("")
-
-    if job:
-        lines.append(f"Tailored for: {job.get('title')} at {job.get('company')}")
-    return lines
+    return layout_to_plain_lines(layout)
 
 
 def _format_skill_lines(payload, skill_by_id: dict) -> list[str]:

@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .achievements import Achievement, catalog_by_id
+from .achievements import Achievement
+from .layout import build_resume_layout
 from .tailor import TailorPayload
 
 logger = logging.getLogger(__name__)
@@ -27,149 +28,129 @@ def build_rendercv_data(
     payload: TailorPayload,
     template_id: str = "classic",
 ) -> dict[str, Any]:
-    by_id = catalog_by_id(catalog)
-    rewrite = payload.rewrite_map()
-    skill_by_id = {s["_id"]: s for s in skills if s.get("_id")}
-    work_by_id = {w["_id"]: w for w in work_history if w.get("_id")}
-    project_by_id = {p["_id"]: p for p in projects if p.get("_id")}
+    layout = build_resume_layout(
+        candidate=candidate,
+        skills=skills,
+        work_history=work_history,
+        projects=projects,
+        catalog=catalog,
+        payload=payload,
+    )
 
     sections: dict[str, Any] = {}
 
-    if payload.summary:
-        sections["summary"] = [payload.summary]
+    if layout.summary:
+        sections["summary"] = [layout.summary]
 
-    highlights = list(getattr(payload, "highlights", None) or [])
-    if highlights:
-        sections["highlights"] = [h.text for h in highlights]
+    if layout.highlights:
+        sections["highlights"] = list(layout.highlights)
 
-    skill_groups = getattr(payload, "skillsGrouped", None) or {}
-    if skill_groups:
-        sections["skills"] = []
-        for cat, ids in skill_groups.items():
-            names = [
-                skill_by_id[sid]["name"]
-                for sid in ids
-                if sid in skill_by_id and skill_by_id[sid].get("name")
-            ]
-            if names:
-                sections["skills"].append(
-                    {"label": cat, "details": ", ".join(names)}
-                )
-    else:
-        skill_names = [
-            skill_by_id[sid]["name"]
-            for sid in payload.selectedSkillIds
-            if sid in skill_by_id and skill_by_id[sid].get("name")
+    if layout.coreExpertise:
+        sections["skills"] = [
+            {"label": "Core Expertise", "details": layout.coreExpertise.replace(" • ", ", ")}
         ]
-        if skill_names:
-            # Group roughly by category for OneLineEntry sections
-            by_cat: dict[str, list[str]] = {}
-            for sid in payload.selectedSkillIds:
-                skill = skill_by_id.get(sid)
-                if not skill or not skill.get("name"):
-                    continue
-                cat = str(skill.get("category") or "skills").replace("_", " ").title()
-                by_cat.setdefault(cat, []).append(skill["name"])
-            sections["skills"] = [
-                {"label": cat, "details": ", ".join(names)}
-                for cat, names in by_cat.items()
-            ]
+        for line in layout.technologyLines:
+            if ":" in line:
+                label, details = line.split(":", 1)
+                sections["skills"].append(
+                    {"label": label.strip(), "details": details.strip()}
+                )
+            elif line.strip():
+                sections["skills"].append({"label": "Tools", "details": line.strip()})
 
     experience_entries: list[dict[str, Any]] = []
-    work_groups: dict[str, list[str]] = {}
-    work_order: list[str] = []
-    for aid in payload.selectedAchievementIds:
-        ach = by_id.get(aid)
-        if not ach or ach.kind != "work":
+    for emp in layout.employers:
+        if not emp.titles:
             continue
-        if ach.parentId not in work_groups:
-            work_groups[ach.parentId] = []
-            work_order.append(ach.parentId)
-        work_groups[ach.parentId].append(rewrite.get(aid) or ach.statement)
-
-    for wid in work_order:
-        role = work_by_id.get(wid) or {}
+        newest = emp.titles[0]
+        # Stack all titles into the position field (RenderCV has one position per entry)
+        stacked = "\n".join(f"{t.title} ({t.year_range()})" for t in emp.titles)
+        highlights = list(emp.bullets)
+        if emp.intro:
+            highlights = [emp.intro] + highlights
         entry: dict[str, Any] = {
-            "company": role.get("company") or "Employer",
-            "position": role.get("title") or "Software Engineer",
-            "highlights": work_groups[wid],
+            "company": emp.company,
+            "position": stacked if len(emp.titles) > 1 else newest.title,
+            "highlights": highlights,
         }
-        if role.get("companyLocation"):
-            entry["location"] = role["companyLocation"]
-        if role.get("startDate"):
-            entry["start_date"] = _rendercv_date(role["startDate"])
-        if role.get("endDate"):
-            entry["end_date"] = _rendercv_date(role["endDate"])
-        else:
-            entry["end_date"] = "present"
+        if emp.location:
+            entry["location"] = emp.location
+        if newest.startDate:
+            # Overall company span: earliest start → latest end among titles
+            starts = [t.startDate for t in emp.titles if t.startDate]
+            ends = [t.endDate for t in emp.titles if t.endDate]
+            entry["start_date"] = _rendercv_date(min(starts) if starts else newest.startDate)
+            if ends:
+                entry["end_date"] = _rendercv_date(max(ends))
+            else:
+                entry["end_date"] = "present"
         experience_entries.append(entry)
     if experience_entries:
         sections["experience"] = experience_entries
 
     project_entries: list[dict[str, Any]] = []
-    project_groups: dict[str, list[str]] = {}
-    project_order: list[str] = []
-    for aid in payload.selectedAchievementIds:
-        ach = by_id.get(aid)
-        if not ach or ach.kind != "project":
-            continue
-        if ach.parentId not in project_groups:
-            project_groups[ach.parentId] = []
-            project_order.append(ach.parentId)
-        project_groups[ach.parentId].append(rewrite.get(aid) or ach.statement)
-
-    for pid in project_order:
-        project = project_by_id.get(pid) or {}
-        entry = {
-            "name": project.get("name") or pid,
-            "highlights": project_groups[pid],
-        }
-        if project.get("startDate"):
-            entry["start_date"] = _rendercv_date(project["startDate"])
-        if project.get("summary"):
-            entry["summary"] = project["summary"]
-        project_entries.append(entry)
+    project_by_id = {p["_id"]: p for p in projects if p.get("_id")}
+    if layout.projects:
+        # Independent software engineer section as projects block
+        for proj in layout.projects:
+            entry: dict[str, Any] = {
+                "name": proj.name,
+                "highlights": proj.bullets,
+            }
+            source = project_by_id.get(proj.projectId) or {}
+            if source.get("startDate"):
+                entry["start_date"] = _rendercv_date(source["startDate"])
+            if source.get("summary"):
+                entry["summary"] = source["summary"]
+            project_entries.append(entry)
     if project_entries:
         sections["projects"] = project_entries
 
-    edu = (candidate.get("education") or [{}])[0]
-    if edu and (edu.get("institution") or edu.get("school")):
-        edu_entry: dict[str, Any] = {
-            "institution": edu.get("institution") or edu.get("school") or "University",
-            "area": edu.get("school") or edu.get("degree") or "Computer Science",
-        }
-        if edu.get("degree"):
-            edu_entry["degree"] = edu["degree"]
-        if edu.get("location"):
-            edu_entry["location"] = edu["location"]
-        if edu.get("graduatedAt"):
-            edu_entry["end_date"] = _rendercv_date(edu["graduatedAt"])
-        sections["education"] = [edu_entry]
+    if layout.educationLines:
+        edu = (candidate.get("education") or [{}])[0]
+        if edu and (edu.get("institution") or edu.get("school")):
+            edu_entry: dict[str, Any] = {
+                "institution": edu.get("institution") or edu.get("school") or "University",
+                "area": edu.get("school") or edu.get("degree") or "Computer Science",
+            }
+            if edu.get("degree"):
+                edu_entry["degree"] = edu["degree"]
+            if edu.get("location"):
+                edu_entry["location"] = edu["location"]
+            if edu.get("graduatedAt"):
+                edu_entry["end_date"] = _rendercv_date(edu["graduatedAt"])
+            sections["education"] = [edu_entry]
 
-    # Reorder sections per payload when possible
+    # Preferred section order: summary → highlights → skills → experience → projects → education
+    preferred_order = [
+        "summary",
+        "highlights",
+        "skills",
+        "experience",
+        "projects",
+        "education",
+    ]
     ordered_sections: dict[str, Any] = {}
-    for key in payload.sectionOrder:
-        mapped = {
-            "summary": "summary",
-            "highlights": "highlights",
-            "skills": "skills",
-            "experience": "experience",
-            "projects": "projects",
-            "education": "education",
-        }.get(key)
-        if mapped and mapped in sections:
-            ordered_sections[mapped] = sections.pop(mapped)
+    for key in preferred_order:
+        if key in sections:
+            ordered_sections[key] = sections.pop(key)
     for key, value in sections.items():
         ordered_sections[key] = value
 
+    headline = layout.professionalTitle or payload.targetRole or None
+    if layout.specialtyLine and headline:
+        headline = f"{headline} | {layout.specialtyLine}"
+    elif layout.specialtyLine:
+        headline = layout.specialtyLine
+
     cv: dict[str, Any] = {
-        "name": candidate.get("name") or "Candidate",
+        "name": layout.name,
         "location": candidate.get("location") or None,
         "email": candidate.get("email") or None,
         "sections": ordered_sections,
     }
-    if payload.targetRole:
-        cv["headline"] = payload.targetRole
+    if headline:
+        cv["headline"] = headline
 
     social = []
     linkedin = _social_username(candidate.get("linkedin"), "linkedin")
@@ -185,7 +166,6 @@ def build_rendercv_data(
     if phone:
         cv["phone"] = str(phone)
 
-    # Drop None values at top level
     cv = {k: v for k, v in cv.items() if v is not None}
 
     theme = (template_id or "classic").strip().lower()

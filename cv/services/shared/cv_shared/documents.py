@@ -251,6 +251,8 @@ def generate_application_package(job_id: str) -> dict:
                 catalog=catalog,
                 skills=skills,
                 pages=pages,  # type: ignore[arg-type]
+                work_history=work_history,
+                projects=projects,
             )
             cover = build_cover_letter(
                 candidate=candidate,
@@ -270,6 +272,8 @@ def generate_application_package(job_id: str) -> dict:
             catalog=catalog,
             skills=skills,
             pages=pages,  # type: ignore[arg-type]
+            work_history=work_history,
+            projects=projects,
         )
         cover = build_cover_letter(
             candidate=candidate,

@@ -14,8 +14,12 @@ from pathlib import Path
 
 from cv_shared import collections as C
 from cv_shared.db import ensure_indexes, get_db
-from cv_shared.documents import generate_application_package
 from cv_shared.matching import analyze_job, content_hash
+from cv_shared.package_runs import (
+    get_generate_status,
+    public_generate_status,
+    start_generate_async,
+)
 from cv_shared.seed import seed_all
 
 logging.basicConfig(
@@ -941,16 +945,35 @@ def _set_application_status(
 
 @app.post("/jobs/{job_id}/generate")
 def post_generate(job_id: str) -> dict:
+    """Start package generation in the background (survives client disconnect)."""
     try:
-        package = generate_application_package(job_id)
+        result = start_generate_async(job_id)
     except KeyError:
         raise HTTPException(404, "Job not found") from None
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
-        logger.exception("generate failed")
+        logger.exception("generate start failed")
         raise HTTPException(500, str(exc)) from exc
-    return _serialize(package)
+    return _serialize(result)
+
+
+@app.get("/jobs/{job_id}/generate")
+def get_generate(job_id: str, runId: Optional[str] = None) -> dict:
+    """Poll package generation status for a job."""
+    db = get_db()
+    if not db[C.JOBS].find_one({"_id": job_id}):
+        raise HTTPException(404, "Job not found")
+    run = get_generate_status(job_id, run_id=runId)
+    status = public_generate_status(run)
+    if not status:
+        return {
+            "jobId": job_id,
+            "status": "idle",
+            "runId": None,
+            "message": "No generate run for this job",
+        }
+    return _serialize(status)
 
 
 @app.get("/jobs/{job_id}/package")

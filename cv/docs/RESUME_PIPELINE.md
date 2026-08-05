@@ -15,6 +15,10 @@ LLM select + rewrite (sourceId required) → TailorPayload
         ↓
 verify (drop unknown ids, employer invent check, page caps)
         ↓
+finalize (project floor, skill ceiling ~24, milestone highlights, header fields)
+        ↓
+layout model (employer consolidation + dual skills)
+        ↓
 cover letter (one LLM call, shared selected evidence when available)
         ↓
 resume.yaml + selection-report.json + gaps.md
@@ -56,7 +60,22 @@ On any multi-stage orchestrator failure the package falls back to the simple tai
 
 The model must never invent an achievement without a catalog `sourceId`. Verification drops unknown IDs and reverts unsafe rewrites to the original statement.
 
-Highlights use the same grounding (`highlights: [{ sourceId, text }]`, max 6).
+Highlights use the same grounding (`highlights: [{ sourceId, text }]`, max 6). Deterministic post-verify may replace thin tool-list highlights with **career milestones** (e.g. multi-level promotions, independent product span) using synthetic `milestone:n` ids; employers and facts still come only from work history / selected evidence.
+
+## Resume layout (shared `layout.py`)
+
+All render paths (plain text, DOCX, RenderCV) go through `cv_shared/resume/layout.py` so structure stays aligned:
+
+| Behavior | Detail |
+|---|---|
+| Employer consolidation | Work bullets grouped by company; stacked titles newest-first (`YYYY–YYYY`); shared bullets under one Capital One block |
+| Independent section | `INDEPENDENT SOFTWARE ENGINEER` + period/location; project subheads + selected project bullets |
+| Header | Name → `professionalTitle` (or `targetRole`) → `specialtyLine` → cleaned contact (`linkedin.com/...`, no `https://`) |
+| Section labels | SUMMARY → SELECTED HIGHLIGHTS → CORE EXPERTISE → EXPERIENCE → independent → TECHNOLOGIES → EDUCATION |
+| Skills dual display | **CORE EXPERTISE**: flat ` • `-joined names; **TECHNOLOGIES**: category lines from approved skills |
+| Footer | No “Tailored for…” line on rendered artifacts (metadata stays in selection-report) |
+
+Two-page packages enforce a **project floor** (~4 project bullets / ≥2 projects when catalog has projects) so independent work is not dropped for DevInfra-heavy ranking. Skill selection ceiling is ~24 approved ids.
 
 ## Settings
 
@@ -74,6 +93,14 @@ Document LLM provider: `documentProvider.provider` (`ollama` | `openai`) — rou
 
 Toggle render engine and document provider in the web Settings page. Rebuild the API image after adding `rendercv[full]` so the CLI is available inside the container.
 
+## Background generate (navigation-safe)
+
+`POST /jobs/{jobId}/generate` starts a `cv_systemRuns` row (`type: generatePackage`) and returns immediately. The package is built on a daemon thread; poll `GET /jobs/{jobId}/generate` until `status` is `completed` or `failed`. One running generate per job. See `cv_shared/package_runs.py`.
+
+## Cover letter voice
+
+Cover letters are full business letters (date, Hiring Team / company, salutation, Thank you / Sincerely), not resume-bullet prose. The composer uses narrative motivation + elevated career themes grounded in selected achievements and the JD; it must not inventory tools or paste bullets. See `cv_shared/package/prompts.py` (`COVER_LETTER_SYSTEM`) and `cover_letter.py`. Consistency review must not strip first-person personality when claims stay grounded.
+
 ## Package artifacts
 
 Under `generated-applications/{company}-{role}/`:
@@ -90,7 +117,8 @@ Under `generated-applications/{company}-{role}/`:
 | Module | Role |
 |---|---|
 | [`cv_shared/resume/achievements.py`](../services/shared/cv_shared/resume/achievements.py) | Catalog builder |
-| [`cv_shared/resume/tailor.py`](../services/shared/cv_shared/resume/tailor.py) | Resume compose + verify + fallback |
+| [`cv_shared/resume/tailor.py`](../services/shared/cv_shared/resume/tailor.py) | Resume compose + verify + project floor + milestones |
+| [`cv_shared/resume/layout.py`](../services/shared/cv_shared/resume/layout.py) | Employer grouping, independent section, dual skills display |
 | [`cv_shared/package/`](../services/shared/cv_shared/package/) | OpenAI multi-stage orchestrator + stage modules |
 | [`cv_shared/package/pipeline.py`](../services/shared/cv_shared/package/pipeline.py) | Stage sequencing |
 | [`cv_shared/resume/render_rendercv.py`](../services/shared/cv_shared/resume/render_rendercv.py) | YAML + CLI PDF |

@@ -97,9 +97,71 @@ export default function JobDetailPage() {
     }
   }
 
+  /** Poll until background generate finishes (or fails). Survives remount. */
+  async function waitForGenerate(runId) {
+    const deadline = Date.now() + 20 * 60 * 1000;
+    while (Date.now() < deadline) {
+      const path = runId
+        ? `/jobs/${jobId}/generate?runId=${encodeURIComponent(runId)}`
+        : `/jobs/${jobId}/generate`;
+      const status = await apiGet(path);
+      if (status?.status === "completed") {
+        await loadPackage();
+        setMessage(
+          status.folderName
+            ? `Package ready: ${status.folderName} (saved in this browser)`
+            : "Package ready.",
+        );
+        return status;
+      }
+      if (status?.status === "failed") {
+        throw new Error(
+          status.error || status.message || "Package generation failed",
+        );
+      }
+      // idle with no run → nothing to wait on
+      if (status?.status === "idle") {
+        throw new Error("Generate run disappeared; try again.");
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    throw new Error("Package generation timed out (still running on server?)");
+  }
+
   useEffect(() => {
     load();
     loadPackage();
+  }, [jobId]);
+
+  // Resume generate UI if a run is already in progress when opening this job
+  useEffect(() => {
+    let cancelled = false;
+    async function resumeIfGenerating() {
+      try {
+        const status = await apiGet(`/jobs/${jobId}/generate`);
+        if (cancelled || status?.status !== "running") return;
+        setBusy("generate");
+        setMessage("");
+        setError("");
+        try {
+          await waitForGenerate(status.runId);
+          await load();
+        } catch (err) {
+          if (!cancelled) setError(err.message || "Action failed");
+        } finally {
+          if (!cancelled) {
+            setBusy("");
+            setStatusText("");
+          }
+        }
+      } catch {
+        // ignore status fetch errors on mount
+      }
+    }
+    resumeIfGenerating();
+    return () => {
+      cancelled = true;
+    };
   }, [jobId]);
 
   useEffect(() => {
@@ -131,12 +193,24 @@ export default function JobDetailPage() {
         await apiPost(`/jobs/${jobId}/analyze`);
         setMessage("Analysis refreshed.");
       } else if (action === "generate") {
-        const generated = await apiPost(`/jobs/${jobId}/generate`);
-        setPkg(generated);
-        savePackageToBrowser(jobId, generated);
-        setMessage(
-          `Package ready: ${generated.folderName} (saved in this browser)`,
-        );
+        const started = await apiPost(`/jobs/${jobId}/generate`);
+        // Accepted or already running → poll until package is ready
+        if (
+          started?.status === "running" ||
+          started?.accepted === true ||
+          started?.conflict === true
+        ) {
+          await waitForGenerate(started.runId);
+        } else if (started?.previews) {
+          // Legacy sync response shape (if an old API is still running)
+          setPkg(started);
+          savePackageToBrowser(jobId, started);
+          setMessage(
+            `Package ready: ${started.folderName} (saved in this browser)`,
+          );
+        } else {
+          await waitForGenerate(started?.runId);
+        }
       }
       await load();
     } catch (err) {
@@ -401,6 +475,12 @@ export default function JobDetailPage() {
                 ))}
               </div>
             )}
+            {busy === "generate" ? (
+              <p className="mt-3.5 m-0 text-xs text-muted-foreground">
+                Safe to leave this page — generation continues on the server.
+                Come back anytime; progress will resume.
+              </p>
+            ) : null}
           </div>
         </div>
       ) : null}

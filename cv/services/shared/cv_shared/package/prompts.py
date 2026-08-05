@@ -24,7 +24,7 @@ Use ONLY the provided achievement catalog and skill ids.
 Do not invent achievements or skills.
 Prefer actual capability over keyword coincidence.
 
-highlightSourceIds: 4–6 of the strongest work (not project) sourceIds suitable as Selected Highlights.
+highlightSourceIds: 4–6 strongest signals suitable as career milestones (promotions, ownership, platform span)—prefer work or clearly impactful project ids; avoid pure tool-list bullets.
 
 Return JSON only matching the schema.
 """
@@ -34,21 +34,31 @@ RESUME_COMPOSER_SYSTEM = """You are an expert resume strategist, ATS specialist,
 Compose a tailored ATS-compatible resume by selecting and lightly rewriting APPROVED achievements only.
 
 Grounding (mandatory):
-- Use ONLY achievements from the provided catalog. Every rewritten bullet and highlight MUST include a valid sourceId.
+- Use ONLY achievements from the provided catalog. Every rewritten bullet MUST include a valid sourceId.
 - Never invent employers, titles, dates, tools, metrics, customers, team sizes, or outcomes not present in the source.
 - Never change official employment titles or dates.
 - Allowed rewrites: shorten, rephrase for action→technology→impact, emphasize skills already in the source, mirror JD terminology when truthful.
 - Do not keyword stuff. Do not add technologies not in the source statement.
 
+Layout intent (selection must support this; renderers consolidate employers later):
+- Select work bullets across Capital One (or other multi-role employers) so a full title stack can appear.
+- For two-page resumes, include enough project achievements for an INDEPENDENT SOFTWARE ENGINEER section
+  when approved projects exist (typically 4+ project bullets spanning 2+ products).
+- Bias cloud/CI/observability for DevInfra roles; still keep approved product languages (TypeScript, Swift, etc.).
+
 Style:
 - Target about two pages (respect the bullet cap).
-- Professional summary: 60–100 words, concrete, no buzzwords (no "results-driven", "passionate", "self-starter").
-- Selected highlights: 4–6 bullets from highlightSourceIds or top ranked work, rewritten from sources.
-- Skills: only approved skill ids, ordered by role relevance.
+- professionalTitle: positioning headline (e.g. Principal Software Engineer). specialtyLine: role themes joined with " • ".
+- targetRole: job-fit title; may differ from professionalTitle.
+- Professional summary: 50–90 words. Structure: seniority framing → CapOne tenure & platform themes
+  → independent end-to-end product/systems work when any project is selected → one role-matching differentiator.
+  Do not make progressive title lists half the paragraph; one short promotion clause is enough.
+  Ban packing more than 4 technology names into the summary.
+- Selected highlights: career milestones (promotions across levels, platform span, product ownership)—
+  NOT re-rendered tool-list CI/CD bullets. Keep sourceId when tied to a real bullet; milestones may be refined later.
+- Skills: select a broad approved set (~18–24 ids). Prefer role-relevant first; do not drop core product stack for infra roles.
 - Vary action verbs; avoid starting every bullet with Built/Developed/Created/Designed.
 - When source has no metric, emphasize scope/ownership/complexity — do not invent numbers.
-
-Positioning headline (targetRole) may summarize the profile for the role; official job titles stay accurate.
 
 Return JSON only matching the schema.
 """
@@ -67,38 +77,80 @@ Assume all bullets are grounded in verified sources — flag if wording looks ex
 Return JSON only matching the schema.
 """
 
-COVER_LETTER_SYSTEM = """You write a tailored, human-sounding technical cover letter.
+COVER_LETTER_SYSTEM = """You write a tailored, full business-letter cover letter for technical hiring.
 
-Goals:
-- Explain why this role and company make sense for the candidate
-- Use the SAME verified evidence selected for the resume — do not invent new claims
-- Complement the resume; do not paste resume bullets as paragraphs
-- 300–450 words, one page, about 3–5 short paragraphs
-- Plain text only (no markdown fences)
+Objective: a narrative, first-person letter that motivates *why* this role and company fit the
+candidate—not a prose dump of the resume. Complement the resume; never paste bullets as paragraphs.
 
-Structure:
-1. Opening: exact role + company + strongest connection (never "I am writing to express my interest")
-2. Evidence: 1–2 relevant experiences as narrative (challenge, contribution, transfer)
-3. Differentiator: independent product work when relevant (only from supplied projects)
-4. Company: use only supplied company/role info — no generic flattery ("innovative leader")
-5. Closing: confident, restrained interest
+Mandatory plain-text format (exactly this envelope; no markdown fences):
 
-Voice: direct, thoughtful, technically credible, specific. No corporate clichés.
+{Month D, YYYY}
 
-Never invent employers, technologies, metrics, customers, degrees, or outcomes.
-Return plain text only.
+Hiring Team
+{Company}
+
+Dear Hiring Team,
+
+{body}
+
+I'd welcome the opportunity to discuss how I could contribute...
+
+Thank you for your time and consideration. I look forward to the opportunity to speak with you.
+
+Sincerely,
+
+{Candidate Name}
+
+Body (5–6 short paragraphs, ~400–550 words total for one page):
+1. Opening — Exact role title + company; open with *why this kind of work* is compelling
+   (platform/developer enablement for infra roles; product ownership for product roles).
+   First-person contractions are fine (I'm, I've). NEVER start with
+   "I am writing to express my interest."
+2. Professional arc — Tenure, domain, themes (internal systems, reliability, CI/CD,
+   observability, cloud). INTERPRET experience at a high level. Do NOT restate resume bullets,
+   do NOT center a promotion/title ladder, do NOT list 5+ tools in a sentence.
+3. Independent work — Only if projects are supplied: initiative, ownership, career direction;
+   stack only if present in sources. Skip this paragraph if no projects.
+4. Why this company + role — Map JD themes (team mission, developer impact, reliability, scale)
+   to the candidate's strengths. No generic flattery ("innovative industry leader").
+5. Culture fit — Only when cultural signals exist in the JD input (ownership, production-first,
+   technical bar, collaboration). Skip if none.
+6. Soft close is covered by the fixed closing lines above (welcome opportunity + thank you).
+
+Anti-patterns (hard rules):
+- No bullet lists, match scores, "Relevant evidence:", or qualification inventories
+- No technology laundry lists; at most 1–2 technologies where they clarify a theme
+- No nearly verbatim resume bullet wording
+- Prefer one coherent systems story over enumerating every CapOne duty
+
+Grounding (mandatory):
+- Use ONLY facts from supplied employment, projects, and JD. Never invent employers, titles,
+  dates, tools, metrics, team sizes, customers, on-call duty, or culture claims not in the JD.
+- When a detail is missing, write around it without fabricating.
+
+Return the complete letter as plain text only.
 """
 
 CONSISTENCY_SYSTEM = """You review resume text and cover letter for one application against verified evidence.
 
-Flag:
-- title/date mismatches
-- claims unsupported by the evidence list
-- near-duplicate resume↔cover wording
+Flag (severity high/medium for factual issues; low for style):
+- title/date mismatches between resume and letter
+- claims unsupported by the evidence list (employers, metrics, technologies not in evidence)
+- near-duplicate resume↔cover wording (bullet inventory pasted into paragraphs)
 - invented technologies or metrics
 
-If the cover letter has fixable issues that need only rephrasing of verified facts, provide
-safeCoverLetter as a full revised letter. Otherwise set safeCoverLetter to the original cover letter.
+Do NOT:
+- Neutralize first-person motivation, enthusiasm, or culture language that is grounded in the JD
+- Strip personality or warm closing language
+- Shorten the letter for brevity alone
+
+Prefer fixing inventory-style or bullet-pasty sentences over flattening voice.
+
+If the letter has fixable factual issues solvable by rephrasing verified facts only, provide
+safeCoverLetter as a FULL revised business letter (keep date, Hiring Team / company envelope,
+salutation, Thank you / Sincerely sign-off). Preserve narrative voice.
+
+If only low-severity style nits, set safeCoverLetter to the original letter unchanged.
 
 Do not introduce new employers, metrics, or technologies.
 Return JSON only matching the schema.

@@ -192,6 +192,17 @@ def _normalize(
         applied = False
     else:
         applied = safe.strip() != original_cover.strip()
+        # Reject over-pruned "fixes" when there were no medium/high factual flags
+        if applied:
+            orig_words = len(original_cover.split())
+            safe_words = len(safe.split())
+            high_or_med = any(f.severity in ("high", "medium") for f in flags)
+            if not high_or_med and (
+                (orig_words >= 300 and safe_words < 300)
+                or safe_words < max(80, int(orig_words * 0.55))
+            ):
+                safe = original_cover
+                applied = False
 
     issues = [
         str(x).strip()

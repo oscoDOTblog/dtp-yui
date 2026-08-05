@@ -34,11 +34,15 @@ DEFAULT_SECTION_ORDER = [
     "skills",
     "experience",
     "projects",
+    "technologies",
     "education",
 ]
 
 MAX_BULLETS_BY_PAGES = {1: 8, 2: 12}
 MAX_HIGHLIGHTS = 6
+MAX_SKILLS = 24
+MIN_PROJECT_BULLETS = {1: 2, 2: 4}  # two-page dual profile floor
+MIN_PROJECTS = {1: 1, 2: 2}
 
 PROJECT_PRIORITY = {
     "systems": ["project_sway_sls", "project_videodl", "project_swayquest_web"],
@@ -84,6 +88,8 @@ TAILOR_JSON_SCHEMA: dict[str, Any] = {
         },
         "omittedRequirements": {"type": "array", "items": {"type": "string"}},
         "sectionOrder": {"type": "array", "items": {"type": "string"}},
+        "professionalTitle": {"type": "string"},
+        "specialtyLine": {"type": "string"},
     },
     "required": [
         "targetRole",
@@ -113,6 +119,8 @@ class TailorPayload(BaseModel):
     skillsGrouped: dict[str, list[str]] = Field(default_factory=dict)
     omittedRequirements: list[str] = Field(default_factory=list)
     sectionOrder: list[str] = Field(default_factory=lambda: list(DEFAULT_SECTION_ORDER))
+    professionalTitle: str = ""
+    specialtyLine: str = ""
     usedLlm: bool = False
     fallbackReason: str | None = None
     provider: str | None = None  # "openai" | "ollama" when usedLlm
@@ -132,6 +140,8 @@ class TailorPayload(BaseModel):
             "skillsGrouped": dict(self.skillsGrouped),
             "omittedRequirements": list(self.omittedRequirements),
             "sectionOrder": list(self.sectionOrder),
+            "professionalTitle": self.professionalTitle,
+            "specialtyLine": self.specialtyLine,
             "usedLlm": self.usedLlm,
             "fallbackReason": self.fallbackReason,
             "provider": self.provider,
@@ -152,6 +162,8 @@ def tailor_resume(
     ranking: dict[str, Any] | None = None,
     max_bullets_override: int | None = None,
     critic_feedback: str | None = None,
+    work_history: list[dict] | None = None,
+    projects: list[dict] | None = None,
 ) -> TailorPayload:
     """Select + rewrite achievements; always returns a verified payload."""
     max_bullets = max_bullets_override or MAX_BULLETS_BY_PAGES.get(pages, 12)
@@ -161,6 +173,9 @@ def tailor_resume(
     approved_skill_ids = {
         s["_id"] for s in skills if s.get("approvedForResume") and s.get("_id")
     }
+    work_history = work_history or []
+    projects = projects or []
+    role_family = match.get("roleFamily") or "product"
 
     try:
         raw, provider = _call_llm_tailor(
@@ -173,6 +188,7 @@ def tailor_resume(
             analysis=analysis,
             ranking=ranking,
             critic_feedback=critic_feedback,
+            pages=pages,
         )
         payload = verify_tailor_payload(
             raw,
@@ -185,9 +201,20 @@ def tailor_resume(
             ranking=ranking,
         )
         if payload.selectedAchievementIds:
-            return payload
+            return finalize_resume_payload(
+                payload,
+                candidate=candidate,
+                catalog=approved,
+                skills=skills,
+                work_history=work_history,
+                projects=projects,
+                max_bullets=max_bullets,
+                pages=pages,
+                role_family=role_family,
+                ranking=ranking,
+            )
         logger.warning("LLM tailor produced empty selection; using fallback")
-        return deterministic_fallback(
+        payload = deterministic_fallback(
             candidate=candidate,
             job=job,
             match=match,
@@ -198,9 +225,21 @@ def tailor_resume(
             ranking=ranking,
             analysis=analysis,
         )
+        return finalize_resume_payload(
+            payload,
+            candidate=candidate,
+            catalog=approved,
+            skills=skills,
+            work_history=work_history,
+            projects=projects,
+            max_bullets=max_bullets,
+            pages=pages,
+            role_family=role_family,
+            ranking=ranking,
+        )
     except Exception as exc:
         logger.warning("Resume tailor LLM failed, using fallback: %s", exc)
-        return deterministic_fallback(
+        payload = deterministic_fallback(
             candidate=candidate,
             job=job,
             match=match,
@@ -210,6 +249,18 @@ def tailor_resume(
             reason=str(exc)[:240],
             ranking=ranking,
             analysis=analysis,
+        )
+        return finalize_resume_payload(
+            payload,
+            candidate=candidate,
+            catalog=approved,
+            skills=skills,
+            work_history=work_history,
+            projects=projects,
+            max_bullets=max_bullets,
+            pages=pages,
+            role_family=role_family,
+            ranking=ranking,
         )
 
 
@@ -333,6 +384,7 @@ def verify_tailor_payload(
                     if sid not in skill_ids:
                         skill_ids.append(sid)
 
+    skill_ids = skill_ids[:MAX_SKILLS]
     if not skills_grouped and skill_ids and skills:
         skills_grouped = _group_skills_by_category(skills, skill_ids)
 
@@ -355,13 +407,14 @@ def verify_tailor_payload(
     section_order = [
         s for s in (data.get("sectionOrder") or DEFAULT_SECTION_ORDER) if isinstance(s, str)
     ] or list(DEFAULT_SECTION_ORDER)
-    if "highlights" not in section_order and highlights:
-        # Insert highlights after summary when present
-        if "summary" in section_order:
-            idx = section_order.index("summary") + 1
-            section_order.insert(idx, "highlights")
-        else:
-            section_order.insert(0, "highlights")
+    for required in ("technologies", "highlights"):
+        if required not in section_order:
+            if required == "highlights" and "summary" in section_order:
+                section_order.insert(section_order.index("summary") + 1, "highlights")
+            elif required == "technologies" and "projects" in section_order:
+                section_order.insert(section_order.index("projects") + 1, "technologies")
+            elif required not in section_order:
+                section_order.append(required)
 
     omitted = [
         str(x).strip()
@@ -380,10 +433,300 @@ def verify_tailor_payload(
         skillsGrouped=skills_grouped,
         omittedRequirements=omitted,
         sectionOrder=section_order,
+        professionalTitle=str(data.get("professionalTitle") or "").strip(),
+        specialtyLine=str(data.get("specialtyLine") or "").strip(),
         usedLlm=used_llm,
         fallbackReason=None,
         provider=provider if used_llm else None,
     )
+
+
+def finalize_resume_payload(
+    payload: TailorPayload,
+    *,
+    candidate: dict,
+    catalog: list[Achievement],
+    skills: list[dict],
+    work_history: list[dict],
+    projects: list[dict],
+    max_bullets: int,
+    pages: Literal[1, 2] = 2,
+    role_family: str = "product",
+    ranking: dict[str, Any] | None = None,
+) -> TailorPayload:
+    """Post-verify layout enrichments: project floor, skill ceiling, milestones, header."""
+    by_id = catalog_by_id(catalog)
+    approved_skill_ids = {
+        s["_id"] for s in skills if s.get("approvedForResume") and s.get("_id")
+    }
+
+    selected = list(payload.selectedAchievementIds)
+    rewrite_map = payload.rewrite_map()
+
+    min_project_bullets = MIN_PROJECT_BULLETS.get(pages, 4)
+    min_projects = MIN_PROJECTS.get(pages, 2)
+    selected = _ensure_project_floor(
+        selected_ids=selected,
+        by_id=by_id,
+        max_bullets=max_bullets,
+        min_project_bullets=min_project_bullets,
+        min_projects=min_projects,
+        role_family=role_family,
+        ranking=ranking,
+    )
+
+    # Rebuild rewrite list for any newly added achievements
+    rewritten: list[RewrittenAchievement] = []
+    for sid in selected:
+        if sid not in by_id:
+            continue
+        text = rewrite_map.get(sid) or by_id[sid].statement
+        rewritten.append(RewrittenAchievement(sourceId=sid, text=text.strip()))
+
+    project_ids: list[str] = []
+    for sid in selected:
+        ach = by_id.get(sid)
+        if ach and ach.kind == "project" and ach.parentId not in project_ids:
+            project_ids.append(ach.parentId)
+
+    # Broader skill ceiling; always rebalance so product languages survive systems bias
+    skill_ids = _expand_skills(
+        list(payload.selectedSkillIds),
+        skills=skills,
+        approved_skill_ids=approved_skill_ids,
+        role_family=role_family,
+        ranking=ranking,
+        limit=MAX_SKILLS,
+    )
+    skills_grouped = _group_skills_by_category(skills, skill_ids)
+
+    # Header fields
+    professional_title = (
+        payload.professionalTitle
+        or str(candidate.get("professionalTitle") or "").strip()
+        or "Principal Software Engineer"
+    )
+    specialty = (
+        payload.specialtyLine
+        or str(candidate.get("specialtyLine") or "").strip()
+        or "Distributed Systems • Cloud Infrastructure • AI Platforms • Full-Stack Product Engineering"
+    )
+
+    # Milestone highlights (deterministic); still keep safe grounded text only
+    from .layout import apply_milestone_highlights
+
+    # Temporarily assign selection so milestone helper can read it
+    temp = payload.model_copy(
+        update={
+            "selectedAchievementIds": selected,
+            "rewrittenAchievements": rewritten,
+        }
+    )
+    milestones = apply_milestone_highlights(
+        payload=temp,
+        catalog=catalog,
+        work_history=work_history,
+        projects=projects,
+    )
+    highlights = milestones if milestones else list(payload.highlights)
+
+    section_order = list(payload.sectionOrder or DEFAULT_SECTION_ORDER)
+    if "technologies" not in section_order:
+        if "projects" in section_order:
+            section_order.insert(section_order.index("projects") + 1, "technologies")
+        else:
+            section_order.append("technologies")
+
+    return payload.model_copy(
+        update={
+            "selectedAchievementIds": selected,
+            "rewrittenAchievements": rewritten,
+            "highlights": highlights,
+            "selectedSkillIds": skill_ids,
+            "selectedProjectIds": project_ids,
+            "skillsGrouped": skills_grouped,
+            "professionalTitle": professional_title,
+            "specialtyLine": specialty,
+            "sectionOrder": section_order,
+        }
+    )
+
+
+def _ensure_project_floor(
+    *,
+    selected_ids: list[str],
+    by_id: dict[str, Achievement],
+    max_bullets: int,
+    min_project_bullets: int,
+    min_projects: int,
+    role_family: str,
+    ranking: dict[str, Any] | None,
+) -> list[str]:
+    catalog_projects = [a for a in by_id.values() if a.kind == "project"]
+    if not catalog_projects:
+        return selected_ids
+
+    selected = list(selected_ids)
+
+    def project_count(ids: list[str]) -> int:
+        return sum(1 for sid in ids if by_id.get(sid) and by_id[sid].kind == "project")
+
+    def project_parent_count(ids: list[str]) -> int:
+        parents: set[str] = set()
+        for sid in ids:
+            ach = by_id.get(sid)
+            if ach and ach.kind == "project":
+                parents.add(ach.parentId)
+        return len(parents)
+
+    if (
+        project_count(selected) >= min_project_bullets
+        and project_parent_count(selected) >= min_projects
+    ):
+        return selected[:max_bullets]
+
+    # Order available project achievements by ranking then PROJECT_PRIORITY
+    ranked_ids: list[str] = []
+    if ranking and ranking.get("achievements"):
+        ordered = sorted(
+            ranking["achievements"],
+            key=lambda a: float(a.get("score") or 0),
+            reverse=True,
+        )
+        for item in ordered:
+            sid = str(item.get("sourceId") or "")
+            if sid in by_id and by_id[sid].kind == "project" and sid not in ranked_ids:
+                ranked_ids.append(sid)
+
+    priority = PROJECT_PRIORITY.get(role_family, PROJECT_PRIORITY["product"])
+    for pid in priority:
+        for a in catalog_projects:
+            if a.parentId == pid and a.id not in ranked_ids:
+                ranked_ids.append(a.id)
+    for a in catalog_projects:
+        if a.id not in ranked_ids:
+            ranked_ids.append(a.id)
+
+    selected_set = set(selected)
+    for sid in ranked_ids:
+        if (
+            project_count(selected) >= min_project_bullets
+            and project_parent_count(selected) >= min_projects
+        ):
+            break
+        if sid in selected_set:
+            continue
+        if len(selected) >= max_bullets:
+            # Drop last work bullet to make room (keep at least 3 work if available)
+            work_idxs = [
+                i
+                for i, x in enumerate(selected)
+                if by_id.get(x) and by_id[x].kind == "work"
+            ]
+            if len(work_idxs) <= 3:
+                break
+            drop_i = work_idxs[-1]
+            selected_set.discard(selected[drop_i])
+            selected.pop(drop_i)
+        selected.append(sid)
+        selected_set.add(sid)
+
+    return selected[:max_bullets]
+
+
+def _expand_skills(
+    skill_ids: list[str],
+    *,
+    skills: list[dict],
+    approved_skill_ids: set[str],
+    role_family: str,
+    ranking: dict[str, Any] | None,
+    limit: int,
+) -> list[str]:
+    """Build skill list with role bias + reserved product/language slots."""
+    reserved: list[str] = []
+    reserve_cats = ["languages", "frontend", "mobile", "ai", "backend"]
+    for cat in reserve_cats:
+        for skill in skills:
+            sid = skill.get("_id")
+            if (
+                skill.get("approvedForResume")
+                and skill.get("category") == cat
+                and sid in approved_skill_ids
+                and sid not in reserved
+            ):
+                reserved.append(sid)
+            if len(reserved) >= 8:
+                break
+        if len(reserved) >= 8:
+            break
+
+    primary: list[str] = []
+    for sid in skill_ids:
+        if sid in approved_skill_ids and sid not in primary and sid not in reserved:
+            primary.append(sid)
+
+    if ranking:
+        for sid in ranking.get("skillIds") or []:
+            sid = str(sid).strip()
+            if sid in approved_skill_ids and sid not in primary and sid not in reserved:
+                primary.append(sid)
+
+    primary_cats = {
+        "systems": [
+            "systems",
+            "iac",
+            "devops",
+            "cicd",
+            "cloud",
+            "data",
+            "observability",
+            "backend",
+            "languages",
+        ],
+        "mobile": ["mobile", "media", "languages", "cloud", "backend", "frontend"],
+        "ai": ["ai", "backend", "cloud", "languages", "frontend", "product"],
+        "product": [
+            "frontend",
+            "product",
+            "backend",
+            "cloud",
+            "languages",
+            "auth",
+            "mobile",
+            "ai",
+        ],
+    }
+    categories = primary_cats.get(role_family, primary_cats["product"])
+    room = max(0, limit - len(reserved))
+    for cat in categories:
+        for skill in skills:
+            sid = skill.get("_id")
+            if (
+                skill.get("approvedForResume")
+                and skill.get("category") == cat
+                and sid in approved_skill_ids
+                and sid not in primary
+                and sid not in reserved
+            ):
+                primary.append(sid)
+            if len(primary) >= room:
+                break
+        if len(primary) >= room:
+            break
+
+    primary = primary[:room]
+    out = list(reserved[:6]) + primary + reserved[6:]
+    seen: set[str] = set()
+    final: list[str] = []
+    for sid in out:
+        if sid in seen:
+            continue
+        seen.add(sid)
+        final.append(sid)
+        if len(final) >= limit:
+            break
+    return final
 
 
 def deterministic_fallback(
@@ -462,7 +805,41 @@ def deterministic_fallback(
             if sid in approved and sid not in skill_ids:
                 skill_ids.append(sid)
     if not skill_ids:
-        skill_ids = _fallback_skill_ids(skills, role_family, limit=14)
+        skill_ids = _fallback_skill_ids(skills, role_family, limit=MAX_SKILLS)
+
+    # Ensure dual-profile project mix in deterministic path
+    work_only = [a for a in selected if a.kind == "work"]
+    project_only = [a for a in selected if a.kind == "project"]
+    min_p = MIN_PROJECT_BULLETS.get(2, 4)
+    if len(project_only) < min_p:
+        projects_pool = [a for a in catalog if a.kind == "project"]
+        priority = PROJECT_PRIORITY.get(role_family, PROJECT_PRIORITY["product"])
+        pool_sorted: list[Achievement] = []
+        seen: set[str] = set()
+        for pid in priority:
+            for a in projects_pool:
+                if a.parentId == pid and a.id not in seen:
+                    pool_sorted.append(a)
+                    seen.add(a.id)
+        for a in projects_pool:
+            if a.id not in seen:
+                pool_sorted.append(a)
+                seen.add(a.id)
+        for a in pool_sorted:
+            if a in selected:
+                continue
+            if len(work_only) > 4 and len(selected) >= max_bullets:
+                # drop lowest work
+                drop = work_only[-1]
+                if drop in selected:
+                    selected.remove(drop)
+                    work_only.pop()
+            if a not in selected and len(selected) < max_bullets:
+                selected.append(a)
+                project_only.append(a)
+            if len(project_only) >= min_p:
+                break
+        selected = selected[:max_bullets]
 
     project_ids: list[str] = []
     for a in selected:
@@ -506,11 +883,13 @@ def deterministic_fallback(
             for sid in highlight_ids
             if sid in by_id
         ],
-        selectedSkillIds=skill_ids,
+        selectedSkillIds=skill_ids[:MAX_SKILLS],
         selectedProjectIds=project_ids,
-        skillsGrouped=_group_skills_by_category(skills, skill_ids),
+        skillsGrouped=_group_skills_by_category(skills, skill_ids[:MAX_SKILLS]),
         omittedRequirements=omitted,
         sectionOrder=list(DEFAULT_SECTION_ORDER),
+        professionalTitle=str(candidate.get("professionalTitle") or "").strip(),
+        specialtyLine=str(candidate.get("specialtyLine") or "").strip(),
         usedLlm=False,
         fallbackReason=reason,
     )
@@ -560,6 +939,7 @@ def _call_llm_tailor(
     analysis: dict[str, Any] | None = None,
     ranking: dict[str, Any] | None = None,
     critic_feedback: str | None = None,
+    pages: int = 2,
 ) -> tuple[dict[str, Any], str]:
     role_family = match.get("roleFamily") or "product"
     positioning = (candidate.get("positioningSummaries") or {}).get(
@@ -587,7 +967,9 @@ def _call_llm_tailor(
         {"id": s["_id"], "name": s.get("name"), "category": s.get("category")}
         for s in skills
         if s.get("approvedForResume") and s.get("_id")
-    ][:40]
+    ][:60]
+
+    min_project = MIN_PROJECT_BULLETS.get(pages, 4)
 
     # Prioritize high-ranked achievements in the prompt front-matter
     priority_block = ""
@@ -603,9 +985,9 @@ def _call_llm_tailor(
 Pre-ranked achievements (prefer selecting from these; may use others if needed):
 {json.dumps(top, indent=2)}
 
-Suggested skillIds: {json.dumps((ranking.get('skillIds') or [])[:16])}
+Suggested skillIds (select up to ~{MAX_SKILLS}, include languages + cloud + product stack): {json.dumps((ranking.get('skillIds') or [])[:24])}
 Suggested projectIds: {json.dumps((ranking.get('projectIds') or [])[:8])}
-Suggested highlightSourceIds (4-6 work bullets for Selected Highlights): {json.dumps((ranking.get('highlightSourceIds') or [])[:6])}
+Suggested highlightSourceIds (career milestones preferred over tool lists): {json.dumps((ranking.get('highlightSourceIds') or [])[:6])}
 """
 
     analysis_block = ""
@@ -632,6 +1014,7 @@ Do not invent new facts. Keep all sourceIds valid.
 
 Candidate: {candidate.get('name')}
 Role family emphasis: {role_family}
+Page target: {pages}
 Default positioning / targetRole: {positioning_hint}
 Background positioning notes (adapt lightly, do not invent facts): {positioning}
 
@@ -653,9 +1036,17 @@ Full achievement catalog (ONLY use these ids — never invent):
 Approved skills:
 {json.dumps(skills_slim, indent=2)}
 
-Return JSON with targetRole, summary (60-100 words, concrete),
+Selection rules:
+- Include at least {min_project} project-kind achievements when the catalog has them (dual CapOne + independent profile).
+- Select up to ~{MAX_SKILLS} skill ids: bias for role relevance but do NOT drop product languages (TypeScript, Swift, etc.) if approved.
+- professionalTitle: short positioning headline (e.g. Principal Software Engineer) — not a fabricated job title change.
+- specialtyLine: short " • "-joined themes only from real skill/role-family tokens.
+- summary: 50–90 words — seniority + CapOne tenure themes + independent product work if any projects selected; at most one short promotion clause; ≤4 technology names.
+- highlights: career milestones (promotions, platform span, product ownership) — NOT copies of CI/CD tool-list bullets.
+
+Return JSON with targetRole, professionalTitle, specialtyLine, summary,
 selectedAchievementIds, rewrittenAchievements (sourceId+text),
-highlights (4-6 sourceId+text for Selected Highlights),
+highlights (4-6 sourceId+text),
 selectedSkillIds, selectedProjectIds, skillsGrouped (optional category→skillIds),
 omittedRequirements, sectionOrder.
 """
@@ -709,16 +1100,38 @@ def _group_skills_by_category(
 
 
 def _fallback_skill_ids(
-    skills: list[dict], role_family: str, limit: int = 14
+    skills: list[dict], role_family: str, limit: int = MAX_SKILLS
 ) -> list[str]:
     if role_family == "systems":
-        categories = ["systems", "iac", "devops", "cicd", "cloud", "data", "languages"]
+        categories = [
+            "systems",
+            "iac",
+            "devops",
+            "cicd",
+            "cloud",
+            "data",
+            "languages",
+            "backend",
+            "observability",
+            "frontend",
+            "mobile",
+            "ai",
+        ]
     elif role_family == "mobile":
-        categories = ["mobile", "media", "languages", "cloud", "backend"]
+        categories = ["mobile", "media", "languages", "cloud", "backend", "frontend"]
     elif role_family == "ai":
-        categories = ["ai", "backend", "cloud", "languages", "frontend"]
+        categories = ["ai", "backend", "cloud", "languages", "frontend", "product"]
     else:
-        categories = ["frontend", "product", "backend", "cloud", "languages", "auth"]
+        categories = [
+            "frontend",
+            "product",
+            "backend",
+            "cloud",
+            "languages",
+            "auth",
+            "mobile",
+            "ai",
+        ]
 
     ids: list[str] = []
     for cat in categories:

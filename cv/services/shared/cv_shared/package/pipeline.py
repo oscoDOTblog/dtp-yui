@@ -10,7 +10,7 @@ from ..resume.achievements import Achievement
 from ..resume.legacy import build_tailored_resume_lines
 from ..resume.tailor import MAX_BULLETS_BY_PAGES, TailorPayload, tailor_resume
 from .consistency import ConsistencyResult, review_consistency
-from .cover_letter import build_cover_letter
+from .cover_letter import build_cover_letter, ensure_letter_envelope
 from .evidence_ranker import EvidenceRanking, rank_evidence
 from .job_analyzer import JobAnalysis, analyze_job_for_package
 from .reports import (
@@ -91,6 +91,8 @@ def run_openai_package_pipeline(
         analysis=analysis.to_public(),
         ranking=ranking.to_public(),
         max_bullets_override=bullet_cap,
+        work_history=work_history,
+        projects=projects,
     )
     stages["resumeTailor"] = {
         "usedLlm": payload.usedLlm,
@@ -137,6 +139,8 @@ def run_openai_package_pipeline(
             ranking=ranking.to_public(),
             max_bullets_override=bullet_cap,
             critic_feedback=critic.feedback_text(),
+            work_history=work_history,
+            projects=projects,
         )
         if revised.selectedAchievementIds:
             payload = revised
@@ -176,6 +180,7 @@ def run_openai_package_pipeline(
         catalog=catalog,
     )
     cover = consistency.safeCoverLetter or cover
+    cover = ensure_letter_envelope(cover, candidate=candidate, job=job)
     stages["consistencyReview"] = consistency.to_public()
 
     pipeline_meta = {
