@@ -761,8 +761,10 @@ def score_job(job: dict, extracted: dict | None = None) -> dict:
     )
     final = int(max(0, min(100, round(final))))
 
-    urgent = int(os.environ.get("SCORE_URGENT", "85"))
-    digest = int(os.environ.get("SCORE_DIGEST", "70"))
+    # Score bands (Telegram fires only on recommendation=apply).
+    # Defaults: 70+ apply, 50+ consider, else reject (red).
+    urgent = int(os.environ.get("SCORE_URGENT", "70"))
+    digest = int(os.environ.get("SCORE_DIGEST", "50"))
     if hard_penalty >= 40:
         recommendation = "reject"
     elif final >= urgent:
@@ -770,7 +772,7 @@ def score_job(job: dict, extracted: dict | None = None) -> dict:
     elif final >= digest:
         recommendation = "consider"
     else:
-        recommendation = "skip"
+        recommendation = "reject"
 
     why_viable = None
     if (meaningful_gaps or warnings) and final >= digest:

@@ -53,11 +53,13 @@ const ANALYZE_STEPS = [
 ];
 
 const GENERATE_STEPS = [
-  "Selecting grounded evidence…",
-  "Drafting tailored resume…",
-  "Writing cover letter with Ollama…",
+  "Analyzing role and ATS keywords…",
+  "Ranking verified evidence…",
+  "Composing tailored resume…",
+  "Reviewing resume quality…",
+  "Writing cover letter…",
+  "Checking resume ↔ cover consistency…",
   "Rendering PDF and DOCX files…",
-  "Writing application answers…",
   "Saving package to disk…",
 ];
 

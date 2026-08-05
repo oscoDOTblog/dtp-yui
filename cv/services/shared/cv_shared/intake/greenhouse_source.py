@@ -17,6 +17,7 @@ from ..db import get_db
 from ..settings import get_app_settings, ingest_drop_reason
 from .html_markdown import html_to_markdown
 from .location import assess_location
+from .lookback import apply_board_lookback_and_order
 from .role_filter import _title_is_ambiguous, assess_role_fit, load_role_filter_config
 
 logger = logging.getLogger(__name__)
@@ -358,6 +359,7 @@ def fetch_greenhouse_raw_jobs(
         "skippedStale": 0,
         "detailFetchErrors": 0,
         "twoPhase": two_phase,
+        "skippedOlderThanLookback": 0,
     }
     raw_jobs: list[dict[str, Any]] = []
 
@@ -493,6 +495,8 @@ def fetch_greenhouse_raw_jobs(
             logger.exception("Greenhouse poll failed for %s", token)
             _update_source_poll(source_id, success=False, error_message=str(exc))
 
+    raw_jobs = apply_board_lookback_and_order(raw_jobs, stats)
+    stats["jobsFetched"] = len(raw_jobs)
     return raw_jobs, stats
 
 

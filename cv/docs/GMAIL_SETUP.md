@@ -185,7 +185,7 @@ The **Settings** tab (`/settings`) is the source of truth for Gmail alert provid
 
 ## 10. Telegram apply alerts
 
-When a match scores **`recommendation=apply`** (≥ `SCORE_URGENT`, default 85), the API/worker can notify Telegram using the same env names as osco-dot-blog:
+When a match scores **`recommendation=apply`** (≥ `SCORE_URGENT`, default **70**), the API/worker can notify Telegram using the same env names as osco-dot-blog:
 
 ```bash
 TELEGRAM_BOT_TOKEN=

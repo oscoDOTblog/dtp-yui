@@ -48,7 +48,7 @@
 
 - Commute tiers from Oakland (config, not live transit APIs)
 - Reweight match score with work-arrangement + commute
-- Digest notifications (Gmail / Telegram): urgent ≥85, digest 70–84
+- Digest notifications (Gmail / Telegram): apply ≥70, consider 50–69, reject &lt;50
 
 ## Stage 4 — GitHub evidence engine *(current)*
 

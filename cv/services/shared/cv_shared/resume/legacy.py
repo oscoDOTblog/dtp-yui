@@ -190,16 +190,23 @@ def build_tailored_resume_lines(
         )
     )
     lines = [candidate.get("name") or "Candidate", contact, ""]
+    if getattr(payload, "targetRole", None):
+        lines += [str(payload.targetRole), ""]
     if payload.summary:
         lines += ["PROFESSIONAL SUMMARY", payload.summary, ""]
 
-    skill_names = [
-        skill_by_id[sid]["name"]
-        for sid in payload.selectedSkillIds
-        if sid in skill_by_id and skill_by_id[sid].get("name")
-    ]
-    if skill_names:
-        lines += ["TECHNICAL SKILLS", ", ".join(skill_names), ""]
+    highlights = list(getattr(payload, "highlights", None) or [])
+    if highlights:
+        lines.append("SELECTED HIGHLIGHTS")
+        for h in highlights:
+            lines.append(f"• {h.text}")
+        lines.append("")
+
+    skill_lines = _format_skill_lines(payload, skill_by_id)
+    if skill_lines:
+        lines.append("TECHNICAL SKILLS")
+        lines.extend(skill_lines)
+        lines.append("")
 
     work_order: list[str] = []
     work_groups: dict[str, list[str]] = {}
@@ -274,6 +281,31 @@ def build_tailored_resume_lines(
     if job:
         lines.append(f"Tailored for: {job.get('title')} at {job.get('company')}")
     return lines
+
+
+def _format_skill_lines(payload, skill_by_id: dict) -> list[str]:
+    """Grouped skill lines when payload.skillsGrouped is present."""
+    grouped = getattr(payload, "skillsGrouped", None) or {}
+    if grouped:
+        lines: list[str] = []
+        for cat, ids in grouped.items():
+            names = [
+                skill_by_id[sid]["name"]
+                for sid in ids
+                if sid in skill_by_id and skill_by_id[sid].get("name")
+            ]
+            if names:
+                lines.append(f"{cat}: {', '.join(names)}")
+        if lines:
+            return lines
+    skill_names = [
+        skill_by_id[sid]["name"]
+        for sid in payload.selectedSkillIds
+        if sid in skill_by_id and skill_by_id[sid].get("name")
+    ]
+    if skill_names:
+        return [", ".join(skill_names)]
+    return []
 
 
 def paragraphs_to_docx(path: Path, lines: list[str]) -> None:

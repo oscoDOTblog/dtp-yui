@@ -7,11 +7,13 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from . import collections as C
 from .db import get_db
 from .matching import slugify
-from .llm import generate
+from .package.pipeline import run_openai_package_pipeline
+from .package.cover_letter import build_cover_letter
 from .resume.achievements import build_achievement_catalog
 from .resume.legacy import (
     build_resume_lines,
@@ -26,16 +28,19 @@ from .resume.render_rendercv import (
     write_rendercv_yaml,
 )
 from .resume.tailor import gaps_markdown, tailor_resume
-from .settings import get_resume_settings
+from .settings import get_document_provider, get_resume_settings
 
 logger = logging.getLogger(__name__)
 
-COVER_SYSTEM = """You write a concise professional cover letter.
-Use ONLY facts supplied in the evidence and work history.
-Never invent employers, skills, tools, or outcomes.
-Return plain text only (no markdown fences).
-Keep to one page (~350-450 words).
-"""
+STAGE_ARTIFACT_FILES = (
+    "job-analysis.json",
+    "evidence-ranking.json",
+    "ats-keywords.md",
+    "fit-assessment.md",
+    "interview-talking-points.md",
+    "tailoring-strategy.md",
+    "application-report.json",
+)
 
 
 def _apps_dir() -> Path:
@@ -47,85 +52,30 @@ def _safe_mkdir(path: Path) -> Path:
     return path
 
 
-def _build_cover_letter(
-    candidate: dict,
-    work_history: list[dict],
-    projects: list[dict],
-    match: dict,
-    job: dict,
-    evidence_used: list[dict],
-) -> str:
-    role_family = match.get("roleFamily") or "product"
-    evidence_text = "\n".join(f"- {e.get('claim')}" for e in evidence_used[:12])
-    work_text = []
-    for role in work_history:
-        work_text.append(
-            f"{role.get('title')} at {role.get('company')} "
-            f"({role.get('startDate')}–{role.get('endDate')})"
-        )
-        for b in (role.get("bullets") or [])[:4]:
-            work_text.append(f"  • {b}")
-
-    prompt = f"""Write a cover letter for this role.
-
-Candidate: {candidate.get('name')}, {candidate.get('location')}
-Email: {candidate.get('email')}
-Role family emphasis: {role_family}
-
-Target job:
-Title: {job.get('title')}
-Company: {job.get('company')}
-Location: {job.get('location')}
-Summary of match score: {match.get('score')}/100 ({match.get('recommendation')})
-Strong matches: {json.dumps([m.get('requirement') for m in (match.get('strongMatches') or [])[:8]])}
-Meaningful gaps (acknowledge honestly if relevant, do not invent solutions): {json.dumps([g.get('skill') for g in (match.get('meaningfulGaps') or [])[:5]])}
-
-Approved evidence claims only:
-{evidence_text}
-
-Work history facts:
-{chr(10).join(work_text[:40])}
-
-Independent projects (names only + given bullets already in evidence):
-{chr(10).join(f"- {p.get('name')}: {p.get('summary')}" for p in projects[:5])}
-
-Today's date: {datetime.now(timezone.utc).strftime('%B %d, %Y')}
-Sign as {candidate.get('name')}.
-"""
+def _openai_multistage_enabled() -> bool:
     try:
-        result = generate(
-            prompt,
-            system=COVER_SYSTEM,
-            temperature=0.3,
-            process="coverLetter",
-        )
-        return result.text.strip()
+        from . import openai_client
+
+        provider = get_document_provider()
+        return provider == "openai" and openai_client.key_configured()
     except Exception as exc:
-        logger.warning("Cover letter LLM failed, using template: %s", exc)
-        return _fallback_cover(candidate, job, match, evidence_used)
+        logger.warning("Could not resolve document provider: %s", exc)
+        return False
 
 
-def _fallback_cover(candidate: dict, job: dict, match: dict, evidence_used: list[dict]) -> str:
-    claims = "\n".join(f"• {e.get('claim')}" for e in evidence_used[:6])
-    return f"""{candidate.get('name')}
-{candidate.get('location')} | {candidate.get('email')}
+def _write_artifact(path: Path, value: Any) -> None:
+    if isinstance(value, (dict, list)):
+        path.write_text(
+            json.dumps(value, indent=2, default=str), encoding="utf-8"
+        )
+    else:
+        path.write_text(str(value), encoding="utf-8")
 
-{datetime.now(timezone.utc).strftime('%B %d, %Y')}
 
-Dear Hiring Team,
-
-I am applying for the {job.get('title')} position at {job.get('company')}. My background includes enterprise engineering at Capital One and independent product and systems work spanning cloud infrastructure, APIs, and cross-platform applications.
-
-Relevant evidence from my experience:
-{claims}
-
-Match assessment for this role: {match.get('score')}/100 ({match.get('recommendation')}).
-
-Thank you for your consideration.
-
-Sincerely,
-{candidate.get('name')}
-"""
+def _artifact_preview_content(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, indent=2, default=str)
+    return str(value)
 
 
 def _render_resume_artifacts(
@@ -257,19 +207,94 @@ def generate_application_package(job_id: str) -> dict:
     )
 
     catalog = build_achievement_catalog(work_history, projects, skills=skills)
-    payload = tailor_resume(
-        candidate=candidate,
-        job=job,
-        match=match,
-        catalog=catalog,
-        skills=skills,
-        pages=pages,  # type: ignore[arg-type]
-    )
+
+    pipeline_name = "simple"
+    pipeline_stages: dict[str, Any] = {}
+    pipeline_artifacts: dict[str, Any] = {}
+    critic_scores: dict[str, Any] | None = None
+    answers: str | None = None
+
+    if _openai_multistage_enabled():
+        try:
+            ctx = run_openai_package_pipeline(
+                candidate=candidate,
+                job=job,
+                match=match,
+                catalog=catalog,
+                skills=skills,
+                projects=projects,
+                work_history=work_history,
+                evidence_used=evidence_used,
+                pages=pages,  # type: ignore[arg-type]
+            )
+            payload = ctx.payload
+            cover = ctx.cover_letter
+            pipeline_name = ctx.pipeline
+            pipeline_stages = ctx.stages
+            pipeline_artifacts = ctx.artifacts
+            critic_scores = ctx.critic.to_public() if ctx.critic else None
+            answers = ctx.application_answers
+            logger.info(
+                "OpenAI multi-stage package complete for %s (bullets=%s)",
+                job_id,
+                len(payload.selectedAchievementIds),
+            )
+        except Exception as exc:
+            logger.warning(
+                "OpenAI multi-stage pipeline failed, simple path: %s", exc
+            )
+            pipeline_name = "simple"
+            payload = tailor_resume(
+                candidate=candidate,
+                job=job,
+                match=match,
+                catalog=catalog,
+                skills=skills,
+                pages=pages,  # type: ignore[arg-type]
+            )
+            cover = build_cover_letter(
+                candidate=candidate,
+                job=job,
+                match=match,
+                payload=payload,
+                catalog=catalog,
+                work_history=work_history,
+                projects=projects,
+                evidence_used=evidence_used,
+            )
+    else:
+        payload = tailor_resume(
+            candidate=candidate,
+            job=job,
+            match=match,
+            catalog=catalog,
+            skills=skills,
+            pages=pages,  # type: ignore[arg-type]
+        )
+        cover = build_cover_letter(
+            candidate=candidate,
+            job=job,
+            match=match,
+            payload=payload,
+            catalog=catalog,
+            work_history=work_history,
+            projects=projects,
+            evidence_used=evidence_used,
+        )
+
+    # Write multi-stage artifacts when present
+    stage_files_written: list[str] = []
+    for fname, value in pipeline_artifacts.items():
+        _write_artifact(out_dir / fname, value)
+        stage_files_written.append(fname)
 
     selection_report = payload.to_report()
     selection_report["rendererRequested"] = resume_settings.get("renderEngine")
     selection_report["templateId"] = resume_settings.get("templateId")
     selection_report["pages"] = pages
+    selection_report["pipeline"] = pipeline_name
+    if pipeline_stages:
+        selection_report["stages"] = pipeline_stages
     (out_dir / "selection-report.json").write_text(
         json.dumps(selection_report, indent=2, default=str), encoding="utf-8"
     )
@@ -293,14 +318,12 @@ def generate_application_package(job_id: str) -> dict:
         json.dumps(selection_report, indent=2, default=str), encoding="utf-8"
     )
 
-    cover = _build_cover_letter(
-        candidate, work_history, projects, match, job, evidence_used
-    )
     cover_lines = cover.splitlines() or [cover]
     paragraphs_to_docx(out_dir / "cover-letter.docx", cover_lines)
     paragraphs_to_pdf(out_dir / "cover-letter.pdf", cover_lines)
 
-    answers = _application_answers(candidate, job, match, evidence_used)
+    if not answers:
+        answers = _application_answers(candidate, job, match, evidence_used)
     (out_dir / "application-answers.md").write_text(answers, encoding="utf-8")
     (out_dir / "cover-letter.txt").write_text(cover, encoding="utf-8")
 
@@ -322,6 +345,9 @@ def generate_application_package(job_id: str) -> dict:
         "evidence.json",
     ]
     for fname in extra_resume_files:
+        if fname not in files:
+            files.append(fname)
+    for fname in stage_files_written:
         if fname not in files:
             files.append(fname)
 
@@ -362,6 +388,45 @@ def generate_application_package(job_id: str) -> dict:
             "content": json.dumps(evidence_used, indent=2, default=str),
         },
     }
+
+    preview_meta = {
+        "job-analysis.json": ("jobAnalysis", "Job analysis"),
+        "evidence-ranking.json": ("evidenceRanking", "Evidence ranking"),
+        "ats-keywords.md": ("atsKeywords", "ATS keywords"),
+        "fit-assessment.md": ("fitAssessment", "Fit assessment"),
+        "interview-talking-points.md": (
+            "interviewTalkingPoints",
+            "Interview talking points",
+        ),
+        "tailoring-strategy.md": ("tailoringStrategy", "Tailoring strategy"),
+        "application-report.json": ("applicationReport", "Application report"),
+    }
+    for fname, value in pipeline_artifacts.items():
+        meta = preview_meta.get(fname)
+        if not meta:
+            continue
+        key, title = meta
+        previews[key] = {
+            "title": title,
+            "filename": fname,
+            "content": _artifact_preview_content(value),
+        }
+
+    downloads = [
+        {"label": "Resume PDF", "filename": "resume.pdf"},
+        {"label": "Resume DOCX", "filename": "resume.docx"},
+        {"label": "Resume YAML", "filename": "resume.yaml"},
+        {"label": "Selection report", "filename": "selection-report.json"},
+        {"label": "Gaps", "filename": "gaps.md"},
+        {"label": "Cover letter PDF", "filename": "cover-letter.pdf"},
+        {"label": "Cover letter DOCX", "filename": "cover-letter.docx"},
+        {"label": "Application answers", "filename": "application-answers.md"},
+    ]
+    for fname in STAGE_ARTIFACT_FILES:
+        if fname in stage_files_written:
+            label = preview_meta.get(fname, (None, fname))[1]
+            downloads.append({"label": label, "filename": fname})
+
     package = {
         "_id": package_id,
         "jobId": job_id,
@@ -370,35 +435,33 @@ def generate_application_package(job_id: str) -> dict:
         "folderName": folder_name,
         "files": files,
         "previews": previews,
-        "downloads": [
-            {"label": "Resume PDF", "filename": "resume.pdf"},
-            {"label": "Resume DOCX", "filename": "resume.docx"},
-            {"label": "Resume YAML", "filename": "resume.yaml"},
-            {"label": "Selection report", "filename": "selection-report.json"},
-            {"label": "Gaps", "filename": "gaps.md"},
-            {"label": "Cover letter PDF", "filename": "cover-letter.pdf"},
-            {"label": "Cover letter DOCX", "filename": "cover-letter.docx"},
-            {"label": "Application answers", "filename": "application-answers.md"},
-        ],
+        "downloads": downloads,
         "evidenceIds": [e["_id"] for e in evidence_used],
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "roleFamily": match.get("roleFamily"),
         "renderer": renderer_used,
         "templateId": resume_settings.get("templateId"),
+        "pipeline": pipeline_name,
+        "stages": pipeline_stages or None,
+        "criticScores": critic_scores,
         "tailorPayload": {
             "targetRole": payload.targetRole,
             "selectedAchievementIds": payload.selectedAchievementIds,
             "selectedSkillIds": payload.selectedSkillIds,
             "selectedProjectIds": payload.selectedProjectIds,
+            "highlightCount": len(payload.highlights),
             "omittedRequirements": payload.omittedRequirements,
             "usedLlm": payload.usedLlm,
             "fallbackReason": payload.fallbackReason,
+            "provider": payload.provider,
             "bulletCount": len(payload.selectedAchievementIds),
         },
         "selectionSummary": {
             "bulletCount": len(payload.selectedAchievementIds),
             "omittedRequirements": payload.omittedRequirements,
             "usedLlm": payload.usedLlm,
+            "provider": payload.provider,
+            "pipeline": pipeline_name,
             "renderer": renderer_used,
         },
     }
@@ -459,7 +522,7 @@ def _application_answers(
 Match score: **{match.get('score')}/100** ({match.get('recommendation')})
 
 ### Strong evidence
-{chr(10).join(f"- {m.get('requirement')}" for m in (match.get('strongMatches') or [])[:10]) or '- (none)'}
+{chr(10).join(f"- {m.get('requirement')}" for m in (match.get("strongMatches") or [])[:10]) or '- (none)'}
 
 ### Meaningful gaps
 {gap_block}

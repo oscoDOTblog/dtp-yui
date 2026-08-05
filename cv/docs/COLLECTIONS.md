@@ -141,7 +141,11 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
       "profileUpdate": false,
       "githubClassify": false,
       "coverLetter": false,
-      "resumeTailor": false
+      "resumeTailor": false,
+      "jobAnalyzer": false,
+      "evidenceRanker": false,
+      "resumeCritic": false,
+      "consistencyReview": false
     }
   },
   "resume": {
@@ -159,7 +163,7 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
 
 `resume.renderEngine`: `legacy` (ReportLab) or `rendercv`. See [RESUME_PIPELINE.md](RESUME_PIPELINE.md).
 
-`documentProvider.provider`: `ollama` (default) or `openai` — cover letter and resume tailor only. `documentProvider.model` is the OpenAI model id, validated against the registry in `cv_shared/openai_client.py` (falls back to `OPENAI_MODEL`, then `gpt-4o-mini`). Keys live in `secrets/openai-api-key` and `secrets/openai-admin-key` — never in Mongo. `GET`/`PATCH /settings` also return derived `openaiConfigured`, `adminKeyConfigured`, and `availableModels` (not persisted).
+`documentProvider.provider`: `ollama` (default) or `openai` — when `openai`, **Generate documents** runs the multi-stage package pipeline (`jobAnalyzer` → `evidenceRanker` → `resumeTailor` → `resumeCritic` → `coverLetter` → `consistencyReview`). When `ollama`, packages use a simple resume tailor + cover letter path. `documentProvider.model` is the OpenAI model id, validated against the registry in `cv_shared/openai_client.py` (falls back to `OPENAI_MODEL`, then `gpt-4o-mini`). Keys live in `secrets/openai-api-key` and `secrets/openai-admin-key` — never in Mongo. `GET`/`PATCH /settings` also return derived `openaiConfigured`, `adminKeyConfigured`, and `availableModels` (not persisted).
 
 ### `cv_openaiUsage`
 
@@ -172,7 +176,7 @@ Local ledger of OpenAI token spend, one doc per UTC day (`_id: "2026-07-31"`).
 | `requests` | Number of OpenAI calls |
 | `byTier` | Same counters split by `standard` (1M/day) and `mini` (10M/day) free-tier buckets |
 | `byModel` | Same counters per model; dots in model ids are stored as `_` because Mongo update paths treat `.` as nesting |
-| `byProcess` | Same counters per `coverLetter` / `resumeTailor` |
+| `byProcess` | Same counters per document process (`coverLetter`, `resumeTailor`, `jobAnalyzer`, `evidenceRanker`, `resumeCritic`, `consistencyReview`) |
 | `updatedAt` | Last write |
 
 Written best-effort by `cv_shared/openai_usage.py` after each successful OpenAI call; a failure here never fails generation. Read by `GET /openai/usage`, which also merges org-wide totals when an admin key is present.

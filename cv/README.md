@@ -148,6 +148,6 @@ ssh -L 7545:localhost:7545 -L 8000:localhost:8000 user@legion-wireguard-ip
 
 ## Current scope
 
-In: profile seed, manual URL intake queue (Analyze → `cv_intakeQueue`), Gmail digest → per-listing ingest (background), Greenhouse board watchlist + Sources UI, GitHub evidence engine + Repositories UI, Settings toggles for Gmail / ATS / GitHub (`cv_settings`), Bay Area location gate, Ollama match, Telegram on apply (≥85), gap insights, document generation, dashboard, Docker Compose.
+In: profile seed, manual URL intake queue (Analyze → `cv_intakeQueue`), Gmail digest → per-listing ingest (background), Greenhouse board watchlist + Sources UI, GitHub evidence engine + Repositories UI, Settings toggles for Gmail / ATS / GitHub (`cv_settings`), Bay Area location gate, Ollama match, Telegram on apply (≥70), gap insights, document generation, dashboard, Docker Compose.
 
 Out: Lever (2C), Telegram digests for consider-band, logistics commute scoring (3), Playwright ATS (see roadmap). Ashby watchlist is done — see [docs/ASHBY_SETUP.md](docs/ASHBY_SETUP.md).

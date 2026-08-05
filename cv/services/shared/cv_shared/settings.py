@@ -57,6 +57,10 @@ OLLAMA_THINK_PROCESSES = (
     "githubClassify",
     "coverLetter",
     "resumeTailor",
+    "jobAnalyzer",
+    "evidenceRanker",
+    "resumeCritic",
+    "consistencyReview",
 )
 
 DEFAULT_OLLAMA = {
@@ -470,7 +474,8 @@ def is_ollama_think_enabled(
 ) -> bool:
     """Whether Ollama thinking is on for a process (default false).
 
-    process: jobExtract | profileUpdate | githubClassify | coverLetter | resumeTailor
+    process: jobExtract | profileUpdate | githubClassify | coverLetter | resumeTailor |
+             jobAnalyzer | evidenceRanker | resumeCritic | consistencyReview
     If process is omitted, returns True only when any process has thinking on.
     """
     doc = settings if settings is not None else get_app_settings()
@@ -493,11 +498,11 @@ def get_resume_settings(settings: dict[str, Any] | None = None) -> dict[str, Any
 def get_document_provider_settings(
     settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Normalized {provider, model} for cover letter / resume tailor."""
+    """Normalized {provider, model} for document package generation stages."""
     doc = settings if settings is not None else get_app_settings()
     return _normalize_document_provider(doc.get("documentProvider"))
 
 
 def get_document_provider(settings: dict[str, Any] | None = None) -> str:
-    """Return 'ollama' or 'openai' for cover letter / resume tailor."""
+    """Return 'ollama' or 'openai' for multi-stage / simple document generation."""
     return get_document_provider_settings(settings)["provider"]

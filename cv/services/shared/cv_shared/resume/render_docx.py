@@ -49,18 +49,41 @@ def render_tailored_docx(
     if contact:
         doc.add_paragraph(contact)
 
+    if payload.targetRole:
+        p = doc.add_paragraph()
+        run = p.add_run(payload.targetRole)
+        run.bold = True
+
     if payload.summary:
         doc.add_heading("Professional Summary", level=1)
         doc.add_paragraph(payload.summary)
 
-    skill_names = [
-        skill_by_id[sid]["name"]
-        for sid in payload.selectedSkillIds
-        if sid in skill_by_id and skill_by_id[sid].get("name")
-    ]
-    if skill_names:
+    highlights = list(getattr(payload, "highlights", None) or [])
+    if highlights:
+        doc.add_heading("Selected Highlights", level=1)
+        for h in highlights:
+            doc.add_paragraph(h.text, style="List Bullet")
+
+    skill_groups = getattr(payload, "skillsGrouped", None) or {}
+    if skill_groups:
         doc.add_heading("Technical Skills", level=1)
-        doc.add_paragraph(", ".join(skill_names))
+        for cat, ids in skill_groups.items():
+            names = [
+                skill_by_id[sid]["name"]
+                for sid in ids
+                if sid in skill_by_id and skill_by_id[sid].get("name")
+            ]
+            if names:
+                doc.add_paragraph(f"{cat}: {', '.join(names)}")
+    else:
+        skill_names = [
+            skill_by_id[sid]["name"]
+            for sid in payload.selectedSkillIds
+            if sid in skill_by_id and skill_by_id[sid].get("name")
+        ]
+        if skill_names:
+            doc.add_heading("Technical Skills", level=1)
+            doc.add_paragraph(", ".join(skill_names))
 
     # Group work achievements by parent role
     work_groups: dict[str, list[str]] = {}

@@ -39,7 +39,15 @@ Containers reach it via `host.docker.internal:11434`.
 
 ### Document generation provider
 
-Cover letters and resume tailor go through `cv_shared/llm.py`, which reads `cv_settings.documentProvider` (`provider`: `ollama` | `openai`, plus `model`). When set to OpenAI and `secrets/openai-api-key` (or `OPENAI_API_KEY`) is present, those two processes call the OpenAI API; on failure they fall back to Ollama, then the existing deterministic templates. Job extract, profile update, and GitHub classify always use Ollama. Toggle and pick the model in Settings → Document generation.
+Application packages go through `cv_shared/documents.py` and `cv_shared/llm.py`, which read `cv_settings.documentProvider` (`provider`: `ollama` | `openai`, plus `model`).
+
+When set to **OpenAI** and `secrets/openai-api-key` (or `OPENAI_API_KEY`) is present, **Generate documents** runs the multi-stage package pipeline (`cv_shared/package/`):
+
+1. Job Analyzer → 2. Evidence Ranker → 3. Resume Composer → 4. Resume Critic (optional one revise) → 5. Cover Letter → 6. Consistency Review
+
+Those stages share process names under `DOCUMENT_PROVIDER_PROCESSES` and record usage per process in `cv_openaiUsage`. Failures degrade gracefully (match-based analyzer, deterministic ranking, etc.); if the whole pipeline throws, generation falls back to the simple tailor + cover path. Job extract, profile update, and GitHub classify always use Ollama. Toggle and pick the model in Settings → Document generation.
+
+When set to **Ollama**, packages use a simple two-step path: single resume tailor + single cover letter (still sourceId-verified).
 
 The model registry lives in `cv_shared/openai_client.py`. Each entry records its free-tier bucket (`standard` = 1M tokens/day, `mini` = 10M tokens/day, both resetting at UTC midnight) and whether the model accepts `temperature` — GPT-5 reasoning models reject it, so the parameter is omitted for those.
 
@@ -61,7 +69,7 @@ Then open `http://localhost:7545`.
 
 Every resume claim must cite an `evidence` document linked to `workHistory` and/or `projects`. The matcher and document generator must not invent experience.
 
-Resume packages go through an explicit **tailor** step: achievements are addressed as `work:{id}:b{i}` / `project:{id}:b{i}`, the LLM (Ollama or OpenAI per Settings) may only select and lightly rewrite with a `sourceId`, and the app verifies every claim against the approved catalog before RenderCV or legacy PDF rendering. See [RESUME_PIPELINE.md](RESUME_PIPELINE.md).
+Resume packages go through an explicit **tailor** step: achievements are addressed as `work:{id}:b{i}` / `project:{id}:b{i}`, the LLM may only select and lightly rewrite with a `sourceId`, and the app verifies every claim against the approved catalog before RenderCV or legacy PDF rendering. With OpenAI enabled the tailor sits inside a multi-stage pipeline (analyzer → ranker → composer → critic → cover → consistency); see [RESUME_PIPELINE.md](RESUME_PIPELINE.md).
 
 ## Stage 2A intake
 
@@ -69,15 +77,17 @@ Hourly worker (and `POST /ingest/run`) pulls Gmail job alerts → normalize/dedu
 
 ## Stage 2B Greenhouse watchlist
 
-Same ingest run also polls enabled Greenhouse boards from `cv_jobSources` when `cv_settings.atsIngest.greenhouse` is true. Public boards API (`boards-api.greenhouse.io`) — no API key. Same location + role gates as Gmail. Setup: [GREENHOUSE_SETUP.md](GREENHOUSE_SETUP.md). Sources UI lists last poll / errors; Settings holds the master ATS toggle.
+Same ingest run also polls enabled Greenhouse boards from `cv_jobSources` when `cv_settings.atsIngest.greenhouse` is true. Public boards API (`boards-api.greenhouse.io`) — no API key. Same location + role gates as Gmail. Postings older than `INGEST_BOARD_LOOKBACK_DAYS` (default **14**) are dropped when `postedAt` is present; unprocessed jobs are ordered first in the listing budget. Already-analyzed matches are not re-scored on re-poll. Setup: [GREENHOUSE_SETUP.md](GREENHOUSE_SETUP.md). Sources UI lists last poll / errors; Settings holds the master ATS toggle.
 
 ## Stage 2C Ashby watchlist
 
-Same ingest also polls enabled Ashby boards (`ats: "ashby"`) when `cv_settings.atsIngest.ashby` is true. Public posting API (`api.ashbyhq.com/posting-api/job-board/{slug}`) — no API key; descriptions included in the list response. Setup: [ASHBY_SETUP.md](ASHBY_SETUP.md).
+Same ingest also polls enabled Ashby boards (`ats: "ashby"`) when `cv_settings.atsIngest.ashby` is true. Public posting API (`api.ashbyhq.com/posting-api/job-board/{slug}`) — no API key; descriptions included in the list response. Same **14-day** board lookback + unprocessed-first ordering as Greenhouse. Setup: [ASHBY_SETUP.md](ASHBY_SETUP.md).
 
 ## Remotive remote-jobs API
 
-When `cv_settings.atsIngest.remotive` is true (opt-in in Settings → ATS board ingest), the same ingest run polls Remotive’s public API (`GET https://remotive.com/api/remote-jobs?category=software-dev`). No API key; full descriptions come in the list response. Same location + role gates as other sources. Public results are typically ~24h delayed — supplementary intake only, not primary “apply immediately”. Subject to Remotive API terms.
+When `cv_settings.atsIngest.remotive` is true (opt-in in Settings → ATS board ingest), the same ingest run polls Remotive’s public API (`GET https://remotive.com/api/remote-jobs?category=software-dev`). No API key; full descriptions come in the list response. Same location + role gates and **14-day** `postedAt` window as other ATS sources. Public results are typically ~24h delayed — supplementary intake only, not primary “apply immediately”. Subject to Remotive API terms.
+
+Gmail digests stay at `GMAIL_QUERY` (default `newer_than:2d`) and do **not** use the board lookback window.
 
 ## Stage 4 GitHub evidence
 

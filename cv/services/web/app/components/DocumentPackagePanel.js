@@ -21,6 +21,7 @@ export function savePackageToBrowser(jobId, pkg) {
       downloads: pkg.downloads || [],
       files: pkg.files || [],
       renderer: pkg.renderer,
+      pipeline: pkg.pipeline || null,
       selectionSummary: pkg.selectionSummary || null,
       tailorPayload: pkg.tailorPayload || null,
     };
@@ -186,10 +187,53 @@ function CollapsibleDoc({ title, filename, content, jobId, defaultOpen }) {
   );
 }
 
+function tailorProviderLabel(selection, pkg) {
+  if (selection?.usedLlm === false) return " · deterministic fallback";
+  if (!selection?.usedLlm && !pkg?.selectionSummary?.usedLlm) return "";
+  const pipeline = selection?.pipeline || pkg?.pipeline;
+  const provider =
+    selection?.provider ||
+    pkg?.selectionSummary?.provider ||
+    pkg?.tailorPayload?.provider;
+  if (pipeline === "openai-multistage") {
+    return provider
+      ? ` · OpenAI multi-stage (${provider})`
+      : " · OpenAI multi-stage";
+  }
+  if (provider === "openai") return " · OpenAI tailor";
+  if (provider === "ollama") return " · Ollama tailor";
+  if (selection?.usedLlm || pkg?.selectionSummary?.usedLlm) {
+    return " · LLM tailor";
+  }
+  return "";
+}
+
 export default function DocumentPackagePanel({ jobId, package: pkg }) {
   if (!pkg?.previews) return null;
 
-  const previewEntries = Object.values(pkg.previews);
+  // Prefer a stable preview order: resume first, then cover, then analysis artifacts
+  const PREVIEW_ORDER = [
+    "resume",
+    "coverLetter",
+    "fitAssessment",
+    "atsKeywords",
+    "interviewTalkingPoints",
+    "tailoringStrategy",
+    "selectionReport",
+    "gaps",
+    "jobAnalysis",
+    "evidenceRanking",
+    "applicationReport",
+    "applicationAnswers",
+    "matchAnalysis",
+    "evidence",
+  ];
+  const previewMap = pkg.previews || {};
+  const orderedKeys = [
+    ...PREVIEW_ORDER.filter((k) => previewMap[k]),
+    ...Object.keys(previewMap).filter((k) => !PREVIEW_ORDER.includes(k)),
+  ];
+  const previewEntries = orderedKeys.map((k) => previewMap[k]);
   const downloads = pkg.downloads || [];
   const selection = pkg.selectionSummary || pkg.tailorPayload || null;
   const files = pkg.files || [];
@@ -207,8 +251,8 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
       <h2 className="mb-3 text-lg font-semibold">Generated documents</h2>
       <p className="m-0 text-sm text-muted-foreground">
         Package <code>{pkg.folderName}</code>
-        {pkg.generatedAt ? ` · ${pkg.generatedAt}` : ""} · also saved in this
-        browser
+        {pkg.generatedAt ? ` · ${pkg.generatedAt}` : ""}
+        {pkg.pipeline ? ` · ${pkg.pipeline}` : ""} · also saved in this browser
       </p>
 
       {pdfQuickOpen.length > 0 ? (
@@ -237,11 +281,7 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
               {selection.renderer || pkg.renderer
                 ? ` · renderer ${selection.renderer || pkg.renderer}`
                 : ""}
-              {selection.usedLlm === false
-                ? " · deterministic fallback"
-                : selection.usedLlm
-                  ? " · Ollama tailor"
-                  : ""}
+              {tailorProviderLabel(selection, pkg)}
             </p>
             {Array.isArray(selection.omittedRequirements) &&
             selection.omittedRequirements.length > 0 ? (
@@ -274,6 +314,15 @@ export default function DocumentPackagePanel({ jobId, package: pkg }) {
                   onClick={() => downloadFromApi(jobId, "resume.yaml")}
                 >
                   Download resume.yaml
+                </Button>
+              ) : null}
+              {pkg.files?.includes("fit-assessment.md") ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => downloadFromApi(jobId, "fit-assessment.md")}
+                >
+                  Download fit assessment
                 </Button>
               ) : null}
             </div>

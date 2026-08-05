@@ -107,6 +107,13 @@ function applicationStatusChip(job) {
   };
 }
 
+function summaryField(status, key) {
+  const s = status?.summary || status || {};
+  const top = status?.[key];
+  if (top !== undefined && top !== null) return top;
+  return s[key];
+}
+
 function statusBannerText(status) {
   if (!status || status.status === "idle") return "";
   if (status.status === "running") {
@@ -126,8 +133,17 @@ function statusBannerText(status) {
     return `Ingest cancelled after ${processed} listing${processed === 1 ? "" : "s"}`;
   }
   if (status.status === "completed") {
-    const s = status.summary || status;
-    return `Ingest complete: ${s.jobsCreated || 0} new · ${s.analyzed || 0} analyzed · ${s.outOfArea || 0} out of area · ${s.wrongRole || 0} wrong role`;
+    const created = Number(summaryField(status, "jobsCreated") || 0);
+    const updated = Number(summaryField(status, "jobsUpdated") || 0);
+    const already = Number(summaryField(status, "skippedAlreadyAnalyzed") || 0);
+    const analyzed = Number(summaryField(status, "analyzed") || 0);
+    const outOfArea = Number(summaryField(status, "outOfArea") || 0);
+    const wrongRole = Number(summaryField(status, "wrongRole") || 0);
+    return (
+      `Ingest complete: ${created} new · ${updated} refreshed · ` +
+      `${already} already scored (skipped) · ${analyzed} analyzed · ` +
+      `${outOfArea} out of area · ${wrongRole} wrong role`
+    );
   }
   if (status.status === "failed") {
     return "Ingest failed — check API logs";
@@ -486,40 +502,50 @@ export default function HomePage() {
           <h1 className="m-0 mb-1.5 text-3xl font-semibold tracking-tight max-sm:text-2xl">
             Inbox
           </h1>
-          <p className="m-0 text-muted-foreground">
-            Digests split into per-listing jobs. Ingest runs in the background —
-            browse and Open while scoring continues.
+          <p className="m-0 text-muted-foreground max-w-2xl">
+            Fetch uses Gmail digests from the last 2 days and board postings up
+            to 14 days old. Already-in-inbox jobs are deduped and not re-scored
+            unless you re-analyze a job or use Re-read (clears Gmail markers
+            only). Browse and Open while scoring continues.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => runIngest(false)}
-            disabled={ingesting || deleting}
-            title="Fetch only new JobAlerts mail that has not been ingested yet"
-          >
-            {ingesting ? "Ingesting…" : "Fetch new alerts"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              if (
-                window.confirm(
-                  "Re-read recent JobAlerts from the start?\n\n" +
-                    "Use this after a failed run or parser changes. " +
-                    "Already-saved jobs are still deduped (not duplicated).",
-                )
-              ) {
-                runIngest(true);
-              }
-            }}
-            disabled={ingesting || deleting}
-            title="Clear processed markers and re-read recent JobAlerts (dedupes existing jobs)"
-          >
-            Re-read all recent
-          </Button>
+        <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => runIngest(false)}
+              disabled={ingesting || deleting}
+              title="New Gmail digests (2d) and board postings (≤14d). Skips marked mail and already-scored jobs."
+            >
+              {ingesting ? "Ingesting…" : "Fetch new alerts"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Re-read recent JobAlerts from the start?\n\n" +
+                      "Clears Gmail processed markers so digests in the Gmail window " +
+                      "(newer_than:2d) are parsed again. Board polls still merge into " +
+                      "existing jobs (no duplicates) and skip re-scoring already analyzed roles.\n\n" +
+                      "Use after a failed run or parser changes.",
+                  )
+                ) {
+                  runIngest(true);
+                }
+              }}
+              disabled={ingesting || deleting}
+              title="Clear Gmail processed markers and re-read recent digests (jobs still dedupe; scores not force-replaced)"
+            >
+              Re-read all recent
+            </Button>
+          </div>
+          <p className="m-0 text-xs text-muted-foreground max-w-sm sm:text-right">
+            Only unprocessed mail and new board listings fill the queue.
+            Existing scores stay unless you re-analyze.
+          </p>
         </div>
       </div>
 
@@ -576,9 +602,9 @@ export default function HomePage() {
               }
               return (
                 <p className="mt-1.5 text-sm text-muted-foreground">
-                  Splitting digests · fetching listing pages · Bay Area gate ·
-                  scoring one by one. You can Open finished jobs below while this
-                  runs.
+                  Unprocessed digests and board listings only · already-scored
+                  matches are skipped · Bay Area / role gates · scoring one by
+                  one. Open finished jobs below while this runs.
                 </p>
               );
             })()}

@@ -48,7 +48,10 @@ def send_telegram_message(text: str) -> bool:
 
 
 def notify_apply_match(job: dict[str, Any], match: dict[str, Any]) -> bool:
-    """Send one Telegram alert for recommendation=apply. Dedupes via telegramNotifiedAt."""
+    """Send one Telegram alert for high-fit jobs (score ≥ SCORE_URGENT / apply).
+
+    Dedupes via telegramNotifiedAt. Default apply band is 70+.
+    """
     if (match or {}).get("recommendation") != "apply":
         return False
     if match.get("telegramNotifiedAt"):
@@ -72,8 +75,9 @@ def notify_apply_match(job: dict[str, Any], match: dict[str, Any]) -> bool:
     if strong and isinstance(strong[0], dict):
         strong_line = strong[0].get("requirement") or strong[0].get("skill") or ""
 
+    urgent = int(os.environ.get("SCORE_URGENT", "70"))
     lines = [
-        "🎯 DTP-CV — APPLY recommendation",
+        f"🎯 DTP-CV — APPLY ({urgent}+ fit)",
         "",
         f"Score: {score}/100 (apply)",
         f"{title} — {company}",

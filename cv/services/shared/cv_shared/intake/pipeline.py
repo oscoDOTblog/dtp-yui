@@ -911,6 +911,7 @@ def run_ingest(
         "skippedWrongRole": 0,
         "skippedTimedOut": 0,
         "skippedAlreadyAnalyzed": 0,
+        "skippedOlderThanLookback": 0,
         "listingsTotal": 0,
         "listingsProcessed": 0,
         "telegramSent": 0,
@@ -1180,6 +1181,11 @@ def run_ingest(
             summary["skippedSourceLocation"] = int(
                 gh_stats.get("skippedSourceLocation") or 0
             )
+            summary["skippedOlderThanLookback"] = summary.get(
+                "skippedOlderThanLookback", 0
+            ) + int(gh_stats.get("skippedOlderThanLookback") or 0)
+            if gh_stats.get("boardLookbackDays") is not None:
+                summary["boardLookbackDays"] = gh_stats.get("boardLookbackDays")
             gh_raw, _ = _truncate_listings(
                 gh_raw,
                 remaining=gh_budget,
@@ -1242,6 +1248,11 @@ def run_ingest(
             summary["skippedSourceLocation"] = summary.get(
                 "skippedSourceLocation", 0
             ) + int(ashby_stats.get("skippedSourceLocation") or 0)
+            summary["skippedOlderThanLookback"] = summary.get(
+                "skippedOlderThanLookback", 0
+            ) + int(ashby_stats.get("skippedOlderThanLookback") or 0)
+            if ashby_stats.get("boardLookbackDays") is not None:
+                summary["boardLookbackDays"] = ashby_stats.get("boardLookbackDays")
             ashby_raw, _ = _truncate_listings(
                 ashby_raw,
                 remaining=ashby_budget,
@@ -1303,6 +1314,11 @@ def run_ingest(
             summary["skippedWrongRole"] = summary.get("skippedWrongRole", 0) + int(
                 remotive_stats.get("skippedWrongRole") or 0
             )
+            summary["skippedOlderThanLookback"] = summary.get(
+                "skippedOlderThanLookback", 0
+            ) + int(remotive_stats.get("skippedOlderThanLookback") or 0)
+            if remotive_stats.get("boardLookbackDays") is not None:
+                summary["boardLookbackDays"] = remotive_stats.get("boardLookbackDays")
             remotive_raw, _ = _truncate_listings(
                 remotive_raw,
                 remaining=remotive_budget,

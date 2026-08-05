@@ -10,6 +10,7 @@ from urllib import error, parse, request as urlrequest
 from ..settings import get_app_settings, ingest_drop_reason
 from .html_markdown import description_fields_from_html_or_text, html_to_markdown
 from .location import assess_location
+from .lookback import apply_board_lookback_and_order
 from .role_filter import _title_is_ambiguous, assess_role_fit, load_role_filter_config
 
 logger = logging.getLogger(__name__)
@@ -180,6 +181,7 @@ def fetch_remotive_raw_jobs(
         "jobsFetched": 0,
         "skippedOutOfArea": 0,
         "skippedWrongRole": 0,
+        "skippedOlderThanLookback": 0,
         "category": cat,
     }
     raw_jobs: list[dict[str, Any]] = []
@@ -197,9 +199,11 @@ def fetch_remotive_raw_jobs(
                     stats["skippedWrongRole"] += 1
                 continue
             raw_jobs.append(remotive_job_to_raw(job, category=cat))
-            if keep_limit is not None and len(raw_jobs) >= keep_limit:
-                stats["truncatedToLimit"] = True
-                break
+
+        raw_jobs = apply_board_lookback_and_order(raw_jobs, stats)
+        if keep_limit is not None and len(raw_jobs) > keep_limit:
+            stats["truncatedToLimit"] = True
+            raw_jobs = raw_jobs[:keep_limit]
 
         stats["sourcesPolled"] = 1
         stats["jobsFetched"] = len(raw_jobs)

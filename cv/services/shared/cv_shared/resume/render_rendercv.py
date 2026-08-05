@@ -38,24 +38,42 @@ def build_rendercv_data(
     if payload.summary:
         sections["summary"] = [payload.summary]
 
-    skill_names = [
-        skill_by_id[sid]["name"]
-        for sid in payload.selectedSkillIds
-        if sid in skill_by_id and skill_by_id[sid].get("name")
-    ]
-    if skill_names:
-        # Group roughly by category for OneLineEntry sections
-        by_cat: dict[str, list[str]] = {}
-        for sid in payload.selectedSkillIds:
-            skill = skill_by_id.get(sid)
-            if not skill or not skill.get("name"):
-                continue
-            cat = str(skill.get("category") or "skills").replace("_", " ").title()
-            by_cat.setdefault(cat, []).append(skill["name"])
-        sections["skills"] = [
-            {"label": cat, "details": ", ".join(names)}
-            for cat, names in by_cat.items()
+    highlights = list(getattr(payload, "highlights", None) or [])
+    if highlights:
+        sections["highlights"] = [h.text for h in highlights]
+
+    skill_groups = getattr(payload, "skillsGrouped", None) or {}
+    if skill_groups:
+        sections["skills"] = []
+        for cat, ids in skill_groups.items():
+            names = [
+                skill_by_id[sid]["name"]
+                for sid in ids
+                if sid in skill_by_id and skill_by_id[sid].get("name")
+            ]
+            if names:
+                sections["skills"].append(
+                    {"label": cat, "details": ", ".join(names)}
+                )
+    else:
+        skill_names = [
+            skill_by_id[sid]["name"]
+            for sid in payload.selectedSkillIds
+            if sid in skill_by_id and skill_by_id[sid].get("name")
         ]
+        if skill_names:
+            # Group roughly by category for OneLineEntry sections
+            by_cat: dict[str, list[str]] = {}
+            for sid in payload.selectedSkillIds:
+                skill = skill_by_id.get(sid)
+                if not skill or not skill.get("name"):
+                    continue
+                cat = str(skill.get("category") or "skills").replace("_", " ").title()
+                by_cat.setdefault(cat, []).append(skill["name"])
+            sections["skills"] = [
+                {"label": cat, "details": ", ".join(names)}
+                for cat, names in by_cat.items()
+            ]
 
     experience_entries: list[dict[str, Any]] = []
     work_groups: dict[str, list[str]] = {}
@@ -133,6 +151,7 @@ def build_rendercv_data(
     for key in payload.sectionOrder:
         mapped = {
             "summary": "summary",
+            "highlights": "highlights",
             "skills": "skills",
             "experience": "experience",
             "projects": "projects",

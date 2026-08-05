@@ -11,8 +11,15 @@ from . import openai_client
 
 logger = logging.getLogger(__name__)
 
-# Processes that honor cv_settings.documentProvider
-DOCUMENT_PROVIDER_PROCESSES = ("coverLetter", "resumeTailor")
+# Processes that honor cv_settings.documentProvider (OpenAI multi-stage + simple path)
+DOCUMENT_PROVIDER_PROCESSES = (
+    "coverLetter",
+    "resumeTailor",
+    "jobAnalyzer",
+    "evidenceRanker",
+    "resumeCritic",
+    "consistencyReview",
+)
 
 
 @dataclass(frozen=True)
@@ -50,9 +57,10 @@ def generate(
 ) -> LlmResult:
     """Generate text via the configured provider for document processes.
 
-    For coverLetter / resumeTailor when provider=openai and a key is present,
-    try OpenAI first; on failure fall through to Ollama. All other processes
-    (and openai without a key) use Ollama directly.
+    For coverLetter / resumeTailor / jobAnalyzer / evidenceRanker / resumeCritic /
+    consistencyReview when provider=openai and a key is present, try OpenAI first;
+    on failure fall through to Ollama. All other processes (and openai without a key)
+    use Ollama directly.
     """
     model = _openai_target(process)
     if model and openai_client.key_configured():

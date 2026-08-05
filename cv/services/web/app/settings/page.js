@@ -100,6 +100,30 @@ const OLLAMA_THINK_PROCESSES = [
     description:
       "Select and lightly rewrite approved achievements for each job package.",
   },
+  {
+    key: "jobAnalyzer",
+    label: "Job analyzer",
+    description:
+      "OpenAI multi-stage: extract ATS keywords and role priorities when package generation uses OpenAI.",
+  },
+  {
+    key: "evidenceRanker",
+    label: "Evidence ranker",
+    description:
+      "OpenAI multi-stage: score catalog achievements for the target role.",
+  },
+  {
+    key: "resumeCritic",
+    label: "Resume critic",
+    description:
+      "OpenAI multi-stage: score the draft resume and request one revision if needed.",
+  },
+  {
+    key: "consistencyReview",
+    label: "Consistency review",
+    description:
+      "OpenAI multi-stage: cross-check resume and cover letter for unsupported claims.",
+  },
 ];
 
 const DEFAULT_OLLAMA = {
@@ -110,6 +134,10 @@ const DEFAULT_OLLAMA = {
     githubClassify: false,
     coverLetter: false,
     resumeTailor: false,
+    jobAnalyzer: false,
+    evidenceRanker: false,
+    resumeCritic: false,
+    consistencyReview: false,
   },
 };
 
@@ -525,9 +553,11 @@ export default function SettingsPage() {
         <section className="mt-7">
           <h2 className="mb-3 text-lg font-semibold">Document generation</h2>
           <p className="mb-3 m-0 text-sm text-muted-foreground">
-            Choose the LLM for cover letters and resume tailor only. Job
-            extract, profile update, and GitHub classify stay on Ollama. OpenAI
-            failures fall back to Ollama, then the deterministic template.
+            When OpenAI is on, package generation runs a multi-stage pipeline
+            (job analysis → evidence ranking → resume compose → critic → cover
+            letter → consistency). Job extract, profile update, and GitHub
+            classify stay on Ollama. OpenAI failures fall back to Ollama, then
+            deterministic templates.
           </p>
           <div className="grid gap-3">
             <Card>
@@ -541,21 +571,21 @@ export default function SettingsPage() {
                   onCheckedChange={(on) =>
                     setDocProvider(on ? "openai" : "ollama")
                   }
-                  aria-label={`OpenAI for cover letter and resume ${
+                  aria-label={`OpenAI multi-stage package generation ${
                     documentProvider.provider === "openai" ? "on" : "off"
                   }`}
                 />
                 <div className="min-w-0 flex-1">
                   <p className="m-0 font-semibold">
-                    Use OpenAI for cover letter and resume
+                    Use OpenAI multi-stage package generation
                   </p>
                   <p className="mt-1 m-0 text-sm text-muted-foreground">
                     {documentProvider.openaiConfigured ? (
                       <>
-                        When on, packages call{" "}
-                        <code>{documentProvider.model}</code> via the OpenAI
-                        API. Ollama thinking toggles below only apply when
-                        falling back to Ollama.
+                        When on, packages use{" "}
+                        <code>{documentProvider.model}</code> for the multi-stage
+                        application pipeline (≈5–6 API calls). Ollama thinking
+                        toggles below only apply when falling back to Ollama.
                       </>
                     ) : (
                       <>
@@ -563,7 +593,7 @@ export default function SettingsPage() {
                         <code>secrets/openai-api-key</code> (or set{" "}
                         <code>OPENAI_API_KEY</code>), then restart the API
                         container. Until then this switch stays off and
-                        packages use local Ollama.
+                        packages use local Ollama (simple two-step path).
                       </>
                     )}
                   </p>
