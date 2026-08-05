@@ -40,6 +40,7 @@ from .manual_queue import (
     mark_done,
     mark_failed,
     mark_needs_paste,
+    reclaim_stuck_processing,
 )
 from .normalize import normalize_raw_job
 from .role_filter import assess_role_fit
@@ -166,6 +167,7 @@ def cancel_ingest(
         }
 
     rid = doc["_id"]
+    run_lane = (doc.get("lane") or lane or INGEST_LANE_INBOX).strip().lower()
     if doc.get("status") != "running" and not force:
         return {
             "ok": True,
@@ -174,6 +176,7 @@ def cancel_ingest(
             "status": doc.get("status"),
             "message": f"Ingest already {doc.get('status')}",
             "forced": False,
+            "lane": run_lane,
         }
 
     if force:
@@ -186,13 +189,21 @@ def cancel_ingest(
                 "currentTitle": "Cancelled (force clear)",
             },
         )
+        reclaimed = 0
+        if run_lane == INGEST_LANE_ANALYZE:
+            from .manual_queue import reclaim_stuck_processing
+
+            reclaimed = reclaim_stuck_processing()
         return {
             "ok": True,
             "found": True,
             "runId": rid,
             "status": "cancelled",
             "forced": True,
-            "message": "Ingest lock cleared",
+            "lane": run_lane,
+            "queueReclaimed": reclaimed,
+            "message": "Ingest lock cleared"
+            + (f"; requeued {reclaimed} processing item(s)" if reclaimed else ""),
         }
 
     _patch_run(
@@ -208,6 +219,7 @@ def cancel_ingest(
         "runId": rid,
         "status": "cancelling",
         "forced": False,
+        "lane": run_lane,
         "message": "Cancel requested",
     }
 
@@ -867,6 +879,12 @@ def _drain_manual_queue(
         if summary.get("status") == "cancelled":
             break
 
+    if summary.get("status") == "cancelled":
+        # Claimed-but-not-started rows (and any abandoned processing) → pending
+        reclaimed = reclaim_stuck_processing()
+        if reclaimed:
+            summary["queueReclaimed"] = summary.get("queueReclaimed", 0) + reclaimed
+
     summary["queuePending"] = count_by_status("pending")
 
 
@@ -1362,6 +1380,12 @@ def run_ingest(
         summary["currentTitle"] = ""
         if not summary.get("finishedAt"):
             summary["finishedAt"] = _now()
+        if lane == INGEST_LANE_ANALYZE:
+            reclaimed = reclaim_stuck_processing()
+            if reclaimed:
+                summary["queueReclaimed"] = (
+                    int(summary.get("queueReclaimed") or 0) + reclaimed
+                )
         publish()
         logger.info("Ingest cancelled: %s", summary)
         return {"runId": run_id, **summary}

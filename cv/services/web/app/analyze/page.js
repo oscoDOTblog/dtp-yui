@@ -79,6 +79,9 @@ export default function AnalyzePage() {
   const [pasteForId, setPasteForId] = useState(null);
   const [pasteText, setPasteText] = useState("");
   const [rowBusy, setRowBusy] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelStartedAt, setCancelStartedAt] = useState(null);
+  const [showForceClear, setShowForceClear] = useState(false);
 
   const loadQueue = useCallback(async () => {
     try {
@@ -91,24 +94,87 @@ export default function AnalyzePage() {
     }
   }, []);
 
+  const refreshStatus = useCallback(async () => {
+    try {
+      const path = runId
+        ? `/ingest/status?runId=${encodeURIComponent(runId)}`
+        : "/ingest/status?lane=analyze";
+      const data = await apiGet(path);
+      setIngestStatus(data);
+      if (data?.status === "running" && data._id) {
+        setRunId(data._id);
+      }
+      return data;
+    } catch {
+      return null;
+    }
+  }, [runId]);
+
   useEffect(() => {
     loadQueue();
   }, [loadQueue]);
 
+  // Resume banner after reload / pick up a run started elsewhere
   useEffect(() => {
-    if (!runId) return undefined;
+    let cancelled = false;
+    (async () => {
+      const status = await refreshStatus();
+      if (cancelled) return;
+      if (status?.status === "running" && status._id) {
+        setRunId(status._id);
+        setBusy(true);
+        if (status.cancelRequested) {
+          setCancelling(true);
+          setCancelStartedAt(Date.now() - 15000);
+          setShowForceClear(true);
+          setInfo(
+            "Analyze is stuck cancelling (often after an API restart). Use Force clear lock.",
+          );
+        }
+      }
+      await loadQueue();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // mount only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!runId && !busy) return undefined;
     let cancelled = false;
     const tick = async () => {
       try {
-        const status = await apiGet(
-          `/ingest/status?runId=${encodeURIComponent(runId)}`,
-        );
+        const status = await refreshStatus();
         if (cancelled) return;
-        setIngestStatus(status);
         await loadQueue();
+        if (status?.cancelRequested) {
+          setCancelling(true);
+          const stalled =
+            status.currentTitle === "Cancelling…" &&
+            !status.listingsProcessed &&
+            !status.listingsTotal;
+          if (
+            stalled ||
+            (cancelStartedAt && Date.now() - cancelStartedAt > 8000)
+          ) {
+            setShowForceClear(true);
+          }
+        }
         if (status?.status && status.status !== "running") {
           setRunId(null);
           setBusy(false);
+          setCancelling(false);
+          setCancelStartedAt(null);
+          setShowForceClear(false);
+          if (status.status === "cancelled") {
+            setInfo(
+              status.queueReclaimed
+                ? `Stopped. Requeued ${status.queueReclaimed} item(s) — remove them or Process again.`
+                : "Analyze queue stopped.",
+            );
+          }
         }
       } catch {
         /* keep polling */
@@ -120,7 +186,13 @@ export default function AnalyzePage() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [runId, loadQueue]);
+  }, [runId, busy, loadQueue, refreshStatus, cancelStartedAt]);
+
+  useEffect(() => {
+    if (!cancelling || !cancelStartedAt) return undefined;
+    const id = setTimeout(() => setShowForceClear(true), 10000);
+    return () => clearTimeout(id);
+  }, [cancelling, cancelStartedAt]);
 
   const parsedUrls = useMemo(() => parseUrls(urlsText), [urlsText]);
   const counts = useMemo(() => {
@@ -131,6 +203,8 @@ export default function AnalyzePage() {
     return next;
   }, [queue]);
   const pendingCount = counts.pending + counts.processing + counts.needsPaste;
+  const pipelineRunning =
+    Boolean(runId) || ingestStatus?.status === "running";
   const canSubmit =
     parsedUrls.length > 0 &&
     (mode === "links" || Boolean(descriptionRaw.trim()));
@@ -176,7 +250,12 @@ export default function AnalyzePage() {
         setRunId(ingest.runId);
         setInfo("Queued — processing now.");
       } else if (ingest.conflict) {
-        setBusy(false);
+        if (ingest.runId) {
+          setRunId(ingest.runId);
+          setBusy(true);
+        } else {
+          setBusy(false);
+        }
         setInfo(
           "Queued — Analyze is already processing. These will drain in that run or the next Process queue.",
         );
@@ -208,10 +287,74 @@ export default function AnalyzePage() {
           err.detail?.message ||
             "Analyze queue is already processing. Items will drain when that run finishes.",
         );
-        if (err.detail?.runId) setRunId(err.detail.runId);
+        if (err.detail?.runId) {
+          setRunId(err.detail.runId);
+          setBusy(true);
+        }
         return;
       }
       setError(err.message || "Failed to start queue processing");
+    }
+  }
+
+  async function stopPipeline(force = false) {
+    setError("");
+    setCancelling(true);
+    if (!force) {
+      setCancelStartedAt(Date.now());
+    }
+    try {
+      const path = force
+        ? `/ingest/cancel?force=true${
+            runId
+              ? `&runId=${encodeURIComponent(runId)}`
+              : "&lane=analyze"
+          }`
+        : `/ingest/cancel${
+            runId
+              ? `?runId=${encodeURIComponent(runId)}`
+              : "?lane=analyze"
+          }`;
+      const result = await apiPost(path);
+      if (result.runId) setRunId(result.runId);
+      if (force || result.status === "cancelled") {
+        setIngestStatus((prev) => ({
+          ...(prev || {}),
+          status: "cancelled",
+          cancelRequested: true,
+          currentTitle: force ? "Cancelled (force clear)" : "Cancelled",
+          finishedAt: new Date().toISOString(),
+          queueReclaimed: result.queueReclaimed,
+        }));
+        const reclaimed = result.queueReclaimed || 0;
+        setInfo(
+          force
+            ? reclaimed
+              ? `Lock cleared. ${reclaimed} processing item(s) requeued as pending — remove or Process again.`
+              : "Analyze lock cleared. You can Process queue again."
+            : "Analyze stopped.",
+        );
+        setCancelling(false);
+        setCancelStartedAt(null);
+        setShowForceClear(false);
+        setBusy(false);
+        setRunId(null);
+        await loadQueue();
+      } else {
+        setIngestStatus((prev) => ({
+          ...(prev || {}),
+          cancelRequested: true,
+          currentTitle: "Cancelling…",
+        }));
+        setInfo(
+          "Stop requested — finishing the current listing, then stopping. Pending rows stay queued.",
+        );
+      }
+      await refreshStatus();
+    } catch (err) {
+      setError(err.message || "Failed to stop Analyze queue");
+      setCancelling(false);
+      if (force) setShowForceClear(true);
     }
   }
 
@@ -284,6 +427,10 @@ export default function AnalyzePage() {
         setBusy(true);
         setInfo("Description saved — processing now.");
       } else if (ingest.conflict) {
+        if (ingest.runId) {
+          setRunId(ingest.runId);
+          setBusy(true);
+        }
         setInfo(
           "Description saved — will process when the current ingest finishes.",
         );
@@ -310,6 +457,8 @@ export default function AnalyzePage() {
         <p className="m-0 max-w-2xl text-muted-foreground">
           Paste Greenhouse or other job URLs. They score through the same path
           as Gmail and ATS alerts. If ingest is busy, they wait their turn.
+          Use Stop pipeline to cancel an Analyze run (current listing may finish
+          first).
         </p>
 
         <div className="mt-5 flex flex-wrap gap-2">
@@ -339,7 +488,7 @@ export default function AnalyzePage() {
         </Alert>
       ) : null}
 
-      {busy && runId ? (
+      {pipelineRunning ? (
         <div
           className="mb-6 flex items-center gap-5 rounded-xl border border-primary/35 bg-primary/8 p-5 max-md:flex-col max-md:items-stretch"
           role="status"
@@ -351,7 +500,9 @@ export default function AnalyzePage() {
           />
           <div className="min-w-0 flex-1">
             <p className="m-0 mb-1 font-semibold text-foreground">
-              Pipeline running
+              {ingestStatus?.cancelRequested
+                ? "Stopping Analyze"
+                : "Pipeline running"}
             </p>
             <p className="m-0 text-sm text-foreground/90">
               {ingestStatus?.currentTitle ||
@@ -360,8 +511,39 @@ export default function AnalyzePage() {
             </p>
             <p className="mt-1.5 text-sm text-muted-foreground">
               Fetching listings · Bay Area gate · scoring. Finished jobs land
-              in Inbox.
+              in Inbox. Stop finishes the current listing, then cancels the
+              rest of the run.
             </p>
+            {ingestStatus?.cancelRequested ? (
+              <p className="mt-1.5 mb-0 text-sm text-muted-foreground">
+                If this hangs after an API/worker restart, use Force clear
+                lock.
+              </p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="destructive-outline"
+                size="sm"
+                onClick={() => stopPipeline(false)}
+                disabled={cancelling && !showForceClear}
+              >
+                {cancelling && !showForceClear
+                  ? "Stopping…"
+                  : "Stop pipeline"}
+              </Button>
+              {showForceClear ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => stopPipeline(true)}
+                  title="Clear a stuck running lock and requeue processing items"
+                >
+                  Force clear lock
+                </Button>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}
@@ -469,6 +651,16 @@ export default function AnalyzePage() {
               Process queue
               {counts.pending > 0 ? ` (${counts.pending})` : ""}
             </Button>
+            {pipelineRunning ? (
+              <Button
+                type="button"
+                variant="destructive-outline"
+                disabled={cancelling && !showForceClear}
+                onClick={() => stopPipeline(false)}
+              >
+                {cancelling && !showForceClear ? "Stopping…" : "Stop pipeline"}
+              </Button>
+            ) : null}
           </div>
         </form>
       </section>
