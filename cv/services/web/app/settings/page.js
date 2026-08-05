@@ -5,6 +5,7 @@ import { apiGet, apiPatch } from "../../lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardPanel } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Progress, ProgressLabel } from "@/components/ui/progress";
 import {
   Select,
@@ -176,6 +177,8 @@ const DEFAULT_INGEST_FILTERS = {
   greenhouseTwoPhase: true,
 };
 
+const DEFAULT_DAILY_APPLICATIONS_TARGET = 10;
+
 export default function SettingsPage() {
   const [gmailIngest, setGmailIngest] = useState(null);
   const [atsIngest, setAtsIngest] = useState(null);
@@ -184,6 +187,12 @@ export default function SettingsPage() {
   const [ollama, setOllama] = useState(null);
   const [resume, setResume] = useState(null);
   const [documentProvider, setDocumentProvider] = useState(null);
+  const [dailyApplicationsTarget, setDailyApplicationsTarget] = useState(
+    DEFAULT_DAILY_APPLICATIONS_TARGET,
+  );
+  const [dailyTargetDraft, setDailyTargetDraft] = useState(
+    String(DEFAULT_DAILY_APPLICATIONS_TARGET),
+  );
   const [openaiUsage, setOpenaiUsage] = useState(null);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
@@ -203,6 +212,11 @@ export default function SettingsPage() {
       setOllama(data.ollama || DEFAULT_OLLAMA);
       setResume(data.resume || DEFAULT_RESUME);
       setDocumentProvider(data.documentProvider || DEFAULT_DOCUMENT_PROVIDER);
+      const target =
+        Number(data.dailyApplicationsTarget) ||
+        DEFAULT_DAILY_APPLICATIONS_TARGET;
+      setDailyApplicationsTarget(target);
+      setDailyTargetDraft(String(target));
     } catch (err) {
       setError(err.message || "Failed to load settings");
       setGmailIngest(null);
@@ -251,6 +265,16 @@ export default function SettingsPage() {
     if (data.documentProvider) setDocumentProvider(data.documentProvider);
     else if (previousSlices?.documentProvider)
       setDocumentProvider(previousSlices.documentProvider);
+    if (data.dailyApplicationsTarget != null) {
+      const target = Number(data.dailyApplicationsTarget);
+      if (Number.isFinite(target) && target > 0) {
+        setDailyApplicationsTarget(target);
+        setDailyTargetDraft(String(target));
+      }
+    } else if (previousSlices?.dailyApplicationsTarget != null) {
+      setDailyApplicationsTarget(previousSlices.dailyApplicationsTarget);
+      setDailyTargetDraft(String(previousSlices.dailyApplicationsTarget));
+    }
   }
 
   async function toggleGmail(key) {
@@ -508,6 +532,35 @@ export default function SettingsPage() {
     }
   }
 
+  async function saveDailyApplicationsTarget() {
+    if (savingKey) return;
+    const parsed = parseInt(dailyTargetDraft, 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 100) {
+      setError("Daily applications target must be an integer from 1 to 100.");
+      setDailyTargetDraft(String(dailyApplicationsTarget));
+      return;
+    }
+    if (parsed === dailyApplicationsTarget) return;
+    const previous = dailyApplicationsTarget;
+    setDailyApplicationsTarget(parsed);
+    setSavingKey("dailyApplicationsTarget");
+    setError("");
+    setInfo("");
+    try {
+      const data = await apiPatch("/settings", {
+        dailyApplicationsTarget: parsed,
+      });
+      syncFromResponse(data, { dailyApplicationsTarget: parsed });
+      setInfo("Saved. Applications page goal uses this daily target.");
+    } catch (err) {
+      setDailyApplicationsTarget(previous);
+      setDailyTargetDraft(String(previous));
+      setError(err.message || "Failed to save settings");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
   const availableModels = documentProvider?.availableModels || [];
   const modelOptions = availableModels.map((m) => ({
     value: m.id,
@@ -547,6 +600,49 @@ export default function SettingsPage() {
 
       {loading ? (
         <p className="py-8 text-muted-foreground">Loading…</p>
+      ) : null}
+
+      {!loading && documentProvider ? (
+        <section className="mt-7">
+          <h2 className="mb-3 text-lg font-semibold">Applications</h2>
+          <p className="mb-3 m-0 text-sm text-muted-foreground">
+            Daily target for jobs marked{" "}
+            <code className="text-[0.8em]">pending</code> (applied). Showed on
+            the{" "}
+            <a href="/applications">Applications</a> page as today&apos;s
+            progress.
+          </p>
+          <Card>
+            <CardPanel className="flex flex-wrap items-center gap-3 p-4">
+              <div className="min-w-0 flex-1">
+                <p className="m-0 font-semibold">Jobs applied per day</p>
+                <p className="mt-1 m-0 text-sm text-muted-foreground">
+                  Default is 10. Range 1–100.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  className="w-20"
+                  value={dailyTargetDraft}
+                  disabled={!!savingKey}
+                  nativeInput
+                  onChange={(e) => setDailyTargetDraft(e.target.value)}
+                  onBlur={saveDailyApplicationsTarget}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  aria-label="Daily applications target"
+                />
+              </div>
+            </CardPanel>
+          </Card>
+        </section>
       ) : null}
 
       {!loading && documentProvider ? (

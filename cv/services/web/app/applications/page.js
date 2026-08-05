@@ -1,30 +1,59 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet } from "../../lib/api";
+import {
+  countToday,
+  loadViewMode,
+  saveViewMode,
+} from "../../lib/applicationDays";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardPanel } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+import ApplicationsCalendar from "../components/ApplicationsCalendar";
+import ApplicationsDailyGoal from "../components/ApplicationsDailyGoal";
+import ApplicationsTimeline from "../components/ApplicationsTimeline";
+import ApplicationsViewToggle from "../components/ApplicationsViewToggle";
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const DEFAULT_TARGET = 10;
 
-/** Green <7d, yellow 7–14d, red 14d+. */
-function updatedAtToneClass(value) {
-  if (!value) return "text-muted-foreground";
-  const then = new Date(value).getTime();
-  if (Number.isNaN(then)) return "text-muted-foreground";
-  const ageDays = (Date.now() - then) / MS_PER_DAY;
-  if (ageDays < 7) return "text-success-foreground";
-  if (ageDays < 14) return "text-warning-foreground";
-  return "text-destructive-foreground";
-}
+export default function ApplicationsPage() {
+  const [apps, setApps] = useState([]);
+  const [target, setTarget] = useState(DEFAULT_TARGET);
+  const [viewMode, setViewMode] = useState("timeline");
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-export default async function ApplicationsPage() {
-  let apps = [];
-  let error = null;
-  try {
-    apps = await apiGet("/applications");
-  } catch (err) {
-    error = err.message || "Failed to load applications";
+  useEffect(() => {
+    setViewMode(loadViewMode());
+  }, []);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [tracker, settings] = await Promise.all([
+        apiGet("/applications/tracker"),
+        apiGet("/settings").catch(() => null),
+      ]);
+      setApps(Array.isArray(tracker) ? tracker : []);
+      const t = Number(settings?.dailyApplicationsTarget);
+      setTarget(Number.isFinite(t) && t > 0 ? t : DEFAULT_TARGET);
+    } catch (err) {
+      setError(err.message || "Failed to load applications");
+      setApps([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function handleViewChange(mode) {
+    setViewMode(mode);
+    saveViewMode(mode);
   }
+
+  const appliedToday = useMemo(() => countToday(apps), [apps]);
 
   return (
     <div>
@@ -32,8 +61,8 @@ export default async function ApplicationsPage() {
         Applications
       </h1>
       <p className="mb-6 text-muted-foreground">
-        Generated packages under <code>generated-applications/</code> on the
-        Legion.
+        Jobs you have applied to (status set to Pending). Track daily progress
+        and review by timeline or calendar.
       </p>
 
       {error ? (
@@ -42,42 +71,25 @@ export default async function ApplicationsPage() {
         </Alert>
       ) : null}
 
-      {!error && apps.length === 0 ? (
-        <p className="py-8 text-muted-foreground">
-          No packages yet. Open a job and click Generate documents.
-        </p>
-      ) : null}
-
-      <div className="grid gap-3.5">
-        {apps.map((app) => (
-          <Card key={app._id}>
-            <CardPanel className="p-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="m-0 text-base font-semibold">
-                  {app.job?.title || "Job"} — {app.job?.company || "Company"}
-                </h2>
-                <Badge variant="outline">{app.status}</Badge>
-              </div>
-              <p className="mt-1.5 m-0 text-sm text-muted-foreground">
-                Package: {app.package?.folderName || app.packageId}
-              </p>
-              <p
-                className={cn(
-                  "m-0 text-sm font-medium",
-                  updatedAtToneClass(app.updatedAt),
-                )}
-              >
-                Updated: {app.updatedAt}
-              </p>
-              {app.job?._id ? (
-                <p className="m-0 text-sm text-muted-foreground">
-                  <a href={`/jobs/${app.job._id}`}>View job</a>
-                </p>
-              ) : null}
-            </CardPanel>
-          </Card>
-        ))}
-      </div>
+      {loading ? (
+        <p className="py-8 text-muted-foreground">Loading…</p>
+      ) : (
+        <>
+          <ApplicationsDailyGoal
+            appliedToday={appliedToday}
+            target={target}
+          />
+          <ApplicationsViewToggle
+            value={viewMode}
+            onChange={handleViewChange}
+          />
+          {viewMode === "calendar" ? (
+            <ApplicationsCalendar apps={apps} dailyTarget={target} />
+          ) : (
+            <ApplicationsTimeline apps={apps} />
+          )}
+        </>
+      )}
     </div>
   );
 }

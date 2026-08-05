@@ -83,6 +83,11 @@ DEFAULT_DOCUMENT_PROVIDER = {
     "model": "",
 }
 
+# Daily applications goal on /applications (local calendar day)
+DEFAULT_DAILY_APPLICATIONS_TARGET = 10
+MIN_DAILY_APPLICATIONS_TARGET = 1
+MAX_DAILY_APPLICATIONS_TARGET = 100
+
 ALERT_SOURCE_TO_KEY = {
     "linkedin-email": "linkedinEmail",
     "indeed-email": "indeedEmail",
@@ -108,8 +113,21 @@ def default_app_settings() -> dict[str, Any]:
         },
         "resume": dict(DEFAULT_RESUME),
         "documentProvider": dict(DEFAULT_DOCUMENT_PROVIDER),
+        "dailyApplicationsTarget": DEFAULT_DAILY_APPLICATIONS_TARGET,
         "updatedAt": _now(),
     }
+
+
+def _normalize_daily_applications_target(raw: Any) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_DAILY_APPLICATIONS_TARGET
+    if value < MIN_DAILY_APPLICATIONS_TARGET:
+        return MIN_DAILY_APPLICATIONS_TARGET
+    if value > MAX_DAILY_APPLICATIONS_TARGET:
+        return MAX_DAILY_APPLICATIONS_TARGET
+    return value
 
 
 def _normalize_gmail_ingest(raw: dict[str, Any] | None) -> dict[str, bool]:
@@ -251,6 +269,9 @@ def get_app_settings() -> dict[str, Any]:
     ollama = _normalize_ollama(doc.get("ollama"))
     resume = _normalize_resume(doc.get("resume"))
     document_provider = _normalize_document_provider(doc.get("documentProvider"))
+    daily_target = _normalize_daily_applications_target(
+        doc.get("dailyApplicationsTarget")
+    )
     needs_fix = (
         gmail != doc.get("gmailIngest")
         or ats != doc.get("atsIngest")
@@ -259,6 +280,7 @@ def get_app_settings() -> dict[str, Any]:
         or ollama != doc.get("ollama")
         or resume != doc.get("resume")
         or document_provider != doc.get("documentProvider")
+        or daily_target != doc.get("dailyApplicationsTarget")
     )
     if needs_fix:
         db[C.SETTINGS].update_one(
@@ -272,6 +294,7 @@ def get_app_settings() -> dict[str, Any]:
                     "ollama": ollama,
                     "resume": resume,
                     "documentProvider": document_provider,
+                    "dailyApplicationsTarget": daily_target,
                     "updatedAt": _now(),
                 }
             },
@@ -284,6 +307,7 @@ def get_app_settings() -> dict[str, Any]:
     doc["ollama"] = ollama
     doc["resume"] = resume
     doc["documentProvider"] = document_provider
+    doc["dailyApplicationsTarget"] = daily_target
     return doc
 
 
@@ -298,6 +322,9 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
     ollama = _normalize_ollama(current.get("ollama"))
     resume = _normalize_resume(current.get("resume"))
     document_provider = _normalize_document_provider(current.get("documentProvider"))
+    daily_target = _normalize_daily_applications_target(
+        current.get("dailyApplicationsTarget")
+    )
 
     incoming_gmail = partial.get("gmailIngest") if isinstance(partial, dict) else None
     if isinstance(incoming_gmail, dict):
@@ -384,6 +411,11 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
             merged_doc["model"] = incoming_doc_provider["model"]
         document_provider = _normalize_document_provider(merged_doc)
 
+    if isinstance(partial, dict) and "dailyApplicationsTarget" in partial:
+        daily_target = _normalize_daily_applications_target(
+            partial.get("dailyApplicationsTarget")
+        )
+
     updated_at = _now()
     db[C.SETTINGS].update_one(
         {"_id": APP_SETTINGS_ID},
@@ -396,6 +428,7 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
                 "ollama": ollama,
                 "resume": resume,
                 "documentProvider": document_provider,
+                "dailyApplicationsTarget": daily_target,
                 "updatedAt": updated_at,
             }
         },
@@ -410,6 +443,7 @@ def patch_app_settings(partial: dict[str, Any]) -> dict[str, Any]:
         "ollama": ollama,
         "resume": resume,
         "documentProvider": document_provider,
+        "dailyApplicationsTarget": daily_target,
         "updatedAt": updated_at,
     }
 
@@ -506,3 +540,11 @@ def get_document_provider_settings(
 def get_document_provider(settings: dict[str, Any] | None = None) -> str:
     """Return 'ollama' or 'openai' for multi-stage / simple document generation."""
     return get_document_provider_settings(settings)["provider"]
+
+
+def get_daily_applications_target(
+    settings: dict[str, Any] | None = None,
+) -> int:
+    """Daily applications goal (default 10)."""
+    doc = settings if settings is not None else get_app_settings()
+    return _normalize_daily_applications_target(doc.get("dailyApplicationsTarget"))

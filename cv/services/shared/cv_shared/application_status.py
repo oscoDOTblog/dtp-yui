@@ -14,6 +14,12 @@ APPLICATION_STATUS_ORDER = (
 
 APPLICATION_STATUSES = APPLICATION_STATUS_ORDER + ("rejected",)
 
+# Pipeline stages that mean the candidate has submitted an application.
+# `pending` is the first applied stage; later rounds inherit the original apply.
+APPLIED_PIPELINE_STATUSES = frozenset(
+    ("pending", "round1", "round2", "round3", "round4")
+)
+
 APPLICATION_STATUS_LABELS = {
     "apply": "Apply",
     "pending": "Pending",
@@ -23,6 +29,11 @@ APPLICATION_STATUS_LABELS = {
     "round4": "Round 4",
     "rejected": "Rejected",
 }
+
+
+def marks_applied(status: str | None) -> bool:
+    """True when setting this status should record an application (appliedAt)."""
+    return status in APPLIED_PIPELINE_STATUSES
 
 # Legacy decision / job.status values → pipeline status
 _LEGACY_DECISION_MAP = {

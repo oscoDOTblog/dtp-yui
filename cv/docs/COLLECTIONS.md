@@ -49,6 +49,7 @@ One document per normalized requirement. Upserted on each successful job analyze
 | `status` | Intake: `new` \| `out_of_area` \| `wrong_role`; soft pipeline mirrors (`interested`, `saved`, `interview`, `rejected`) |
 | `applicationStatus` | Human track: `apply` \| `pending` \| `round1`–`round4` \| `rejected` |
 | `applicationStatusAt` | When `applicationStatus` was last set |
+| `appliedAt` | When the job was first set to `pending` (stable day key for application goals; not overwritten on later stages) |
 | `fitOverrides` | Map of normalized requirement → `strong` \| `warning` \| `gap` (user fit assessment); applied on score + Re-analyze |
 | `fitOverridesUpdatedAt` | When a fit override was last saved |
 | `titleSource` | `manual` when the title was hand-edited; absent when detected. Blocks title overwrites from re-ingest polls and Re-analyze |
@@ -102,7 +103,7 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
 | Collection | Purpose |
 |---|---|
 | `cv_gmailMessages` | Processed Gmail message ids (idempotent ingest) |
-| `cv_settings` | App settings (UI source of truth). Doc `_id: "app"` with `gmailIngest`, `atsIngest`, `githubEvidence`, `ingestFilters`, `ollama`, `resume`, and `documentProvider` |
+| `cv_settings` | App settings (UI source of truth). Doc `_id: "app"` with `gmailIngest`, `atsIngest`, `githubEvidence`, `ingestFilters`, `ollama`, `resume`, `documentProvider`, and `dailyApplicationsTarget` |
 | `cv_jobSources` | ATS company watchlist (Greenhouse boards) |
 | `cv_intakeQueue` | Manual job URLs queued from Analyze for intake digestion |
 
@@ -157,9 +158,12 @@ Policy (shared intake): title allowlist / blocklist from [`config/roleFilter.jso
     "provider": "ollama",
     "model": "gpt-4o-mini"
   },
+  "dailyApplicationsTarget": 10,
   "updatedAt": "ISO-8601"
 }
 ```
+
+`dailyApplicationsTarget`: integer 1–100 (default **10**). Used on `/applications` as the local-day applications goal (counting jobs first marked `pending`).
 
 `resume.renderEngine`: `legacy` (ReportLab) or `rendercv`. See [RESUME_PIPELINE.md](RESUME_PIPELINE.md).
 

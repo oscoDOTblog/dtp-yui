@@ -65,6 +65,7 @@ class SettingsPatchBody(BaseModel):
     ollama: Optional[dict[str, Any]] = None
     resume: Optional[dict[str, Any]] = None
     documentProvider: Optional[dict[str, Any]] = None
+    dailyApplicationsTarget: Optional[int] = None
 
 
 class SourceCreateBody(BaseModel):
@@ -866,7 +867,10 @@ def patch_application_status(job_id: str, body: ApplicationStatusBody) -> dict:
 def _set_application_status(
     job_id: str, status: str, *, note: str | None = None
 ) -> dict:
-    from cv_shared.application_status import APPLICATION_STATUS_LABELS
+    from cv_shared.application_status import (
+        APPLICATION_STATUS_LABELS,
+        marks_applied,
+    )
 
     db = get_db()
     job = db[C.JOBS].find_one({"_id": job_id})
@@ -881,6 +885,9 @@ def _set_application_status(
         "applicationStatusAt": now,
         "updatedAt": now,
     }
+    # First time reaching pending (or later track stages): stable day for goals
+    if marks_applied(status) and not job.get("appliedAt"):
+        fields["appliedAt"] = now
     intake_status = (job.get("status") or "").strip()
     if intake_status not in ("out_of_area", "wrong_role"):
         # Soft mirror for older clients / filters
@@ -896,6 +903,7 @@ def _set_application_status(
         fields["status"] = soft.get(status, status)
 
     db[C.JOBS].update_one({"_id": job_id}, {"$set": fields})
+    applied_at = fields.get("appliedAt") or job.get("appliedAt")
 
     db[C.APPLICATIONS].update_one(
         {"_id": f"app_{job_id}"},
@@ -926,6 +934,7 @@ def _set_application_status(
             "jobId": job_id,
             "applicationStatus": status,
             "applicationStatusAt": now,
+            "appliedAt": applied_at,
         }
     )
 
@@ -1025,6 +1034,108 @@ def list_applications() -> list:
         item["package"] = _serialize(pkg)
         item["job"] = _serialize(job)
         out.append(item)
+    return out
+
+
+def _resolve_applied_at(db, job: dict) -> str | None:
+    """Return stable appliedAt, lazy-backfilling for legacy pipeline jobs."""
+    from cv_shared.application_status import (
+        APPLIED_PIPELINE_STATUSES,
+        resolve_application_status,
+    )
+
+    existing = (job.get("appliedAt") or "").strip()
+    if existing:
+        return existing
+
+    status = resolve_application_status(job)
+    if status not in APPLIED_PIPELINE_STATUSES and status != "rejected":
+        return None
+
+    decision = db[C.USER_DECISIONS].find_one(
+        {
+            "jobId": job["_id"],
+            "$or": [
+                {"applicationStatus": "pending"},
+                {"decision": "pending"},
+                {"decision": "save"},
+                {"decision": "saved"},
+            ],
+        },
+        sort=[("createdAt", 1)],
+    )
+    applied_at = None
+    if decision and decision.get("createdAt"):
+        applied_at = decision["createdAt"]
+    elif status in APPLIED_PIPELINE_STATUSES:
+        applied_at = (
+            job.get("applicationStatusAt") or job.get("updatedAt") or ""
+        ).strip() or None
+
+    if applied_at:
+        db[C.JOBS].update_one(
+            {
+                "_id": job["_id"],
+                "$or": [
+                    {"appliedAt": {"$exists": False}},
+                    {"appliedAt": None},
+                    {"appliedAt": ""},
+                ],
+            },
+            {"$set": {"appliedAt": applied_at}},
+        )
+    return applied_at
+
+
+@app.get("/applications/tracker")
+def list_applications_tracker() -> list:
+    """Applied jobs for timeline/calendar (pending+ and stable appliedAt)."""
+    from cv_shared.application_status import (
+        APPLIED_PIPELINE_STATUSES,
+        resolve_application_status,
+    )
+
+    db = get_db()
+    query = {
+        "$or": [
+            {"appliedAt": {"$exists": True, "$nin": [None, ""]}},
+            {
+                "applicationStatus": {
+                    "$in": list(APPLIED_PIPELINE_STATUSES) + ["rejected"]
+                }
+            },
+            # Legacy soft mirror when pipeline field missing
+            {"status": {"$in": ["saved", "interview"]}},
+        ]
+    }
+    jobs = list(db[C.JOBS].find(query))
+    out = []
+    for job in jobs:
+        status = resolve_application_status(job)
+        if not status or status == "apply":
+            continue
+        applied_at = _resolve_applied_at(db, job)
+        if not applied_at:
+            continue
+
+        app_doc = db[C.APPLICATIONS].find_one({"_id": f"app_{job['_id']}"})
+        package_id = app_doc.get("packageId") if app_doc else None
+
+        out.append(
+            _serialize(
+                {
+                    "jobId": job["_id"],
+                    "title": job.get("title") or "",
+                    "company": job.get("company") or "",
+                    "applicationStatus": status,
+                    "appliedAt": applied_at,
+                    "applicationStatusAt": job.get("applicationStatusAt"),
+                    "packageId": package_id,
+                }
+            )
+        )
+
+    out.sort(key=lambda row: row.get("appliedAt") or "", reverse=True)
     return out
 
 
