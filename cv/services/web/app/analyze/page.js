@@ -69,7 +69,7 @@ export default function AnalyzePage() {
   const [mode, setMode] = useState("links");
   const [urlsText, setUrlsText] = useState("");
   const [descriptionRaw, setDescriptionRaw] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [queue, setQueue] = useState([]);
@@ -122,7 +122,6 @@ export default function AnalyzePage() {
       if (cancelled) return;
       if (status?.status === "running" && status._id) {
         setRunId(status._id);
-        setBusy(true);
         if (status.cancelRequested) {
           setCancelling(true);
           setCancelStartedAt(Date.now() - 15000);
@@ -142,7 +141,7 @@ export default function AnalyzePage() {
   }, []);
 
   useEffect(() => {
-    if (!runId && !busy) return undefined;
+    if (!runId && ingestStatus?.status !== "running") return undefined;
     let cancelled = false;
     const tick = async () => {
       try {
@@ -164,7 +163,6 @@ export default function AnalyzePage() {
         }
         if (status?.status && status.status !== "running") {
           setRunId(null);
-          setBusy(false);
           setCancelling(false);
           setCancelStartedAt(null);
           setShowForceClear(false);
@@ -186,7 +184,7 @@ export default function AnalyzePage() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [runId, busy, loadQueue, refreshStatus, cancelStartedAt]);
+  }, [runId, ingestStatus?.status, loadQueue, refreshStatus, cancelStartedAt]);
 
   useEffect(() => {
     if (!cancelling || !cancelStartedAt) return undefined;
@@ -202,7 +200,6 @@ export default function AnalyzePage() {
     }
     return next;
   }, [queue]);
-  const pendingCount = counts.pending + counts.processing + counts.needsPaste;
   const pipelineRunning =
     Boolean(runId) || ingestStatus?.status === "running";
   const canSubmit =
@@ -211,18 +208,19 @@ export default function AnalyzePage() {
 
   async function onSubmit(event) {
     event.preventDefault();
-    setBusy(true);
+    if (submitting) return;
+    setSubmitting(true);
     setError("");
     setInfo("");
 
     if (!parsedUrls.length) {
       setError("Add at least one job URL.");
-      setBusy(false);
+      setSubmitting(false);
       return;
     }
     if (mode === "paste" && !descriptionRaw.trim()) {
       setError("Paste the full job description to continue.");
-      setBusy(false);
+      setSubmitting(false);
       return;
     }
 
@@ -250,30 +248,26 @@ export default function AnalyzePage() {
         setRunId(ingest.runId);
         setInfo("Queued — processing now.");
       } else if (ingest.conflict) {
-        if (ingest.runId) {
-          setRunId(ingest.runId);
-          setBusy(true);
-        } else {
-          setBusy(false);
-        }
+        if (ingest.runId) setRunId(ingest.runId);
         setInfo(
-          "Queued — Analyze is already processing. These will drain in that run or the next Process queue.",
+          "Queued — will process in the active run or the next Process queue.",
         );
       } else {
-        setBusy(false);
         setInfo("Queued.");
       }
       await loadQueue();
     } catch (err) {
       setError(err.message || "Failed to queue URLs");
-      setBusy(false);
+    } finally {
+      setSubmitting(false);
     }
   }
 
   async function processQueue() {
+    if (submitting || pipelineRunning) return;
     setError("");
     setInfo("");
-    setBusy(true);
+    setSubmitting(true);
     try {
       const result = await apiPost("/ingest/queue/process");
       if (result?.runId) {
@@ -281,19 +275,17 @@ export default function AnalyzePage() {
         setInfo("Processing queue…");
       }
     } catch (err) {
-      setBusy(false);
       if (err.status === 409) {
         setInfo(
           err.detail?.message ||
             "Analyze queue is already processing. Items will drain when that run finishes.",
         );
-        if (err.detail?.runId) {
-          setRunId(err.detail.runId);
-          setBusy(true);
-        }
+        if (err.detail?.runId) setRunId(err.detail.runId);
         return;
       }
       setError(err.message || "Failed to start queue processing");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -337,7 +329,6 @@ export default function AnalyzePage() {
         setCancelling(false);
         setCancelStartedAt(null);
         setShowForceClear(false);
-        setBusy(false);
         setRunId(null);
         await loadQueue();
       } else {
@@ -373,7 +364,7 @@ export default function AnalyzePage() {
   }
 
   async function clearQueue() {
-    if (busy || rowBusy) return;
+    if (submitting || rowBusy) return;
     const removable = queue.filter((item) => item.status !== "processing");
     if (removable.length === 0) return;
     const ok = window.confirm(
@@ -424,15 +415,11 @@ export default function AnalyzePage() {
       const ingest = result.ingest || {};
       if (ingest.accepted && ingest.runId) {
         setRunId(ingest.runId);
-        setBusy(true);
         setInfo("Description saved — processing now.");
       } else if (ingest.conflict) {
-        if (ingest.runId) {
-          setRunId(ingest.runId);
-          setBusy(true);
-        }
+        if (ingest.runId) setRunId(ingest.runId);
         setInfo(
-          "Description saved — will process when the current ingest finishes.",
+          "Description saved — will process when the current run drains more items.",
         );
       } else {
         setInfo("Description saved.");
@@ -603,7 +590,7 @@ export default function AnalyzePage() {
                   placeholder={
                     "https://boards.greenhouse.io/…/jobs/…\nhttps://jobs.ashbyhq.com/…/…\nhttps://…"
                   }
-                  disabled={busy}
+                  disabled={submitting}
                   autoFocus
                 />
               </Field>
@@ -617,7 +604,7 @@ export default function AnalyzePage() {
                   value={urlsText}
                   onChange={(e) => setUrlsText(e.target.value)}
                   placeholder="https://boards.greenhouse.io/…/jobs/… or jobs.ashbyhq.com/…"
-                  disabled={busy}
+                  disabled={submitting}
                 />
               </Field>
               <Field>
@@ -627,7 +614,7 @@ export default function AnalyzePage() {
                   value={descriptionRaw}
                   onChange={(e) => setDescriptionRaw(e.target.value)}
                   placeholder="Paste the full listing text here…"
-                  disabled={busy}
+                  disabled={submitting}
                   autoFocus
                 />
               </Field>
@@ -637,16 +624,23 @@ export default function AnalyzePage() {
           <div className="flex flex-wrap items-center gap-2.5 pt-1">
             <Button
               type="submit"
-              disabled={busy || !canSubmit}
-              loading={busy && !runId}
+              disabled={submitting || !canSubmit}
+              loading={submitting}
             >
               Queue into pipeline
             </Button>
             <Button
               type="button"
               variant="outline"
-              disabled={busy || pendingCount === 0}
+              disabled={
+                submitting || pipelineRunning || counts.pending === 0
+              }
               onClick={processQueue}
+              title={
+                pipelineRunning
+                  ? "A run is already active — new pending items drain into it"
+                  : undefined
+              }
             >
               Process queue
               {counts.pending > 0 ? ` (${counts.pending})` : ""}
@@ -689,7 +683,7 @@ export default function AnalyzePage() {
                 type="button"
                 size="sm"
                 variant="destructive-outline"
-                disabled={busy || Boolean(rowBusy)}
+                disabled={submitting || Boolean(rowBusy)}
                 onClick={clearQueue}
               >
                 {rowBusy === "clear" ? "Clearing…" : "Clear queue"}
