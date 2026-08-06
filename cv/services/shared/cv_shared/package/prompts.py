@@ -10,6 +10,10 @@ Be precise and factual. Do not invent requirements not present in the job descri
 Classify each requirement as: critical | important | helpful | unnecessary.
 Identify 3–5 interview deciders — qualities most likely to get an interview.
 
+atsKeywords: include exact terms from the JD that ATS/screening systems look for.
+When the JD uses both an acronym and its full form (e.g. "CI/CD" and "continuous integration"),
+include both as separate keywords. Do not invent expansions that never appear in the JD.
+
 Positioning is a headline for the candidate profile only. Do not rewrite employment titles.
 
 Return JSON only matching the schema.
@@ -57,8 +61,16 @@ Style:
 - Selected highlights: career milestones (promotions across levels, platform span, product ownership)—
   NOT re-rendered tool-list CI/CD bullets. Keep sourceId when tied to a real bullet; milestones may be refined later.
 - Skills: select a broad approved set (~18–24 ids). Prefer role-relevant first; do not drop core product stack for infra roles.
-- Vary action verbs; avoid starting every bullet with Built/Developed/Created/Designed.
-- When source has no metric, emphasize scope/ownership/complexity — do not invent numbers.
+- Grounded impact formula for bullet rewrites: Action + what + how + result — include result/metric
+  ONLY when it already exists in the source statement. Never invent numbers, percentages, ROI, team sizes,
+  or scale claims (no "add 35% ROI" style fabrication). Without a source metric: emphasize scope,
+  ownership, and complexity.
+- Vary opening action verbs. Prefer a mix across themes — leadership: Led, Mentored, Coordinated;
+  systems: Architected, Automated, Operated, Scaled, Migrated; product: Shipped, Delivered, Integrated.
+  Avoid starting three or more bullets with the same verb, and rotate away from Built/Developed/Created/Designed.
+- ATS terminology: if the source (or an approved skill name) already contains a tool/tech token and the JD
+  prefers an acronym or alternate form of that same token, you may mirror the JD form. Never introduce
+  terms that appear only in the JD and not in source/approved skills.
 
 Return JSON only matching the schema.
 """
@@ -72,7 +84,11 @@ seniorityAlignment, evidenceQuality, recruiterScanability, truthfulness.
 mustFix: only issues that would hurt interview odds or violate truthfulness (empty if none).
 optionalImprove: polish only.
 
+Recruiter scanability: if three or more experience bullets share the same opening verb
+(e.g. three "Built…" openers), flag optionalImprove or mustFix (when severe monotony).
+
 Assume all bullets are grounded in verified sources — flag if wording looks exaggerated or invents metrics.
+Never recommend inventing metrics, tools, or employers to fix gaps.
 
 Return JSON only matching the schema.
 """

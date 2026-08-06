@@ -8,7 +8,49 @@ from typing import Any
 from ..resume.achievements import Achievement
 from ..resume.tailor import TailorPayload
 from .evidence_ranker import EvidenceRanking
-from .job_analyzer import JobAnalysis
+from .job_analyzer import AnalyzedRequirement, JobAnalysis
+
+# Standard layout section labels (shared with resume/layout.py)
+_ATS_SECTION_LABELS = (
+    "SUMMARY",
+    "SELECTED HIGHLIGHTS",
+    "CORE EXPERTISE",
+    "EXPERIENCE",
+    "TECHNOLOGIES",
+    "EDUCATION",
+)
+
+_STOPWORDS = frozenset(
+    {
+        "and",
+        "the",
+        "for",
+        "with",
+        "from",
+        "that",
+        "this",
+        "your",
+        "you",
+        "our",
+        "are",
+        "has",
+        "have",
+        "will",
+        "able",
+        "using",
+        "experience",
+        "strong",
+        "knowledge",
+        "skills",
+        "ability",
+        "years",
+        "work",
+        "working",
+        "including",
+        "related",
+        "etc",
+    }
+)
 
 
 def keyword_coverage_markdown(
@@ -17,24 +59,15 @@ def keyword_coverage_markdown(
     resume_text: str,
     cover_text: str,
 ) -> str:
-    combined = f"{resume_text}\n{cover_text}".lower()
+    present, missing, coverage = _keyword_sets(analysis, resume_text, cover_text)
     lines = ["# ATS keyword coverage", ""]
     if not analysis.atsKeywords:
         lines.append("No ATS keywords extracted.")
         return "\n".join(lines) + "\n"
 
-    present: list[str] = []
-    missing: list[str] = []
-    for kw in analysis.atsKeywords:
-        if _keyword_present(kw, combined):
-            present.append(kw)
-        else:
-            missing.append(kw)
-
-    coverage = (
-        100.0 * len(present) / len(analysis.atsKeywords) if analysis.atsKeywords else 0
+    lines.append(
+        f"**Coverage:** {len(present)}/{len(analysis.atsKeywords)} ({coverage:.0f}%)"
     )
-    lines.append(f"**Coverage:** {len(present)}/{len(analysis.atsKeywords)} ({coverage:.0f}%)")
     lines += ["", "## Present in application package"]
     if present:
         for kw in present:
@@ -61,8 +94,14 @@ def fit_assessment_markdown(
     match: dict,
     analysis: JobAnalysis,
     payload: TailorPayload,
+    catalog: list[Achievement] | None = None,
+    skills: list[dict] | None = None,
     critic_scores: dict[str, Any] | None = None,
+    resume_text: str = "",
+    cover_text: str = "",
 ) -> str:
+    catalog = catalog or []
+    skills = skills or []
     score = match.get("score")
     lines = [
         f"# Candidate-to-role fit — {job.get('title')} @ {job.get('company')}",
@@ -74,6 +113,47 @@ def fit_assessment_markdown(
     ]
     for d in analysis.interviewDeciders or ["(none extracted)"]:
         lines.append(f"- {d}")
+
+    match_rows = build_requirement_evidence_rows(
+        analysis=analysis,
+        payload=payload,
+        catalog=catalog,
+        skills=skills,
+        limit=12,
+    )
+    lines += ["", "## Requirement × evidence match"]
+    lines.append("| Requirement | Priority | Status | Evidence |")
+    lines.append("|---|---|---|---|")
+    if match_rows:
+        for row in match_rows:
+            lines.append(
+                f"| {_md_cell(row['requirement'])} | {row['priority']} | "
+                f"{row['status']} | {_md_cell(row['evidence'])} |"
+            )
+    else:
+        lines.append("| (no critical/important requirements extracted) | — | — | — |")
+
+    lines += ["", "## Competitive strengths"]
+    covered_critical = [
+        r for r in match_rows if r["status"] == "covered" and r["priority"] == "critical"
+    ]
+    covered_any = [r for r in match_rows if r["status"] == "covered"]
+    strength_src = covered_critical or covered_any
+    if strength_src:
+        for r in strength_src[:3]:
+            sid_bit = r["evidence"].split(" — ")[0] if r["evidence"] != "—" else "selected evidence"
+            lines.append(
+                f"- Covers **{r['requirement']}** via selected work/projects ({sid_bit})."
+            )
+    else:
+        strengths = [m.get("requirement") for m in (match.get("strongMatches") or [])[:3]]
+        if not strengths and payload.summary:
+            strengths = [payload.summary[:120]]
+        for s in strengths:
+            if s:
+                lines.append(f"- {s}")
+        if not strengths:
+            lines.append("- See selected resume achievements.")
 
     lines += ["", "## Key strengths for this application"]
     strengths = [m.get("requirement") for m in (match.get("strongMatches") or [])[:8]]
@@ -97,6 +177,29 @@ def fit_assessment_markdown(
     else:
         lines.append("- None flagged as material.")
 
+    lines += ["", "## Intentional omissions"]
+    gap_reqs = [r for r in match_rows if r["status"] == "gap"]
+    _, missing_kw, _ = _keyword_sets(analysis, resume_text, cover_text)
+    omission_notes: list[str] = []
+    for r in gap_reqs[:6]:
+        omission_notes.append(
+            f"- **{r['requirement']}** — left off because not supported by verified catalog evidence."
+        )
+    for kw in missing_kw[:6]:
+        if any(kw.lower() in n.lower() for n in omission_notes):
+            continue
+        omission_notes.append(
+            f"- Keyword **{kw}** — not explicit in package; left off when not in verified experience."
+        )
+    for item in (payload.omittedRequirements or [])[:6]:
+        omission_notes.append(
+            f"- {item} — de-emphasized; left off because not in verified catalog or weak fit."
+        )
+    if omission_notes:
+        lines.extend(omission_notes[:10])
+    else:
+        lines.append("- None noted.")
+
     if critic_scores:
         lines += ["", "## Resume critic scores (1–10)"]
         for k, v in critic_scores.items():
@@ -106,15 +209,305 @@ def fit_assessment_markdown(
         if critic_scores.get("mean") is not None:
             lines.append(f"- **mean:** {critic_scores['mean']}")
 
-    lines += [
-        "",
-        f"## Omitted JD items (resume)",
-    ]
+    lines += ["", "## Omitted JD items (resume)"]
     if payload.omittedRequirements:
         for item in payload.omittedRequirements:
             lines.append(f"- {item}")
     else:
         lines.append("- None listed.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def build_requirement_evidence_rows(
+    *,
+    analysis: JobAnalysis,
+    payload: TailorPayload,
+    catalog: list[Achievement],
+    skills: list[dict],
+    limit: int = 12,
+) -> list[dict[str, str]]:
+    """Map critical/important requirements to selected evidence or gap."""
+    by_id = {a.id: a for a in catalog}
+    rewrite = payload.rewrite_map()
+    skill_by_id = {s["_id"]: s for s in skills if s.get("_id")}
+
+    evidence_units: list[tuple[str, str, str]] = []
+    for sid in payload.selectedAchievementIds:
+        ach = by_id.get(sid)
+        text = (rewrite.get(sid) or (ach.statement if ach else "") or "").strip()
+        if not text:
+            continue
+        evidence_units.append((sid, text.lower(), text[:100]))
+    for sid in payload.selectedSkillIds:
+        skill = skill_by_id.get(sid)
+        if not skill or not skill.get("name"):
+            continue
+        name = str(skill["name"])
+        evidence_units.append((f"skill:{sid}", name.lower(), name))
+    for h in payload.highlights or []:
+        text = (h.text or "").strip()
+        sid = str(h.sourceId or "")
+        if text and not sid.startswith("milestone:"):
+            evidence_units.append((sid, text.lower(), text[:100]))
+
+    reqs = [
+        r
+        for r in analysis.requirements
+        if r.class_ in ("critical", "important") and (r.text or "").strip()
+    ][:limit]
+    if not reqs:
+        reqs = [
+            AnalyzedRequirement.model_validate({"text": t, "class": "important"})
+            for t in analysis.requiredQualifications[:limit]
+            if t.strip()
+        ]
+
+    rows: list[dict[str, str]] = []
+    for req in reqs[:limit]:
+        text = req.text.strip()
+        status = "gap"
+        evidence = "—"
+        hay_bits = re.findall(r"[a-z0-9][a-z0-9+.#/-]{1,}", text.lower())
+        hay_bits = [b for b in hay_bits if len(b) > 2 and b not in _STOPWORDS]
+        for eid, elower, edisp in evidence_units:
+            if _requirement_supported(text, elower, hay_bits):
+                status = "covered"
+                snippet = edisp if len(edisp) <= 80 else edisp[:77] + "…"
+                evidence = f"`{eid}` — {snippet}"
+                break
+        rows.append(
+            {
+                "requirement": text,
+                "priority": req.class_,
+                "status": status,
+                "evidence": evidence,
+            }
+        )
+    return rows
+
+
+def _requirement_supported(
+    requirement: str, evidence_lower: str, tokens: list[str]
+) -> bool:
+    req_l = requirement.lower()
+    if len(req_l) >= 8 and req_l in evidence_lower:
+        return True
+    if not tokens:
+        return False
+    hits = sum(1 for t in tokens if t in evidence_lower)
+    if len(tokens) == 1:
+        return hits >= 1
+    if len(tokens) == 2:
+        return hits >= 2
+    # Short tech tokens (aws, sql, k8s, …) are decisive when present in evidence
+    short_hits = [t for t in tokens if len(t) <= 5 and t in evidence_lower]
+    if short_hits:
+        return True
+    return hits >= max(2, (len(tokens) + 1) // 2)
+
+
+def ats_checklist_markdown(
+    *,
+    resume_text: str,
+    analysis: JobAnalysis | None = None,
+    cover_text: str = "",
+    keyword_coverage_pct: float | None = None,
+) -> str:
+    """Deterministic ATS/machine readability checks on rendered resume text."""
+    text = resume_text or ""
+    lines_all = text.splitlines()
+    nonempty = [ln for ln in lines_all if ln.strip()]
+    upper_text = text
+
+    checks: list[tuple[str, bool, str]] = []
+    for label in _ATS_SECTION_LABELS:
+        present = any(
+            ln.strip() == label or ln.strip().startswith(label) for ln in lines_all
+        )
+        checks.append(
+            (
+                f"Section `{label}` present",
+                present,
+                "ok" if present else "missing (may be fine if empty content)",
+            )
+        )
+    independent = any(
+        "INDEPENDENT SOFTWARE ENGINEER" in ln.upper() for ln in lines_all
+    )
+    checks.append(
+        (
+            "Independent / projects section header",
+            independent or "EXPERIENCE" in upper_text,
+            "ok" if independent else "no independent header (ok if no project bullets)",
+        )
+    )
+
+    has_tailored_footer = bool(re.search(r"tailored for\s*:", text, flags=re.I))
+    checks.append(
+        (
+            "No 'Tailored for…' footer",
+            not has_tailored_footer,
+            "ok" if not has_tailored_footer else "remove marketing footer from artifact",
+        )
+    )
+
+    has_https = "https://" in text.lower() or "http://" in text.lower()
+    checks.append(
+        (
+            "Contact URLs cleaned (no raw https://)",
+            not has_https,
+            "ok" if not has_https else "prefer linkedin.com/… without scheme",
+        )
+    )
+
+    n_lines = len(nonempty)
+    length_ok = 15 <= n_lines <= 200
+    checks.append(
+        (
+            f"Reasonable length ({n_lines} non-empty lines)",
+            length_ok,
+            "ok" if length_ok else "unexpectedly short or long plain-text resume",
+        )
+    )
+
+    has_name_first = bool(nonempty and len(nonempty[0]) < 80)
+    checks.append(
+        (
+            "Headline/name block present",
+            has_name_first and "SUMMARY" in upper_text,
+            "ok" if has_name_first else "missing header block",
+        )
+    )
+
+    if keyword_coverage_pct is None and analysis is not None:
+        _, _, keyword_coverage_pct = _keyword_sets(
+            analysis, resume_text, cover_text
+        )
+
+    lines = [
+        "# ATS checklist (deterministic)",
+        "",
+        "Machine-oriented checks on the rendered plain-text resume. Not a guarantee of ATS pass.",
+        "",
+    ]
+    if keyword_coverage_pct is not None and analysis and analysis.atsKeywords:
+        lines.append(
+            f"**Keyword coverage (package):** {keyword_coverage_pct:.0f}% "
+            f"of extracted ATS keywords present in resume/cover."
+        )
+        lines.append("")
+
+    lines.append("| Check | Result | Note |")
+    lines.append("|---|---|---|")
+    for name, ok, note in checks:
+        result = "pass" if ok else "review"
+        lines.append(f"| {name} | {result} | {_md_cell(note)} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def selection_changelog_markdown(
+    *,
+    before: TailorPayload | dict[str, Any],
+    after: TailorPayload | dict[str, Any],
+    job: dict | None = None,
+) -> str:
+    """Deterministic diff of selection when critic triggers a revise pass."""
+    b = before.to_report() if isinstance(before, TailorPayload) else dict(before)
+    a = after.to_report() if isinstance(after, TailorPayload) else dict(after)
+
+    b_ids = set(b.get("selectedAchievementIds") or [])
+    a_ids = set(a.get("selectedAchievementIds") or [])
+    added = sorted(a_ids - b_ids)
+    removed = sorted(b_ids - a_ids)
+
+    b_hl: set[str] = set()
+    a_hl: set[str] = set()
+    if isinstance(before, TailorPayload):
+        b_hl = {h.sourceId for h in before.highlights}
+    else:
+        b_hl = {
+            str(h.get("sourceId"))
+            for h in (b.get("highlights") or [])
+            if isinstance(h, dict) and h.get("sourceId")
+        }
+    if isinstance(after, TailorPayload):
+        a_hl = {h.sourceId for h in after.highlights}
+    else:
+        a_hl = {
+            str(h.get("sourceId"))
+            for h in (a.get("highlights") or [])
+            if isinstance(h, dict) and h.get("sourceId")
+        }
+    hl_added = sorted(a_hl - b_hl)
+    hl_removed = sorted(b_hl - a_hl)
+
+    b_sum = str(b.get("summary") or "")
+    a_sum = str(a.get("summary") or "")
+    title = ""
+    if job:
+        title = f" — {job.get('title')} @ {job.get('company')}"
+
+    lines = [
+        f"# Selection changelog{title}",
+        "",
+        "Deterministic diff after resume critic revision (sourceIds only; no invented claims).",
+        "",
+        "## Achievement selection",
+        f"- Before: {len(b_ids)} · After: {len(a_ids)}",
+    ]
+    if added:
+        lines.append("- **Added:**")
+        for sid in added:
+            lines.append(f"  - `{sid}`")
+    else:
+        lines.append("- **Added:** (none)")
+    if removed:
+        lines.append("- **Removed:**")
+        for sid in removed:
+            lines.append(f"  - `{sid}`")
+    else:
+        lines.append("- **Removed:** (none)")
+
+    lines += [
+        "",
+        "## Summary length",
+        f"- Before: {len(b_sum)} chars · After: {len(a_sum)} chars "
+        f"(Δ {len(a_sum) - len(b_sum):+d})",
+    ]
+
+    lines += ["", "## Highlights sourceIds"]
+    if hl_added:
+        lines.append("- **Added:** " + ", ".join(f"`{x}`" for x in hl_added))
+    else:
+        lines.append("- **Added:** (none)")
+    if hl_removed:
+        lines.append("- **Removed:** " + ", ".join(f"`{x}`" for x in hl_removed))
+    else:
+        lines.append("- **Removed:** (none)")
+
+    b_skills = set(b.get("selectedSkillIds") or [])
+    a_skills = set(a.get("selectedSkillIds") or [])
+    skill_added = sorted(a_skills - b_skills)
+    skill_removed = sorted(b_skills - a_skills)
+    lines += [
+        "",
+        "## Skills",
+        f"- Before: {len(b_skills)} · After: {len(a_skills)}",
+    ]
+    if skill_added[:8]:
+        lines.append(
+            "- **Added (sample):** " + ", ".join(f"`{x}`" for x in skill_added[:8])
+        )
+    if skill_removed[:8]:
+        lines.append(
+            "- **Removed (sample):** " + ", ".join(f"`{x}`" for x in skill_removed[:8])
+        )
+
+    if not added and not removed and b_sum == a_sum and not hl_added and not hl_removed:
+        lines += ["", "_Selection was unchanged after revision pass._"]
+
     lines.append("")
     return "\n".join(lines)
 
@@ -266,7 +659,10 @@ def enhanced_application_answers(
         f"I am interested in {job.get('company')} because the role ({job.get('title')}) "
         f"aligns with my experience as {payload.targetRole or analysis.positioning or (match.get('roleFamily') or 'product') + ' engineer'}. "
         f"Key fit themes: "
-        + ", ".join(analysis.interviewDeciders[:4] or [m.get("requirement") for m in (match.get("strongMatches") or [])[:4]])
+        + ", ".join(
+            analysis.interviewDeciders[:4]
+            or [m.get("requirement") for m in (match.get("strongMatches") or [])[:4]]
+        )
         + "."
     )
     gaps = analysis.candidateGaps or [
@@ -286,7 +682,6 @@ def enhanced_application_answers(
         if m.get("requirement")
     ) or "- See tailored resume highlights."
 
-    # Condensed talking points (skip header)
     tp_body = talking_points_md
     if tp_body.startswith("#"):
         tp_body = "\n".join(tp_body.splitlines()[1:]).strip()
@@ -326,14 +721,36 @@ Hi — I'm {candidate.get('name')}, applying for {job.get('title')}. Happy to sh
 """
 
 
+def _keyword_sets(
+    analysis: JobAnalysis,
+    resume_text: str,
+    cover_text: str,
+) -> tuple[list[str], list[str], float]:
+    combined = f"{resume_text}\n{cover_text}".lower()
+    present: list[str] = []
+    missing: list[str] = []
+    for kw in analysis.atsKeywords:
+        if _keyword_present(kw, combined):
+            present.append(kw)
+        else:
+            missing.append(kw)
+    coverage = (
+        100.0 * len(present) / len(analysis.atsKeywords) if analysis.atsKeywords else 0.0
+    )
+    return present, missing, coverage
+
+
 def _keyword_present(keyword: str, haystack: str) -> bool:
     kw = (keyword or "").strip().lower()
     if not kw:
         return False
     if kw in haystack:
         return True
-    # Token-ish match for multi-word
     parts = [p for p in re.split(r"[\s,/|+]+", kw) if len(p) > 2]
     if len(parts) >= 2 and all(p in haystack for p in parts):
         return True
     return False
+
+
+def _md_cell(value: str) -> str:
+    return (value or "").replace("|", "\\|").replace("\n", " ").strip()

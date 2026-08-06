@@ -110,7 +110,14 @@ Under `generated-applications/{company}-{role}/`:
 - `selection-report.json` — chosen ids, rewrites, omitted requirements, `pipeline`, stage providers
 - `gaps.md` — match gaps + omitted JD requirements
 - `cover-letter.pdf` / `.docx` / `.txt`
-- Multi-stage only: `job-analysis.json`, `evidence-ranking.json`, `ats-keywords.md`, `fit-assessment.md`, `interview-talking-points.md`, `tailoring-strategy.md`, `application-report.json`
+- Multi-stage only: `job-analysis.json`, `evidence-ranking.json`, `ats-keywords.md`, **`ats-checklist.md`**, `fit-assessment.md` (includes **requirement × evidence** table, competitive strengths, intentional omissions), `interview-talking-points.md`, `tailoring-strategy.md`, `application-report.json`
+- Multi-stage when critic revises: **`selection-changelog.md`** — deterministic added/removed achievement ids, summary length delta, highlight id changes
+
+Mined report patterns (from public resume-skill ideas, **not** freeform skills):
+- Grounded match matrix and ATS checklist only use selected catalog evidence
+- Dual-form ATS keywords (acronym + full phrase) only when **both** appear in the JD
+- Composer bullets use Action+what+how+result **without inventing metrics**
+- Critic flags repeated opening verbs
 
 ## Code map
 

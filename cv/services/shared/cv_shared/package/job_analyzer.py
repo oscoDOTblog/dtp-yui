@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -116,6 +117,10 @@ def analyze_job_for_package(
     try:
         raw, provider = _call_job_analyzer(job=job, match=match, candidate=candidate)
         analysis = _normalize_analysis(raw, provider=provider, source="llm")
+        analysis.atsKeywords = enrich_dual_form_keywords(
+            analysis.atsKeywords,
+            job_description=str(job.get("descriptionRaw") or ""),
+        )
         if analysis.atsKeywords or analysis.requirements or analysis.interviewDeciders:
             return analysis
         logger.warning("Job analyzer returned empty payload; using match fallback")
@@ -156,6 +161,8 @@ def fallback_job_analysis(*, job: dict, match: dict) -> JobAnalysis:
 
     role_family = match.get("roleFamily") or "product"
     positioning = str(job.get("title") or "").strip() or role_family.title()
+    jd = str(job.get("descriptionRaw") or "")
+    keywords = enrich_dual_form_keywords(keywords[:20], job_description=jd)
 
     return JobAnalysis(
         primaryResponsibilities=[
@@ -165,7 +172,7 @@ def fallback_job_analysis(*, job: dict, match: dict) -> JobAnalysis:
         ],
         requiredQualifications=list(keywords[:10]),
         preferredQualifications=[],
-        atsKeywords=keywords[:20],
+        atsKeywords=keywords[:40],
         culturalSignals=[],
         seniorityExpectations=str(match.get("seniority") or match.get("level") or ""),
         interviewDeciders=keywords[:5] or [role_family],
@@ -205,8 +212,10 @@ Job description:
 {(job.get('descriptionRaw') or '')[:6000]}
 
 Return JSON with primaryResponsibilities, requiredQualifications, preferredQualifications,
-atsKeywords, culturalSignals, seniorityExpectations, interviewDeciders (3-5),
+atsKeywords (exact JD terms; include acronym AND full form when both appear in the JD),
+culturalSignals, seniorityExpectations, interviewDeciders (3-5),
 requirements (text+class), positioning (headline), candidateGaps.
+Do not invent keyword expansions that never appear in the job description.
 """
     result = generate(
         prompt,
@@ -277,6 +286,93 @@ def _normalize_analysis(
     analysis.source = source
     analysis.provider = provider
     return analysis
+
+
+# Known pairs only — both sides must appear in the JD to be dual-listed.
+# Never invent a form that is not actually present in the description.
+_DUAL_FORM_PAIRS: list[tuple[str, str]] = [
+    ("ci/cd", "continuous integration"),
+    ("ci/cd", "continuous delivery"),
+    ("ci", "continuous integration"),
+    ("cd", "continuous delivery"),
+    ("aws", "amazon web services"),
+    ("k8s", "kubernetes"),
+    ("iac", "infrastructure as code"),
+    ("sre", "site reliability"),
+    ("api", "application programming interface"),
+    ("sdk", "software development kit"),
+    ("ml", "machine learning"),
+    ("ai", "artificial intelligence"),
+    ("ui", "user interface"),
+    ("ux", "user experience"),
+    ("sql", "structured query language"),
+]
+
+
+def enrich_dual_form_keywords(
+    keywords: list[str],
+    *,
+    job_description: str,
+    limit: int = 40,
+) -> list[str]:
+    """Ensure acronym + full form both appear in atsKeywords when JD has both.
+
+    Does not invent expansions missing from the job description.
+    """
+    jd_lower = (job_description or "").lower()
+    out: list[str] = []
+    for kw in keywords:
+        text = str(kw or "").strip()
+        if text and text not in out:
+            out.append(text)
+
+    def _has(phrase: str) -> bool:
+        p = phrase.lower()
+        if len(p) <= 2:
+            return bool(re.search(rf"(?<![a-z0-9]){re.escape(p)}(?![a-z0-9])", jd_lower))
+        return p in jd_lower
+
+    def _already(phrase: str) -> bool:
+        pl = phrase.lower()
+        return any(x.lower() == pl for x in out)
+
+    display_map = {
+        "ci/cd": "CI/CD",
+        "ci": "CI",
+        "cd": "CD",
+        "aws": "AWS",
+        "k8s": "Kubernetes",
+        "iac": "IaC",
+        "sre": "SRE",
+        "api": "API",
+        "sdk": "SDK",
+        "ml": "ML",
+        "ai": "AI",
+        "ui": "UI",
+        "ux": "UX",
+        "sql": "SQL",
+        "continuous integration": "continuous integration",
+        "continuous delivery": "continuous delivery",
+        "amazon web services": "Amazon Web Services",
+        "kubernetes": "Kubernetes",
+        "infrastructure as code": "infrastructure as code",
+        "site reliability": "site reliability",
+        "application programming interface": "application programming interface",
+        "software development kit": "software development kit",
+        "machine learning": "machine learning",
+        "artificial intelligence": "artificial intelligence",
+        "user interface": "user interface",
+        "user experience": "user experience",
+        "structured query language": "structured query language",
+    }
+
+    for short, full in _DUAL_FORM_PAIRS:
+        if _has(short) and _has(full):
+            for form in (short, full):
+                display = display_map.get(form.lower(), form)
+                if not _already(display) and len(out) < limit:
+                    out.append(display)
+    return out[:limit]
 
 
 def _str_list(value: Any, limit: int = 40) -> list[str]:

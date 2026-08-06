@@ -15,9 +15,11 @@ from .evidence_ranker import EvidenceRanking, rank_evidence
 from .job_analyzer import JobAnalysis, analyze_job_for_package
 from .reports import (
     application_report,
+    ats_checklist_markdown,
     enhanced_application_answers,
     fit_assessment_markdown,
     keyword_coverage_markdown,
+    selection_changelog_markdown,
     talking_points_markdown,
     tailoring_strategy_markdown,
 )
@@ -101,6 +103,7 @@ def run_openai_package_pipeline(
         "bulletCount": len(payload.selectedAchievementIds),
         "revision": 0,
     }
+    pre_revision_payload: TailorPayload | None = None
 
     # Critic + optional one revision
     resume_preview = "\n".join(
@@ -122,12 +125,14 @@ def run_openai_package_pipeline(
     )
     stages["resumeCritic"] = critic.to_public()
 
+    selection_changelog_md: str | None = None
     if critic.needs_revision() and payload.usedLlm:
         logger.info(
             "Resume critic requested revision (mean=%.1f mustFix=%s)",
             critic.mean,
             len(critic.mustFix),
         )
+        pre_revision_payload = payload
         revised = tailor_resume(
             candidate=candidate,
             job=job,
@@ -157,6 +162,11 @@ def run_openai_package_pipeline(
                     payload=payload,
                     job=job,
                 )
+            )
+            selection_changelog_md = selection_changelog_markdown(
+                before=pre_revision_payload,
+                after=payload,
+                job=job,
             )
 
     cover = build_cover_letter(
@@ -195,11 +205,20 @@ def run_openai_package_pipeline(
         match=match,
         analysis=analysis,
         payload=payload,
+        catalog=catalog,
+        skills=skills,
         critic_scores=critic_public,
+        resume_text=resume_preview,
+        cover_text=cover,
     )
     keywords_md = keyword_coverage_markdown(
         analysis=analysis,
         resume_text=resume_preview,
+        cover_text=cover,
+    )
+    checklist_md = ats_checklist_markdown(
+        resume_text=resume_preview,
+        analysis=analysis,
         cover_text=cover,
     )
     talking_md = talking_points_markdown(
@@ -236,6 +255,19 @@ def run_openai_package_pipeline(
         evidence_ids_used=[e["_id"] for e in evidence_used if e.get("_id")],
     )
 
+    artifacts: dict[str, Any] = {
+        "job-analysis.json": analysis.to_public(),
+        "evidence-ranking.json": ranking.to_public(),
+        "ats-keywords.md": keywords_md,
+        "ats-checklist.md": checklist_md,
+        "fit-assessment.md": fit_md,
+        "interview-talking-points.md": talking_md,
+        "tailoring-strategy.md": strategy_md,
+        "application-report.json": report,
+    }
+    if selection_changelog_md:
+        artifacts["selection-changelog.md"] = selection_changelog_md
+
     return PackagePipelineResult(
         payload=payload,
         cover_letter=cover,
@@ -245,15 +277,7 @@ def run_openai_package_pipeline(
         consistency=consistency,
         pipeline="openai-multistage",
         stages=stages,
-        artifacts={
-            "job-analysis.json": analysis.to_public(),
-            "evidence-ranking.json": ranking.to_public(),
-            "ats-keywords.md": keywords_md,
-            "fit-assessment.md": fit_md,
-            "interview-talking-points.md": talking_md,
-            "tailoring-strategy.md": strategy_md,
-            "application-report.json": report,
-        },
+        artifacts=artifacts,
         application_report=report,
         application_answers=answers,
     )

@@ -36,9 +36,11 @@ STAGE_ARTIFACT_FILES = (
     "job-analysis.json",
     "evidence-ranking.json",
     "ats-keywords.md",
+    "ats-checklist.md",
     "fit-assessment.md",
     "interview-talking-points.md",
     "tailoring-strategy.md",
+    "selection-changelog.md",
     "application-report.json",
 )
 
@@ -397,12 +399,14 @@ def generate_application_package(job_id: str) -> dict:
         "job-analysis.json": ("jobAnalysis", "Job analysis"),
         "evidence-ranking.json": ("evidenceRanking", "Evidence ranking"),
         "ats-keywords.md": ("atsKeywords", "ATS keywords"),
+        "ats-checklist.md": ("atsChecklist", "ATS checklist"),
         "fit-assessment.md": ("fitAssessment", "Fit assessment"),
         "interview-talking-points.md": (
             "interviewTalkingPoints",
             "Interview talking points",
         ),
         "tailoring-strategy.md": ("tailoringStrategy", "Tailoring strategy"),
+        "selection-changelog.md": ("selectionChangelog", "Selection changelog"),
         "application-report.json": ("applicationReport", "Application report"),
     }
     for fname, value in pipeline_artifacts.items():
