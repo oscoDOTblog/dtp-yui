@@ -1,0 +1,150 @@
+services:
+  mongodb:
+    image: mongo:8
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-cvadmin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-change-me-local}
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+    env_file:
+      - .env
+    environment:
+      MONGO_URI: ${MONGO_URI:-mongodb://cvadmin:change-me-local@mongodb:27017/DTP?authSource=admin}
+      MONGO_DB: ${MONGO_DB:-DTP}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_ADMIN_API_KEY: ${OPENAI_ADMIN_API_KEY:-}
+      GENERATED_APPLICATIONS_DIR: /app/generated-applications
+      SEED_DIR: /app/seed
+      SECRETS_DIR: /app/secrets
+      LOCATION_CONFIG: /app/config/location.json
+      ROLE_FILTER_CONFIG: /app/config/roleFilter.json
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:7545,http://127.0.0.1:7545}
+      GMAIL_QUERY: ${GMAIL_QUERY:-label:JobAlerts newer_than:2d}
+      GMAIL_PROCESSED_LABEL: ${GMAIL_PROCESSED_LABEL:-false}
+      INGEST_MAX_LISTINGS: ${INGEST_MAX_LISTINGS:-500}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      REPOSITORY_CACHE_DIR: /app/repository-cache
+      AUTO_PROCESSING_ENABLED: ${AUTO_PROCESSING_ENABLED:-true}
+    ports:
+      # Localhost for curl/docs; UI traffic from LAN goes through web /backend proxy
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./generated-applications:/app/generated-applications
+      - ./seed:/app/seed:ro
+      - ./secrets:/app/secrets:ro
+      - ./config:/app/config:ro
+      - ./repository-cache:/app/repository-cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+    env_file:
+      - .env
+    environment:
+      MONGO_URI: ${MONGO_URI:-mongodb://cvadmin:change-me-local@mongodb:27017/DTP?authSource=admin}
+      MONGO_DB: ${MONGO_DB:-DTP}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_ADMIN_API_KEY: ${OPENAI_ADMIN_API_KEY:-}
+      GENERATED_APPLICATIONS_DIR: /app/generated-applications
+      SEED_DIR: /app/seed
+      SECRETS_DIR: /app/secrets
+      LOCATION_CONFIG: /app/config/location.json
+      ROLE_FILTER_CONFIG: /app/config/roleFilter.json
+      AUTO_SEED: "true"
+      INGEST_ON_START: ${INGEST_ON_START:-true}
+      GITHUB_SCAN_ON_START: ${GITHUB_SCAN_ON_START:-false}
+      GMAIL_QUERY: ${GMAIL_QUERY:-label:JobAlerts newer_than:2d}
+      GMAIL_PROCESSED_LABEL: ${GMAIL_PROCESSED_LABEL:-false}
+      INGEST_MAX_LISTINGS: ${INGEST_MAX_LISTINGS:-500}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      REPOSITORY_CACHE_DIR: /app/repository-cache
+      AUTO_PROCESSING_ENABLED: ${AUTO_PROCESSING_ENABLED:-true}
+    volumes:
+      - ./generated-applications:/app/generated-applications
+      - ./seed:/app/seed:ro
+      - ./secrets:/app/secrets
+      - ./config:/app/config:ro
+      - ./repository-cache:/app/repository-cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    build:
+      context: ./services/web
+      dockerfile: Dockerfile
+      args:
+        # Leave empty so the browser uses /backend (works on laptop + phone)
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-}
+        API_REWRITE_TARGET: ${API_BASE_INTERNAL:-http://api:8000}
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-}
+      API_BASE_INTERNAL: ${API_BASE_INTERNAL:-http://api:8000}
+      AGENT_BASE_INTERNAL: ${AGENT_BASE_INTERNAL:-http://agent:8010}
+      NEXT_PUBLIC_AGENT_WS_PATH: ${NEXT_PUBLIC_AGENT_WS_PATH:-/agent-ws}
+    ports:
+      # Dedicated host port so other apps can share this machine (default 7545)
+      - "${WEB_HOST_PORT:-7545}:3000"
+
+  agent:
+    profiles:
+      - headless-agent
+    build:
+      context: ./services/agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    env_file:
+      - .env
+    environment:
+      CV_API_BASE: ${CV_API_BASE:-http://api:8000}
+      CV_AGENT_PORT: "8010"
+      # Opt-in headless agent (no display). Default day-to-day: host `npm start` with headed window.
+      # Start with: docker compose --profile headless-agent up -d agent
+      CV_AGENT_HEADLESS: ${CV_AGENT_HEADLESS:-1}
+      CV_AGENT_PROFILE_DIR: /app/browser-profile
+      CV_AGENT_SCREENSHOT_DIR: /app/screenshots
+      CV_AGENT_CONFIG: /app/config/agent.json
+      GENERATED_APPLICATIONS_DIR: /app/generated-applications
+    ports:
+      - "127.0.0.1:8010:8010"
+    volumes:
+      # Separate from host browser-profile so Linux/macOS Chromium never share a user-data-dir.
+      - ./services/agent/browser-profile-docker:/app/browser-profile
+      - ./services/agent/screenshots:/app/screenshots
+      - ./generated-applications:/app/generated-applications:ro
+      - ./config:/app/config:ro
+    shm_size: "1gb"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  mongodb_data:

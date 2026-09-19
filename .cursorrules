@@ -1,0 +1,15 @@
+# dtp-yui — CV Job Copilot
+
+## cv-web UI (cv/services/web)
+- develop new features with code that is as modular and scalable as possible
+- use Tailwind CSS v4 and coss UI components for all UI styling
+- coss primitives live in cv/services/web/components/ui/*.tsx; keep pages, lib, and API routes in JavaScript
+- preserve Netflix-style dark theming with hot pink (#ff1493) accents via coss semantic tokens
+- do not implement features that will leak any sensitive app information or credentials
+- if creating ai prompts, save all the prompts on the server-side
+- add new database fields with camelCase
+
+## Cursor skills
+- Use .cursor/skills/coss when building or migrating UI with coss primitives
+- Use .cursor/skills/coss-particles for copy-paste particle patterns
+- Use .cursor/skills/frontend-design for distinctive visual design choices

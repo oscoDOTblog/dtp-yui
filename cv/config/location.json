@@ -1,0 +1,50 @@
+{
+  "origin": "Oakland, CA",
+  "bayAreaCities": [
+    "san francisco",
+    "oakland",
+    "berkeley",
+    "emeryville",
+    "south san francisco",
+    "daly city",
+    "san mateo",
+    "foster city",
+    "redwood city",
+    "menlo park",
+    "palo alto",
+    "mountain view",
+    "sunnyvale",
+    "santa clara",
+    "san jose",
+    "milpitas",
+    "fremont",
+    "hayward",
+    "san leandro",
+    "alameda",
+    "walnut creek",
+    "sf",
+    "bay area",
+    "san francisco bay area",
+    "sf bay area",
+    "east bay",
+    "south bay",
+    "peninsula"
+  ],
+  "commuteTiers": {
+    "preferred": ["Oakland", "Berkeley", "Emeryville", "San Francisco"],
+    "acceptable": ["San Leandro", "Alameda", "Walnut Creek", "South San Francisco", "Daly City"],
+    "conditional": [
+      "San Mateo",
+      "Redwood City",
+      "Palo Alto",
+      "Mountain View",
+      "Sunnyvale",
+      "Santa Clara",
+      "San Jose",
+      "Menlo Park",
+      "Foster City"
+    ]
+  },
+  "californiaTokens": ["california", "ca", "pacific time", "pt timezone", "us - west"],
+  "usTokens": ["united states", "usa", "u.s.", "us only", "nationwide", "remote - us", "remote us"]
+}

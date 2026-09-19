@@ -1,0 +1,282 @@
+[
+  {
+    "_id": "evidence_c1_salesforce_s3",
+    "candidateId": "primary-candidate",
+    "claim": "Built infrastructure for a Salesforce-to-S3 backup solution using Apache Spark, HashiCorp Vault, AWS S3, AWS ECS, Jenkins, and Python.",
+    "skillIds": ["skill_apache_spark", "skill_hashicorp_vault", "skill_aws_s3", "skill_aws_ecs", "skill_jenkins", "skill_python", "skill_salesforce"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_associate"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_aa_terraform",
+    "candidateId": "primary-candidate",
+    "claim": "Created infrastructure supporting enterprise Automation Anywhere deployments using AWS EC2, Terraform, Jenkins, S3, and Artifactory.",
+    "skillIds": ["skill_aws_ec2", "skill_terraform", "skill_jenkins", "skill_aws_s3", "skill_artifactory", "skill_automation_anywhere"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_associate"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_datadog_elk",
+    "candidateId": "primary-candidate",
+    "claim": "Implemented production monitoring and observability using Datadog and the ELK stack.",
+    "skillIds": ["skill_datadog", "skill_elk", "skill_observability"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_associate"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_batch_modernization",
+    "candidateId": "primary-candidate",
+    "claim": "Modernized on-premises batch workloads for AWS using Apache Spark, Jenkins, Chef, and CloudFormation.",
+    "skillIds": ["skill_apache_spark", "skill_jenkins", "skill_chef", "skill_cloudformation", "skill_batch_processing", "skill_linux"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_associate"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_ecs_ami",
+    "candidateId": "primary-candidate",
+    "claim": "Developed an automated solution using AWS CloudWatch and Lambda to maintain ECS clusters with current Amazon Machine Images.",
+    "skillIds": ["skill_cloudwatch", "skill_aws_lambda", "skill_aws_ecs", "skill_shell"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_associate"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_teradata_snowflake",
+    "candidateId": "primary-candidate",
+    "claim": "Migrated more than half a dozen Teradata reporting workflows to Snowflake SQL.",
+    "skillIds": ["skill_teradata", "skill_snowflake", "skill_sql"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_associate"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_splunk_pagerduty",
+    "candidateId": "primary-candidate",
+    "claim": "Created Splunk dashboards and PagerDuty alerts to monitor production service health and surface operational failures.",
+    "skillIds": ["skill_splunk", "skill_pagerduty", "skill_observability"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_associate"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_senior_infra",
+    "candidateId": "primary-candidate",
+    "claim": "Designed and implemented infrastructure and automation supporting enterprise applications, data workflows, and internal technology platforms.",
+    "skillIds": ["skill_aws", "skill_system_design", "skill_java"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_senior"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_senior_cicd",
+    "candidateId": "primary-candidate",
+    "claim": "Developed and maintained CI/CD workflows supporting repeatable application and infrastructure delivery.",
+    "skillIds": ["skill_cicd", "skill_jenkins"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_senior"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_senior_ops",
+    "candidateId": "primary-candidate",
+    "claim": "Investigated production issues across applications, infrastructure, data flows, and external service integrations.",
+    "skillIds": ["skill_production_support", "skill_observability"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_senior"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_principal_leadership",
+    "candidateId": "primary-candidate",
+    "claim": "Led design and delivery of software and infrastructure initiatives; mentored engineers through architecture discussions and delivery planning.",
+    "skillIds": ["skill_technical_leadership", "skill_mentoring"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_principal"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_c1_principal_architecture",
+    "candidateId": "primary-candidate",
+    "claim": "Provided technical direction across application architecture, cloud services, deployment workflows, data integrations, and production reliability.",
+    "skillIds": ["skill_system_design", "skill_observability", "skill_aws"],
+    "projectIds": [],
+    "workHistoryIds": ["work_c1_principal"],
+    "source": "workHistory",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_js_react",
+    "candidateId": "primary-candidate",
+    "claim": "Built production-style full-stack apps with React, responsive UI, auth flows, admin dashboards, and media workflows.",
+    "skillIds": ["skill_javascript", "skill_react"],
+    "projectIds": ["project_swayquest_web", "project_sway_pocket"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_typescript",
+    "candidateId": "primary-candidate",
+    "claim": "Used TypeScript across product web apps and game prototypes.",
+    "skillIds": ["skill_typescript"],
+    "projectIds": ["project_swayquest_web", "project_game_prototypes"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_nextjs_fullstack",
+    "candidateId": "primary-candidate",
+    "claim": "Built production-style full-stack apps with Next.js API routes, responsive UI, auth flows, admin dashboards, and media workflows.",
+    "skillIds": ["skill_nextjs", "skill_css_modules", "skill_git"],
+    "projectIds": ["project_swayquest_web", "project_sway_pocket", "project_sway_sched"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_python_serverless",
+    "candidateId": "primary-candidate",
+    "claim": "Designed AWS serverless services using Python, Lambda, API Gateway, DynamoDB, S3, IAM, and the Serverless Framework with async job processing.",
+    "skillIds": ["skill_python", "skill_aws_lambda", "skill_api_gateway", "skill_serverless_framework", "skill_iam", "skill_rest", "skill_async_jobs", "skill_ses"],
+    "projectIds": ["project_sway_sls"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_dynamodb_modeling",
+    "candidateId": "primary-candidate",
+    "claim": "Modeled users, media assets, async jobs, subscription state, and progress data using DynamoDB.",
+    "skillIds": ["skill_dynamodb"],
+    "projectIds": ["project_sway_sls", "project_swayquest_web", "project_sway_pocket"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_s3_uploads",
+    "candidateId": "primary-candidate",
+    "claim": "Implemented secure file-ingestion workflows using presigned URLs, multipart uploads, and S3-compatible object storage.",
+    "skillIds": ["skill_aws_s3", "skill_minio"],
+    "projectIds": ["project_sway_sls", "project_sway_pocket", "project_sway_drive"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_swift_ios",
+    "candidateId": "primary-candidate",
+    "claim": "Built native iOS media workflows with SwiftUI, AVFoundation, local persistence, onboarding, and StoreKit.",
+    "skillIds": ["skill_swift", "skill_swiftui", "skill_avfoundation", "skill_storekit"],
+    "projectIds": ["project_ios_player", "project_sway_pocket"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_kotlin_android",
+    "candidateId": "primary-candidate",
+    "claim": "Built native Android video apps using Kotlin, Jetpack Compose, Media3/ExoPlayer, CameraX, Room, and DataStore.",
+    "skillIds": ["skill_kotlin", "skill_jetpack_compose", "skill_media3", "skill_camerax", "skill_room"],
+    "projectIds": ["project_android_player"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_ffmpeg",
+    "candidateId": "primary-candidate",
+    "claim": "Developed upload, playback, trimming, FFmpeg, yt-dlp, metadata, and export workflows across web and mobile backends.",
+    "skillIds": ["skill_ffmpeg", "skill_ytdlp"],
+    "projectIds": ["project_sway_sls", "project_videodl"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_fastapi_media",
+    "candidateId": "primary-candidate",
+    "claim": "Built Python-based video-processing services using FastAPI, FFmpeg, yt-dlp, and Docker.",
+    "skillIds": ["skill_fastapi", "skill_python"],
+    "projectIds": ["project_videodl"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_docker_compose",
+    "candidateId": "primary-candidate",
+    "claim": "Containerized frontend and backend services with Docker Compose for repeatable local development and deployment.",
+    "skillIds": ["skill_docker", "skill_docker_compose", "skill_mongodb", "skill_playwright", "skill_ollama"],
+    "projectIds": ["project_videodl"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_ai_integration",
+    "candidateId": "primary-candidate",
+    "claim": "Integrated OpenAI/Google GenAI into feedback and content generation systems with async processing patterns.",
+    "skillIds": ["skill_openai", "skill_google_genai"],
+    "projectIds": ["project_swayquest_web"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_auth_payments",
+    "candidateId": "primary-candidate",
+    "claim": "Implemented subscription gating using Stripe, StoreKit concepts, and Logto/Supabase authentication.",
+    "skillIds": ["skill_stripe", "skill_logto", "skill_supabase", "skill_storekit"],
+    "projectIds": ["project_swayquest_web", "project_sway_pocket"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_testing",
+    "candidateId": "primary-candidate",
+    "claim": "Wrote Jest and service-level tests around product UI and API logic.",
+    "skillIds": ["skill_jest"],
+    "projectIds": ["project_swayquest_web"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_product_engineering",
+    "candidateId": "primary-candidate",
+    "claim": "Designed and built end-to-end product features spanning onboarding, dashboards, media libraries, practice sessions, and progress tracking.",
+    "skillIds": ["skill_product_engineering"],
+    "projectIds": ["project_swayquest_web", "project_sway_pocket"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  },
+  {
+    "_id": "evidence_game_prototypes",
+    "candidateId": "primary-candidate",
+    "claim": "Prototyped game logic and interactive tools with React, TypeScript, and Zustand.",
+    "skillIds": ["skill_zustand", "skill_typescript"],
+    "projectIds": ["project_game_prototypes"],
+    "workHistoryIds": [],
+    "source": "projects",
+    "approvedForResume": true
+  }
+]

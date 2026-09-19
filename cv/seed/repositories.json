@@ -1,0 +1,93 @@
+[
+  {
+    "_id": "repo_sway_f4",
+    "fullName": "oscoDOTblog/sway-f4",
+    "defaultBranch": "main",
+    "projectIds": ["project_swayquest_web"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_sway_ui",
+    "fullName": "oscoDOTblog/sway-ui",
+    "defaultBranch": "main",
+    "projectIds": ["project_swayquest_web"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_sway_pocket",
+    "fullName": "oscoDOTblog/sway-pocket",
+    "defaultBranch": "main",
+    "projectIds": ["project_sway_pocket"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_sway_ios_player",
+    "fullName": "oscoDOTblog/sway-player-ios",
+    "defaultBranch": "main",
+    "projectIds": ["project_sway_pocket", "project_ios_player"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_sway_ios_v1",
+    "fullName": "oscoDOTblog/sway-player-ios-v1",
+    "defaultBranch": "main",
+    "projectIds": ["project_ios_player"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_sway_android_player",
+    "fullName": "oscoDOTblog/sway-player-android",
+    "defaultBranch": "main",
+    "projectIds": ["project_android_player"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_sway_sls",
+    "fullName": "oscoDOTblog/sway-sls",
+    "defaultBranch": "main",
+    "projectIds": ["project_sway_sls"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_dtp_yui",
+    "fullName": "oscoDOTblog/dtp-yui",
+    "defaultBranch": "main",
+    "projectIds": ["project_videodl"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_sway_sched",
+    "fullName": "oscoDOTblog/sway-sched",
+    "defaultBranch": "main",
+    "projectIds": ["project_sway_sched"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_sway_drive",
+    "fullName": "oscoDOTblog/sway-drive",
+    "defaultBranch": "main",
+    "projectIds": ["project_sway_drive"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_sway_ios_drive",
+    "fullName": "oscoDOTblog/sway-drive-ios",
+    "defaultBranch": "main",
+    "projectIds": ["project_sway_drive"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_wendy_c",
+    "fullName": "oscoDOTblog/clients-wendy-c",
+    "defaultBranch": "main",
+    "projectIds": ["project_content_sites"],
+    "enabled": true
+  },
+  {
+    "_id": "repo_balatro",
+    "fullName": "oscoDOTblog/balatro-one-shot",
+    "defaultBranch": "main",
+    "projectIds": ["project_game_prototypes"],
+    "enabled": true
+  }
+]

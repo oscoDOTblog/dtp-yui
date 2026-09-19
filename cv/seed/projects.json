@@ -1,0 +1,135 @@
+[
+  {
+    "_id": "project_swayquest_web",
+    "candidateId": "primary-candidate",
+    "name": "SwayQuest Web Platform",
+    "summary": "Cross-platform dance practice product web apps with auth, media upload, AI feedback, subscriptions, and gamification.",
+    "technologies": ["Next.js", "React", "TypeScript", "DynamoDB", "S3", "Logto", "Supabase", "Stripe", "OpenAI", "Google GenAI", "Jest", "CSS Modules"],
+    "repositoryIds": ["repo_sway_f4", "repo_sway_ui"],
+    "resumeBullets": [
+      "Architected and developed full-stack applications using Next.js, React, server-side application logic, and authenticated APIs.",
+      "Integrated Stripe subscriptions, Logto/Supabase auth, and OpenAI/Google GenAI feedback workflows."
+    ],
+    "startDate": "2026-03",
+    "updatedAt": "2026-07-17T21:30:00Z"
+  },
+  {
+    "_id": "project_sway_pocket",
+    "candidateId": "primary-candidate",
+    "name": "Sway Pocket Practice App",
+    "summary": "Practice queues, recall logic, user progress, subscriptions, and media upload with web/iOS parity.",
+    "technologies": ["Next.js", "Swift", "SwiftUI", "DynamoDB", "S3", "Stripe", "StoreKit"],
+    "repositoryIds": ["repo_sway_pocket", "repo_sway_ios_player"],
+    "resumeBullets": [
+      "Built shared workflows for practice sessions, progress tracking, subscription entitlements, and cloud synchronization."
+    ],
+    "startDate": "2026-06",
+    "updatedAt": "2026-07-17T21:30:00Z"
+  },
+  {
+    "_id": "project_ios_player",
+    "candidateId": "primary-candidate",
+    "name": "Native iOS Video Player",
+    "summary": "Native iOS media workflows with SwiftUI, AVFoundation, local persistence, onboarding, and StoreKit.",
+    "technologies": ["Swift", "SwiftUI", "AVFoundation", "StoreKit", "SwiftData"],
+    "repositoryIds": ["repo_sway_ios_player", "repo_sway_ios_v1"],
+    "resumeBullets": [
+      "Built native iOS applications using Swift, SwiftUI, AVFoundation, local persistence, and StoreKit."
+    ],
+    "startDate": "2025-11",
+    "updatedAt": "2026-07-17T21:30:00Z"
+  },
+  {
+    "_id": "project_android_player",
+    "candidateId": "primary-candidate",
+    "name": "Native Android Video Player",
+    "summary": "Native Android video apps with Jetpack Compose, Media3/ExoPlayer, CameraX, Room, and Billing.",
+    "technologies": ["Kotlin", "Jetpack Compose", "Media3", "ExoPlayer", "CameraX", "Room", "DataStore", "Google Play Billing"],
+    "repositoryIds": ["repo_sway_android_player", "repo_sway_trimmer"],
+    "resumeBullets": [
+      "Built native Android applications using Kotlin, Jetpack Compose, Media3, CameraX, Room, and DataStore."
+    ],
+    "startDate": "2026-01",
+    "updatedAt": "2026-07-17T21:30:00Z"
+  },
+  {
+    "_id": "project_sway_sls",
+    "candidateId": "primary-candidate",
+    "name": "AWS Serverless and Data Platform",
+    "summary": "Lambda-backed video download and AI feedback APIs with async job tracking, DynamoDB, and S3.",
+    "technologies": ["Python", "Serverless Framework", "AWS Lambda", "API Gateway", "DynamoDB", "S3", "IAM", "FFmpeg", "yt-dlp"],
+    "repositoryIds": ["repo_sway_sls"],
+    "resumeBullets": [
+      "Designed AWS serverless services using Python, Lambda, API Gateway, DynamoDB, S3, IAM, and the Serverless Framework.",
+      "Implemented asynchronous processing flows with job creation, status polling, failure states, and scheduled cleanup."
+    ],
+    "startDate": "2026-07",
+    "updatedAt": "2026-07-17T21:30:00Z"
+  },
+  {
+    "_id": "project_videodl",
+    "candidateId": "primary-candidate",
+    "name": "Media Processing and Automation Systems",
+    "summary": "Python FastAPI video-processing services with FFmpeg, yt-dlp, Docker Compose, and S3-compatible storage.",
+    "technologies": ["FastAPI", "Python", "FFmpeg", "yt-dlp", "Docker", "Docker Compose", "Next.js"],
+    "repositoryIds": ["repo_dtp_videodl", "repo_dtp_yui"],
+    "resumeBullets": [
+      "Built Python-based video-processing and download services using FastAPI, FFmpeg, yt-dlp, and Docker.",
+      "Containerized frontend and backend services with Docker Compose for repeatable local development."
+    ],
+    "startDate": "2026-06",
+    "updatedAt": "2026-07-17T21:30:00Z"
+  },
+  {
+    "_id": "project_sway_sched",
+    "candidateId": "primary-candidate",
+    "name": "Scheduling / Admin Tools",
+    "summary": "Next.js dashboards for scheduling workflows, auth, API integrations, and Telegram alerts.",
+    "technologies": ["Next.js", "DynamoDB", "Telegram", "Supabase"],
+    "repositoryIds": ["repo_sway_sched"],
+    "resumeBullets": [
+      "Developed internal scheduling, publishing, and administrative tools supporting media-heavy workflows."
+    ],
+    "startDate": "2026-06",
+    "updatedAt": "2026-07-17T21:30:00Z"
+  },
+  {
+    "_id": "project_sway_drive",
+    "candidateId": "primary-candidate",
+    "name": "File / Cloud Storage UX",
+    "summary": "File explorer UX with MinIO/S3-compatible storage and native/web parity.",
+    "technologies": ["Next.js", "MinIO", "S3", "Swift", "Kotlin"],
+    "repositoryIds": ["repo_sway_drive", "repo_sway_ios_drive"],
+    "resumeBullets": [
+      "Built file-management experiences against S3-compatible object storage with web and native clients."
+    ],
+    "startDate": "2026-06",
+    "updatedAt": "2026-07-17T21:30:00Z"
+  },
+  {
+    "_id": "project_content_sites",
+    "candidateId": "primary-candidate",
+    "name": "Content / Marketing Sites",
+    "summary": "SEO-oriented Next.js content sites and client delivery.",
+    "technologies": ["Next.js", "Markdown", "SEO", "CSS Modules"],
+    "repositoryIds": ["repo_osco_blog", "repo_wendy_c", "repo_waifu"],
+    "resumeBullets": [
+      "Delivered SEO-oriented content sites with Markdown pipelines and responsive design."
+    ],
+    "startDate": "2026-01",
+    "updatedAt": "2026-07-17T21:30:00Z"
+  },
+  {
+    "_id": "project_game_prototypes",
+    "candidateId": "primary-candidate",
+    "name": "Creative / Game Prototypes",
+    "summary": "Rapid game and tool prototyping with React and Zustand.",
+    "technologies": ["TypeScript", "React", "Zustand"],
+    "repositoryIds": ["repo_glyphwalker", "repo_balatro"],
+    "resumeBullets": [
+      "Prototyped game logic and interactive tools with React and TypeScript."
+    ],
+    "startDate": "2025-11",
+    "updatedAt": "2026-07-17T21:30:00Z"
+  }
+]
