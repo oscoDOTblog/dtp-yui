@@ -146,21 +146,5 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  openclaw:
-    build:
-      context: ./services/openclaw
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    depends_on:
-      - api
-    environment:
-      OPENCLAW_PORT: "8020"
-      CV_API_BASE: ${CV_API_BASE:-http://api:8000}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      TELEGRAM_HOURLY_REPORT: ${TELEGRAM_HOURLY_REPORT:-true}
-    ports:
-      - "127.0.0.1:8020:8020"
-
 volumes:
   mongodb_data:

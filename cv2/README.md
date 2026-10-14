@@ -1,19 +1,12 @@
-# CV2 — OpenClaw + Ollama job application agent
+# CV2 — minimal local terminal job agent
 
-CV2 is the next iteration of the CV1 flow. It keeps CV1's grounded candidate
-knowledge base and human-approved Playwright/CDP apply agent, and adds an
-OpenClaw orchestration boundary for Gmail/job-link intake plus hourly Telegram
-reporting.
+CV2 is a terminal-first local runner. Start `terminal-agent` to open a visible
+Chrome profile, inspect Gmail, score listings with Ollama, write tailored
+documents, fill basic application fields, and wait for explicit terminal
+approval before submitting.
 
-Open the tracking view at `http://localhost:7545/tracked` after starting the
-stack. The OpenClaw bridge listens on `127.0.0.1:8020` and exposes:
-
-- `POST /jobs/intake` with `{ "url": "..." }` to queue a listing for scoring.
-- `POST /report/hourly` to send the current report to Telegram.
-- `GET /health` for a readiness check.
-
-The bridge does not submit applications. It delegates browser work to the
-existing agent, and final submission remains approval-gated in Copilot.
+The first version does not require Docker, a web UI, Telegram, remote access,
+or background services. See [terminal-agent/README.md](terminal-agent/README.md).
 
 Local AI job-search copilot with **human approval**. Score jobs against a grounded candidate knowledge base, generate tailored application packages, and track decisions.
 
