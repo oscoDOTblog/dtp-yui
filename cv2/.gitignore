@@ -1,0 +1,17 @@
+.env
+.venv/
+secrets/*
+!secrets/README.md
+generated-applications/*
+!generated-applications/.gitkeep
+repository-cache/*
+!repository-cache/.gitkeep
+services/web/node_modules/
+services/web/.next/
+services/web/out/
+__pycache__/
+*.pyc
+.Python
+venv/
+*.egg-info/
+.DS_Store

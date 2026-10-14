@@ -1,0 +1,336 @@
+"""Convert a queued URL (or pasted description) into an intake raw job."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import re
+from typing import Any
+from urllib import error, parse, request as urlrequest
+
+from .ashby_source import ashby_job_to_raw, fetch_board_jobs as fetch_ashby_board_jobs
+from .greenhouse_source import GREENHOUSE_API, greenhouse_job_to_raw
+from .html_markdown import description_fields_from_html_or_text
+
+logger = logging.getLogger(__name__)
+
+USER_AGENT = "CV-Job-Copilot/manual-queue (+local; single job fetch)"
+REQUEST_TIMEOUT_SEC = 30
+
+# boards.greenhouse.io/{token}/jobs/{id}
+# job-boards.greenhouse.io/{token}/jobs/{id}
+_GH_JOB_RE = re.compile(
+    r"^https?://(?:job-)?boards\.greenhouse\.io/"
+    r"(?P<token>[^/?#]+)/jobs/(?P<job_id>\d+)",
+    flags=re.I,
+)
+# Some embeds use greenhouse.io/embed/job_app?token=…&for=board
+_GH_EMBED_RE = re.compile(
+    r"^https?://(?:www\.)?greenhouse\.io/embed/job_app",
+    flags=re.I,
+)
+# jobs.ashbyhq.com/{org}/{jobId}[/application]
+_ASHBY_JOB_RE = re.compile(
+    r"^https?://(?:www\.)?jobs\.ashbyhq\.com/"
+    r"(?P<token>[^/?#]+)/(?P<job_id>[^/?#]+)(?:/application)?/?(?:[?#].*)?$",
+    flags=re.I,
+)
+
+
+def parse_greenhouse_job_url(url: str) -> dict[str, str] | None:
+    """Return {boardToken, jobId} if URL is a Greenhouse single-job page."""
+    url = (url or "").strip()
+    if not url:
+        return None
+    match = _GH_JOB_RE.match(url)
+    if match:
+        return {
+            "boardToken": match.group("token").strip().lower(),
+            "jobId": match.group("job_id"),
+        }
+    if _GH_EMBED_RE.match(url):
+        parsed = parse.urlparse(url)
+        qs = parse.parse_qs(parsed.query)
+        token = (qs.get("for") or qs.get("board") or [None])[0]
+        job_id = (qs.get("token") or qs.get("gh_jid") or qs.get("id") or [None])[0]
+        if token and job_id and str(job_id).isdigit():
+            return {"boardToken": str(token).strip().lower(), "jobId": str(job_id)}
+    return None
+
+
+def parse_ashby_job_url(url: str) -> dict[str, str] | None:
+    """Return {boardToken, jobId} if URL is an Ashby single-job page."""
+    url = (url or "").strip()
+    if not url:
+        return None
+    match = _ASHBY_JOB_RE.match(url)
+    if not match:
+        return None
+    token = match.group("token").strip()
+    job_id = match.group("job_id").strip()
+    if not token or not job_id or job_id.lower() in ("application", "apply"):
+        return None
+    return {"boardToken": token.lower(), "jobId": job_id}
+
+
+def fetch_greenhouse_job(board_token: str, job_id: str) -> dict[str, Any]:
+    """GET public Greenhouse single job with content HTML."""
+    token = parse.quote((board_token or "").strip(), safe="")
+    jid = parse.quote(str(job_id).strip(), safe="")
+    url = f"{GREENHOUSE_API}/{token}/jobs/{jid}?content=true"
+    req = urlrequest.Request(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+        },
+    )
+    with urlrequest.urlopen(req, timeout=REQUEST_TIMEOUT_SEC) as resp:
+        raw = resp.read().decode("utf-8", errors="replace")
+    payload = json.loads(raw)
+    if not isinstance(payload, dict) or not payload.get("id"):
+        raise ValueError("Greenhouse job response missing id")
+    return payload
+
+
+def fetch_ashby_job(board_token: str, job_id: str) -> dict[str, Any]:
+    """Find one Ashby posting on the public board feed."""
+    jobs = fetch_ashby_board_jobs(board_token, include_compensation=True)
+    wanted = str(job_id).strip().lower()
+    for job in jobs:
+        jid = str(job.get("id") or "").strip().lower()
+        if jid and jid == wanted:
+            return job
+        job_url = (job.get("jobUrl") or "").strip().lower()
+        apply_url = (job.get("applyUrl") or "").strip().lower()
+        if wanted and (wanted in job_url or wanted in apply_url):
+            return job
+    raise ValueError(f"Ashby job {job_id} not found on board {board_token}")
+
+
+def _company_from_board_token(board_token: str, *, ats: str = "greenhouse") -> str:
+    token = (board_token or "").strip()
+    if not token:
+        return "Unknown"
+    # Prefer watchlist name when available
+    try:
+        from .. import collections as C
+        from ..db import get_db
+
+        source = get_db()[C.JOB_SOURCES].find_one(
+            {"ats": ats, "boardToken": token.lower()}
+        )
+        if source and source.get("name"):
+            return str(source["name"]).strip()
+    except Exception:
+        logger.debug("boardToken company lookup failed", exc_info=True)
+    return token.replace("-", " ").replace("_", " ").title()
+
+
+def _manual_external_id(url: str, description: str) -> str:
+    basis = (description or url or "").strip()
+    digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+    return f"manual:{digest}"
+
+
+def queue_item_to_raw(item: dict[str, Any]) -> dict[str, Any]:
+    """
+    Build a raw job dict for `_ingest_raw_jobs`.
+
+    Sets ``_queueMeta``:
+      - skipEnrich: bool — already has full content
+      - needsPasteIfBlocked: bool — mark needsPaste when enrich fails
+    """
+    url = (item.get("url") or "").strip()
+    paste = (item.get("descriptionRaw") or "").strip()
+    queue_id = item.get("_id")
+
+    gh = parse_greenhouse_job_url(url)
+    if gh:
+        try:
+            job = fetch_greenhouse_job(gh["boardToken"], gh["jobId"])
+            company = _company_from_board_token(gh["boardToken"], ats="greenhouse")
+            source_id = f"manual_queue:{queue_id or 'unknown'}"
+            raw = greenhouse_job_to_raw(
+                job,
+                company=company,
+                board_token=gh["boardToken"],
+                source_id=source_id,
+            )
+            raw["discoveredBy"] = {
+                **(raw.get("discoveredBy") or {}),
+                "source": "manual-queue",
+                "queueId": queue_id,
+                "boardToken": gh["boardToken"],
+            }
+            # Prefer the user-pasted URL as sourceUrl when API absolute_url missing
+            if not raw.get("sourceUrl"):
+                raw["sourceUrl"] = url
+                raw["canonicalApplyUrl"] = url
+                raw["url"] = url
+            raw["_queueMeta"] = {
+                "queueId": queue_id,
+                "skipEnrich": True,
+                "needsPasteIfBlocked": False,
+            }
+            return raw
+        except error.HTTPError as exc:
+            logger.warning(
+                "Greenhouse single-job fetch HTTP %s for %s", exc.code, url
+            )
+            if paste:
+                return _raw_from_paste(url, paste, queue_id)
+            # Fall through to stub — enrich may still work on the HTML page
+        except Exception as exc:
+            logger.warning("Greenhouse single-job fetch failed for %s: %s", url, exc)
+            if paste:
+                return _raw_from_paste(url, paste, queue_id)
+
+    ashby = parse_ashby_job_url(url)
+    if ashby:
+        try:
+            job = fetch_ashby_job(ashby["boardToken"], ashby["jobId"])
+            company = _company_from_board_token(ashby["boardToken"], ats="ashby")
+            source_id = f"manual_queue:{queue_id or 'unknown'}"
+            raw = ashby_job_to_raw(
+                job,
+                company=company,
+                board_token=ashby["boardToken"],
+                source_id=source_id,
+            )
+            raw["discoveredBy"] = {
+                **(raw.get("discoveredBy") or {}),
+                "source": "manual-queue",
+                "queueId": queue_id,
+                "boardToken": ashby["boardToken"],
+            }
+            if not raw.get("sourceUrl"):
+                raw["sourceUrl"] = url
+                raw["canonicalApplyUrl"] = url
+                raw["url"] = url
+            raw["_queueMeta"] = {
+                "queueId": queue_id,
+                "skipEnrich": True,
+                "needsPasteIfBlocked": False,
+            }
+            return raw
+        except error.HTTPError as exc:
+            logger.warning("Ashby single-job fetch HTTP %s for %s", exc.code, url)
+            if paste:
+                return _raw_from_paste(url, paste, queue_id)
+        except Exception as exc:
+            logger.warning("Ashby single-job fetch failed for %s: %s", url, exc)
+            if paste:
+                return _raw_from_paste(url, paste, queue_id)
+
+    if paste:
+        return _raw_from_paste(url, paste, queue_id)
+
+    # Stub for enrich_raw_job in the pipeline
+    return {
+        "externalId": _manual_external_id(url, ""),
+        "source": "manual",
+        "title": "Untitled",
+        "company": "Unknown",
+        "location": "",
+        "descriptionRaw": "",
+        "descriptionText": "",
+        "sourceUrl": url or None,
+        "canonicalApplyUrl": url or None,
+        "url": url or None,
+        "discoveredBy": {"source": "manual-queue", "queueId": queue_id},
+        "_queueMeta": {
+            "queueId": queue_id,
+            "skipEnrich": False,
+            "needsPasteIfBlocked": True,
+        },
+    }
+
+
+def _company_from_url(url: str) -> str:
+    host = (parse.urlparse(url or "").netloc or "").lower()
+    if not host:
+        return ""
+    host = host[4:] if host.startswith("www.") else host
+    # jobs.netflix.com / careers.foo.com / boards.greenhouse.io
+    if "greenhouse.io" in host or "lever.co" in host or "ashbyhq.com" in host:
+        return ""
+    parts = [p for p in host.split(".") if p and p not in ("www", "jobs", "careers", "com", "io", "co", "net", "org")]
+    if not parts:
+        return ""
+    return parts[0].replace("-", " ").title()
+
+
+def _guess_paste_title(paste: str) -> str:
+    for raw in (paste or "").splitlines()[:15]:
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line or len(line) < 4 or len(line) > 120:
+            continue
+        if re.match(r"^https?://", line, flags=re.I):
+            continue
+        lower = line.lower()
+        if lower.startswith(
+            (
+                "job description",
+                "about the role",
+                "about this role",
+                "responsibilities",
+                "requirements",
+            )
+        ):
+            continue
+        labeled = re.match(
+            r"^(?:job\s+)?(?:title|role|position)\s*[:\-–—]\s*(.+)$",
+            line,
+            flags=re.I,
+        )
+        if labeled:
+            return labeled.group(1).strip()[:120]
+        parts = re.split(r"\s+[|\-–—]\s+|\s+at\s+", line, maxsplit=1, flags=re.I)
+        return parts[0].strip()[:120]
+    return ""
+
+
+def _raw_from_paste(url: str, paste: str, queue_id: Any) -> dict[str, Any]:
+    fields = description_fields_from_html_or_text(paste)
+    plain = fields["descriptionRaw"]
+    title = _guess_paste_title(plain or paste) or "Untitled"
+    company = _company_from_url(url) or "Unknown"
+    return {
+        "externalId": _manual_external_id(url, plain or paste),
+        "source": "manual",
+        "title": title,
+        "company": company,
+        "location": "",
+        "descriptionRaw": plain,
+        "descriptionText": plain,
+        "descriptionMarkdown": fields.get("descriptionMarkdown"),
+        "sourceUrl": url or None,
+        "canonicalApplyUrl": url or None,
+        "url": url or None,
+        "fetchStatus": "pasted",
+        "discoveredBy": {"source": "manual-queue", "queueId": queue_id},
+        "_queueMeta": {
+            "queueId": queue_id,
+            "skipEnrich": True,
+            "needsPasteIfBlocked": False,
+        },
+    }
+
+
+def is_enrich_blocked_or_empty(enriched: dict[str, Any]) -> bool:
+    """True when we should ask the user to paste instead of creating a hollow job."""
+    text = (enriched.get("descriptionText") or enriched.get("descriptionRaw") or "").strip()
+    fetch_status = (enriched.get("fetchStatus") or "").strip()
+    if fetch_status == "blocked":
+        return True
+    if len(text) < 280:
+        return True
+    # Hollow stub left over from blocked enrich fallback
+    if text.count("\n") <= 2 and "http" in text.lower() and len(text) < 400:
+        title = (enriched.get("title") or "").strip()
+        company = (enriched.get("company") or "").strip()
+        if title in ("", "Untitled") and company in ("", "Unknown"):
+            return True
+    return False

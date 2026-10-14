@@ -1,0 +1,7 @@
+{
+  "provider": "ollama",
+  "model": "qwen3:8b",
+  "browser": { "mode": "cdp", "endpoint": "http://127.0.0.1:9222" },
+  "workflow": { "scoreBeforePackage": true, "prepareDocuments": true, "requireApprovalBeforeSubmit": true },
+  "telegram": { "hourlyReport": true, "reportEndpoint": "http://127.0.0.1:8020/report/hourly" }
+}

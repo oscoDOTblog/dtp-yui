@@ -1,0 +1,24 @@
+{
+  "applyMode": "easyApplyLocal",
+  "searchUrls": {
+    "easyApplyLocal": "",
+    "easyApplyRemote": "",
+    "companyApplyLocal": "",
+    "companyApplyRemote": ""
+  },
+  "searchUrl": "",
+  "searchUrlRemote": "",
+  "preferRemote": false,
+  "query": "software engineer",
+  "location": "Oakland, CA",
+  "maxResultsPerRun": 10,
+  "maxApplicationsPerRun": 1,
+  "minimumScore": 60,
+  "maxRuntimeMinutes": 90,
+  "requireApprovalBeforeSubmit": true,
+  "slowMoMs": 100,
+  "humanDelayMs": {
+    "min": 800,
+    "max": 2200
+  }
+}
