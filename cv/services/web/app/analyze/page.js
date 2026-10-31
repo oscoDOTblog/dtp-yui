@@ -363,6 +363,39 @@ export default function AnalyzePage() {
     }
   }
 
+  async function markPending(item) {
+    if (rowBusy || item.status !== "done" || !item.jobId) return;
+    setRowBusy(item._id);
+    setError("");
+    setInfo("");
+    try {
+      const result = await apiPatch(
+        `/jobs/${encodeURIComponent(item.jobId)}/application-status`,
+        { applicationStatus: "pending" },
+      );
+      setQueue((prev) =>
+        prev.map((row) =>
+          row._id === item._id
+            ? {
+                ...row,
+                jobApplicationStatus: result.applicationStatus || "pending",
+                jobApplicationStatusAt:
+                  result.applicationStatusAt || new Date().toISOString(),
+                jobAppliedAt: result.appliedAt || new Date().toISOString(),
+              }
+            : row,
+        ),
+      );
+      setInfo(
+        `${item.jobTitle || "Job"} marked Pending and added to Applications.`,
+      );
+    } catch (err) {
+      setError(err.message || "Failed to mark job Pending");
+    } finally {
+      setRowBusy("");
+    }
+  }
+
   async function clearQueue() {
     if (submitting || rowBusy) return;
     const removable = queue.filter((item) => item.status !== "processing");
@@ -737,6 +770,7 @@ export default function AnalyzePage() {
                         setPasteText("");
                       }}
                       onRemove={() => removeItem(item)}
+                      onMarkPending={() => markPending(item)}
                     />
                   ))}
                 </ul>
@@ -781,6 +815,7 @@ function QueueRow({
   onSubmitPaste,
   onCancelPaste,
   onRemove,
+  onMarkPending,
 }) {
   const openPaste = pasteForId === item._id;
   const title = String(item.jobTitle || "").trim();
@@ -800,6 +835,14 @@ function QueueRow({
     : hasRealCompany
       ? company
       : null;
+  const applicationTracked = [
+    "pending",
+    "round1",
+    "round2",
+    "round3",
+    "round4",
+    "rejected",
+  ].includes(item.jobApplicationStatus);
 
   return (
     <li
@@ -839,6 +882,20 @@ function QueueRow({
           ) : null}
         </div>
         <div className="flex flex-wrap gap-1.5">
+          {item.status === "done" && item.jobId && !applicationTracked ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={Boolean(rowBusy)}
+              loading={rowBusy === item._id}
+              onClick={onMarkPending}
+            >
+              Mark as pending
+            </Button>
+          ) : null}
+          {item.status === "done" && item.jobId && applicationTracked ? (
+            <Badge variant="outline">Application tracked</Badge>
+          ) : null}
           {item.jobId ? (
             <Button
               type="button"

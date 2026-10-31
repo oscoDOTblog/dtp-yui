@@ -1048,6 +1048,12 @@ def download_package_file(
 @app.get("/applications")
 def list_applications() -> list:
     db = get_db()
+    try:
+        from cv_shared.application_status import auto_reject_stale_applications
+
+        auto_reject_stale_applications(db)
+    except Exception:
+        logger.exception("stale application sweep failed")
     apps = list(db[C.APPLICATIONS].find().sort("updatedAt", -1))
     out = []
     for app_doc in apps:
@@ -1115,10 +1121,15 @@ def list_applications_tracker() -> list:
     """Applied jobs for timeline/calendar (pending+ and stable appliedAt)."""
     from cv_shared.application_status import (
         APPLIED_PIPELINE_STATUSES,
+        auto_reject_stale_applications,
         resolve_application_status,
     )
 
     db = get_db()
+    try:
+        auto_reject_stale_applications(db)
+    except Exception:
+        logger.exception("stale application sweep failed")
     query = {
         "$or": [
             {"appliedAt": {"$exists": True, "$nin": [None, ""]}},

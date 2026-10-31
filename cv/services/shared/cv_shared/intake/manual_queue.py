@@ -118,21 +118,23 @@ def enqueue_urls(
 
 
 def list_queue(*, limit: int = 50) -> list[dict[str, Any]]:
-    """Recent queue items, newest first. Hydrate title/company from job when missing."""
+    """Recent queue items, newest first. Hydrate linked job display/tracker data."""
     db = get_db()
     limit = max(1, min(int(limit or 50), 200))
     items = list(db[C.INTAKE_QUEUE].find({}, sort=[("createdAt", -1)], limit=limit))
-    missing_job_ids = [
-        item["jobId"]
-        for item in items
-        if item.get("jobId") and not item.get("jobTitle")
-    ]
-    if missing_job_ids:
+    job_ids = [item["jobId"] for item in items if item.get("jobId")]
+    if job_ids:
         jobs = {
             job["_id"]: job
             for job in db[C.JOBS].find(
-                {"_id": {"$in": missing_job_ids}},
-                {"title": 1, "company": 1},
+                {"_id": {"$in": job_ids}},
+                {
+                    "title": 1,
+                    "company": 1,
+                    "applicationStatus": 1,
+                    "applicationStatusAt": 1,
+                    "appliedAt": 1,
+                },
             )
         }
         for item in items:
@@ -143,6 +145,9 @@ def list_queue(*, limit: int = 50) -> list[dict[str, Any]]:
                 item["jobTitle"] = job["title"]
             if not item.get("jobCompany") and job.get("company"):
                 item["jobCompany"] = job["company"]
+            item["jobApplicationStatus"] = job.get("applicationStatus")
+            item["jobApplicationStatusAt"] = job.get("applicationStatusAt")
+            item["jobAppliedAt"] = job.get("appliedAt")
     return items
 
 
